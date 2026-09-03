@@ -8,8 +8,7 @@ be confirmed before implementing a solver or data readers.
 - Resolve the duplicate output interval fields: `model.output_interval` and
   `output.interval`. The current schema permits both only when equal and treats
   `output.interval` as canonical.
-- Decide whether grid extent is derived from raster metadata or must be
-  explicitly supplied as `domain.nx`/`domain.ny` (or width/height).
+- Decide whether future non-structured grids need an additional extent contract.
 - Define the accepted coordinate-system syntax and whether reprojection is
   performed by the engine.
 - Decide whether time-series value units must be repeated in each file
@@ -17,6 +16,7 @@ be confirmed before implementing a solver or data readers.
   context).
 - Define path resolution, allowed path roots, and whether missing referenced
   files are checked during configuration loading or during case preparation.
+- Define the behavior of the reserved `nearest` and `interpolate` NoData strategies.
 - Confirm the initial-condition representation for a water-level raster and
   the exact velocity-field metadata.
 - Confirm output formats and variable-to-format compatibility. The schema lists

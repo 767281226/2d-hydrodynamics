@@ -1,22 +1,10 @@
-# Model and case architecture
+# 模型和案例架构
 
-One simulation is represented by a case directory. `config.yaml` is the
-control plane; `data/` contains external raster/time-series inputs; `results/`
-is reserved for generated outputs.
+一次模拟由一个 case 目录表示。`config.yaml` 是总控制文件；`data/` 保存外部
+栅格和时间序列；`results/` 预留给未来结果输出。
 
-The top-level configuration has ten sections:
+V1.0 使用规则矩形结构化网格：`domain` 显式给出 xmin/xmax/ymin/ymax 计算区域
+和 dx/dy 网格尺寸。程序根据区域长度与步长计算内部 nx/ny；用户不配置 nx/ny。
 
-1. `model` — case identity, time window, gravity, CRS, and unit system.
-2. `domain` — currently a structured rectangular grid spacing.
-3. `terrain` — raster or constant bed elevation.
-4. `initial_condition` — initial depth/level and a reserved velocity field.
-5. `roughness` — constant or raster Manning roughness.
-6. `boundary` — an extensible list of boundary objects.
-7. `source` — currently only a disabled/enabled rainfall placeholder.
-8. `numerics` — method placeholders and general thresholds.
-9. `output` — interval, variables, destination, and format.
-10. `validation` — validation switches and report preference.
-
-The loader validates structure and values but deliberately does not open the
-referenced GeoTIFF/CSV files. A future case-preparation layer should resolve
-paths, inspect raster dimensions/CRS, and check cross-file compatibility.
+配置加载器负责类型、枚举、范围和字段组合校验，但不会解析外部数据、建立网格、
+运行时间步或生成结果。数值方法字段仍是预留字符串。

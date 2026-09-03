@@ -8,6 +8,7 @@ command-line tool, or another Python application.
 from .config import (
     ConfigLoadError,
     ConfigValidationError,
+    NoDataStrategy,
     SimulationConfig,
     load_config,
 )
@@ -15,6 +16,7 @@ from .config import (
 __all__ = [
     "ConfigLoadError",
     "ConfigValidationError",
+    "NoDataStrategy",
     "SimulationConfig",
     "load_config",
 ]

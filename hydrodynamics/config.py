@@ -7,6 +7,7 @@ rasters, execute time series, or call a hydrodynamics solver.
 from __future__ import annotations
 
 from enum import Enum
+from math import isclose
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -16,8 +17,6 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
-    StrictInt,
-    StrictStr,
     ValidationError,
     field_validator,
     model_validator,
@@ -147,18 +146,59 @@ class ModelConfig(_SchemaModel):
         return self
 
 
+def _cell_count(lower: float, upper: float, step: float, axis: str) -> int:
+    span = upper - lower
+    count = round(span / step)
+    if count <= 0 or not isclose(span, count * step, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError(
+            f"{axis} length ({span:g} m) must be evenly divisible by {axis} step ({step:g} m)"
+        )
+    return count
+
+
 class DomainConfig(_SchemaModel):
     type: DomainType = DomainType.STRUCTURED
-    dx: Number = Field(gt=0, description="m")
-    dy: Number = Field(gt=0, description="m")
-    nx: StrictInt | None = Field(default=None, gt=0)
-    ny: StrictInt | None = Field(default=None, gt=0)
+    xmin: Number = Field(description="m")
+    xmax: Number = Field(description="m")
+    ymin: Number = Field(description="m")
+    ymax: Number = Field(description="m")
+    dx: Number = Field(ge=30, le=100, description="m")
+    dy: Number = Field(ge=30, le=100, description="m")
+
+    @model_validator(mode="after")
+    def validate_geometry(self) -> "DomainConfig":
+        if self.xmax <= self.xmin:
+            raise ValueError("xmax must be greater than xmin")
+        if self.ymax <= self.ymin:
+            raise ValueError("ymax must be greater than ymin")
+        _cell_count(self.xmin, self.xmax, self.dx, "x")
+        _cell_count(self.ymin, self.ymax, self.dy, "y")
+        return self
+
+    @property
+    def nx(self) -> int:
+        """Internal x-direction cell count; never accepted as user input."""
+
+        return _cell_count(self.xmin, self.xmax, self.dx, "x")
+
+    @property
+    def ny(self) -> int:
+        """Internal y-direction cell count; never accepted as user input."""
+
+        return _cell_count(self.ymin, self.ymax, self.dy, "y")
+
+
+class NoDataStrategy(str, Enum):
+    ERROR = "error"
+    NEAREST = "nearest"
+    INTERPOLATE = "interpolate"
 
 
 class TerrainConfig(_SchemaModel):
     type: TerrainType
     file: Text | None = None
     nodata: Number | None = Field(default=None, description="dataset nodata value")
+    nodata_strategy: NoDataStrategy = NoDataStrategy.ERROR
     elevation: Number | None = Field(default=None, description="m")
 
     @model_validator(mode="after")
@@ -173,6 +213,8 @@ class TerrainConfig(_SchemaModel):
                 raise ValueError("elevation is required when terrain.type is 'constant'")
             if self.file is not None:
                 raise ValueError("file is only valid when terrain.type is 'raster'")
+            if self.nodata is not None or self.nodata_strategy is not NoDataStrategy.ERROR:
+                raise ValueError("nodata and non-error nodata_strategy are only valid for raster terrain")
         return self
 
 
@@ -450,6 +492,7 @@ __all__ = [
     "ConfigValidationError",
     "DomainConfig",
     "DomainType",
+    "NoDataStrategy",
     "FieldType",
     "InitialConditionConfig",
     "InitialConditionType",

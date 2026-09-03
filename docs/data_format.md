@@ -1,42 +1,51 @@
-# Data file format contract
+# 输入数据格式约定
 
-The current loader validates references but does not open external data. The
-following is the contract that future readers should implement.
+当前 `load_config` 只校验文件引用字符串，不打开 GeoTIFF/CSV，也不执行重采样
+或 NoData 插值。下列内容是未来数据读取层需要遵循的接口约定。
 
-## Paths
+## Case 路径
 
-Paths in `config.yaml` are normally relative to the case directory. The future
-case-preparation layer must resolve them and report the full path when a file
-is missing. The loader itself only validates that a path value is a non-empty
-string.
+`config.yaml` 中的相对路径以 case 目录为基准。未来数据准备层应解析路径并在
+文件缺失时报告完整路径；当前加载器只要求路径是非空字符串。
 
-## Raster inputs
+## 计算区域和结构化网格
 
-`terrain.file`, `roughness.file`, `initial_condition.depth_file`, and
-`initial_condition.level_file` refer to raster grids (the example uses
-GeoTIFF). Readers must eventually verify dimensions, cell size, extent,
-coordinate system, and nodata compatibility with `domain`.
+V1.0 的计算区域由 `domain.xmin`、`domain.xmax`、`domain.ymin`、`domain.ymax`
+（单位 m）显式定义。`domain.dx`、`domain.dy`（单位 m）分别是 x/y 方向网格
+尺寸，允许不同，且必须在 30～100 m（含）范围内。
 
-Expected quantities and units:
+区域长度必须能被对应步长整除。内部网格数量由程序计算：
 
-- DEM/terrain elevation: metres (`m`).
-- Initial depth: metres (`m`).
-- Initial water level: metres (`m`) in the configured vertical datum.
-- Manning roughness: dimensionless Manning coefficient.
-- Initial velocity `x_file`/`y_file`: metres per second (`m/s`).
+```text
+nx = (xmax - xmin) / dx
+ny = (ymax - ymin) / dy
+```
 
-## Time-series CSV inputs
+`nx`、`ny` 不是用户输入字段，也不应写入 `config.yaml`。栅格读取层未来还需
+检查范围、分辨率、尺寸、CRS 和 NoData 元数据的一致性。
 
-The default columns are `time,value`; `TimeSeriesRef` permits overriding their
-names. Files should have a header row and numeric rows sorted by increasing
-time. The default time unit is seconds from `model.start_time`.
+## 栅格输入
 
-Value units are defined by the owning field until the open unit-metadata
-decision is resolved:
+- 地形高程：米（`m`）。
+- 初始水深：米（`m`）。
+- 初始水位：米（`m`），参考垂向基准待确定。
+- Manning 糙率：无量纲。
+- 初始速度 x/y：米每秒（`m/s`），接口已预留但暂未实现。
 
-- discharge boundary: cubic metres per second (`m³/s`);
-- water-level boundary: metres (`m`);
-- rainfall: millimetres per hour (`mm/h`) by default.
+`terrain.nodata` 可指定栅格 NoData 数值。`terrain.nodata_strategy` 默认值为
+`error`：策略枚举还包含 `nearest` 和 `interpolate`，用于未来扩展；本阶段不
+实现任何替换或插值算法。
 
-Interpolation, extrapolation, duplicate timestamps, and missing-value policy
-are intentionally deferred to the data-reader design.
+## CSV 时间序列
+
+默认列名为 `time,value`，可通过 `time_column` 和 `value_column` 覆盖。文件应
+有表头，时间为递增数值，默认时间单位为秒（`s`），相对于
+`model.start_time` 的时间基准和插值/外推规则待后续确定。
+
+值单位由所属字段决定：
+
+- discharge 边界：立方米每秒（`m³/s`）；
+- water_level 边界：米（`m`）；
+- rainfall：毫米每小时（`mm/h`，默认）。
+
+重复时间、缺失值、插值和外推策略尚未实现。

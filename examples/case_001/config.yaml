@@ -1,80 +1,94 @@
-# Complete interface example. No solver is invoked by loading this file.
+# 二维水动力模型 V1.0 标准用户配置模板。
+# 当前阶段仅加载并校验配置，不启动 Solver，也不读取栅格/CSV 内容。
 model:
-  name: "case_001"
-  description: "二维洪水演进输入接口示例"
-  gravity: 9.81                 # m/s^2
-  start_time: 0.0               # s
-  end_time: 3600.0              # s
-  output_interval: 60.0         # s; must match output.interval when present
-  coordinate_system: "EPSG:xxxx"
-  units: "SI"
+  name: "case_001"                 # 必填；本次模拟案例名称，非空字符串。
+  description: "二维洪水演进输入接口示例" # 可选；案例说明，非空字符串。
+  gravity: 9.81                     # 可选；重力加速度，单位 m/s^2，必须大于 0。
+  start_time: 0.0                   # 可选；模拟开始时间，单位 s，必须 >= 0。
+  end_time: 3600.0                  # 必填；模拟结束时间，单位 s，必须大于 start_time。
+  output_interval: 60.0             # 可选/兼容字段；单位 s；若填写必须与 output.interval 相同。
+  coordinate_system: "EPSG:xxxx"   # 必填；坐标系标识。格式校验和重投影暂未实现。
+  units: "SI"                      # 可选；单位体系，目前唯一支持值为 SI。
 
 domain:
-  type: "structured"
-  dx: 10.0                      # m
-  dy: 10.0                      # m
-  nx: 100                       # optional cell count
-  ny: 100
+  type: "structured"                # 可选；网格类型，目前仅支持 structured。
+  xmin: 0.0                         # 必填；计算区域 x 最小坐标，单位 m。
+  xmax: 5000.0                      # 必填；计算区域 x 最大坐标，单位 m，必须大于 xmin。
+  ymin: 0.0                         # 必填；计算区域 y 最小坐标，单位 m。
+  ymax: 5000.0                      # 必填；计算区域 y 最大坐标，单位 m，必须大于 ymin。
+  dx: 50.0                          # 必填；x 方向网格尺寸，单位 m，V1.0 必须在 30～100（含）范围内。
+  dy: 50.0                          # 必填；y 方向网格尺寸，单位 m，V1.0 必须在 30～100（含）范围内；可与 dx 不同。
+  # nx、ny 不在用户配置中；程序根据 (xmax-xmin)/dx、(ymax-ymin)/dy 自动计算内部网格数量。
 
 terrain:
-  type: "raster"
-  file: "data/dem.tif"
-  nodata: -9999
+  type: "raster"                    # 必填；地形输入方式：raster 或 constant。
+  file: "data/dem.tif"              # raster 时必填；DEM 文件路径，当前仅校验字符串，不读取文件。
+  nodata: -9999                     # 可选；栅格 NoData 数值标记，单位跟随地形栅格。
+  nodata_strategy: "error"          # 可选；NoData 策略默认 error；nearest/interpolate 仅预留，算法暂未实现。
+  # elevation: 100.0                # constant 时使用，单位 m；本 raster 示例中不可填写。
 
 initial_condition:
-  type: "constant_depth"
-  depth: 0.0                    # m
-  velocity: null                # reserved future velocity-field interface
+  type: "constant_depth"             # 必填；constant_depth、constant_level 或 raster。
+  depth: 0.0                         # constant_depth 时必填；初始水深，单位 m，必须 >= 0。
+  # level: 100.0                     # constant_level 时使用；初始水位，单位 m；本示例不可填写。
+  # depth_file: "data/initial_depth.tif" # raster 时使用；初始水深栅格路径，暂不读取。
+  # level_file: "data/initial_level.tif" # raster 时使用；初始水位栅格路径，暂不读取。
+  velocity: null                     # 可选/预留；二维初始速度场接口，当前不参与计算。
 
 roughness:
-  type: "constant"
-  manning_n: 0.035
+  type: "constant"                  # 必填；糙率输入方式：constant 或 raster。
+  manning_n: 0.035                   # constant 时必填；Manning 糙率系数，无量纲，必须 > 0。
+  # file: "data/manning.tif"        # raster 时使用；Manning 栅格路径，当前仅校验字符串。
 
 boundary:
-  - id: "inflow"
-    location: "west"
-    type: "discharge"
-    timeseries:
-      file: "data/inflow.csv"
-      time_column: "time"
-      value_column: "value"
-      time_unit: "s"
-  - id: "outflow"
-    location: "east"
-    type: "water_level"
-    value: 100.0                 # m
-  - id: "north_wall"
-    location: "north"
-    type: "wall"
-  - id: "south_wall"
-    location: "south"
-    type: "wall"
+  - id: "inflow"                    # 必填；边界唯一标识，列表内不可重复。
+    location: "west"                # 必填；structured 网格边界位置：west/east/north/south。
+    type: "discharge"               # 必填；discharge、water_level、wall 或 timeseries。
+    timeseries:                      # discharge 的时间序列输入；CSV 默认列为 time,value。
+      file: "data/inflow.csv"       # 必填；文件路径，当前不读取文件内容。
+      time_column: "time"           # 可选；时间列名，默认 time。
+      value_column: "value"         # 可选；数值列名，默认 value。
+      time_unit: "s"                # 可选；时间单位，目前仅支持秒 s。
+  - id: "outflow"                   # 必填；边界唯一标识。
+    location: "east"                # 必填；边界位置。
+    type: "water_level"             # 必填；水位边界类型。
+    value: 100.0                     # water_level 时必填；水位，单位 m。
+  - id: "north_wall"                # 必填；边界唯一标识。
+    location: "north"               # 必填；边界位置。
+    type: "wall"                    # wall 当前仅表示接口类型，具体物理实现暂未开始。
+  - id: "south_wall"                # 必填；边界唯一标识。
+    location: "south"               # 必填；边界位置。
+    type: "wall"                    # wall 当前仅表示接口类型，具体物理实现暂未开始。
 
 source:
   rainfall:
-    enabled: false
+    enabled: false                   # 可选；是否启用降雨输入，默认 false；降雨物理过程暂未实现。
+    # type: "timeseries"             # enabled=true 时必填；当前唯一预留值 timeseries，暂未实现。
+    # file: "data/rainfall.csv"     # enabled=true 时必填；降雨 CSV 路径，暂不读取。
+    # time_unit: "s"                # 预留；时间单位，目前仅支持 s。
+    # intensity_unit: "mm/h"        # 预留；降雨强度单位，默认 mm/h，换算过程暂未实现。
 
 numerics:
-  scheme: null                   # intentionally undecided
-  flux: null                     # intentionally undecided
-  time_integrator: null          # intentionally undecided
-  cfl: 0.5
-  min_depth: 0.001               # m
-  dry_depth: 0.0001              # m
+  scheme: null                       # 预留；空间离散方案，暂未冻结且暂未实现。
+  flux: null                         # 预留；数值通量方案，暂未冻结且暂未实现。
+  time_integrator: null              # 预留；时间积分方案，暂未冻结且暂未实现。
+  cfl: 0.5                           # 配置层参数；无量纲，范围 0 < cfl <= 1，不代表具体算法。
+  min_depth: 0.001                  # 配置层阈值，单位 m，必须 >= 0 且不小于 dry_depth。
+  dry_depth: 0.0001                 # 配置层阈值，单位 m，必须 >= 0；干湿判定算法暂未实现。
 
 output:
-  directory: "results"
-  interval: 60.0                 # s
+  directory: "results"              # 可选；结果目录路径，默认 results；输出器暂未实现。
+  interval: 60.0                     # 可选；输出时间间隔，单位 s，必须 > 0。
   variables:
-    - "water_depth"
-    - "water_level"
-    - "velocity_x"
-    - "velocity_y"
-    - "velocity_magnitude"
-    - "discharge"
-  format: "netcdf"
+    - "water_depth"                 # 输出变量；当前仅定义接口，实际写出暂未实现。
+    - "water_level"                 # 预留输出变量，单位 m；暂未实现。
+    - "velocity_x"                  # 预留输出变量，单位 m/s；暂未实现。
+    - "velocity_y"                  # 预留输出变量，单位 m/s；暂未实现。
+    - "velocity_magnitude"          # 预留输出变量，单位 m/s；暂未实现。
+    - "discharge"                   # 预留输出变量，单位 m^3/s；暂未实现。
+  format: "netcdf"                  # 可选；netcdf/geotiff/csv；格式枚举仅作接口预留。
 
 validation:
-  enabled: true
-  mass_balance_check: true
-  report: true
+  enabled: true                      # 可选；是否启用未来运行校验，默认 false；算法暂未实现。
+  mass_balance_check: true           # 可选；质量守恒校验开关，需 enabled=true；暂未实现。
+  report: true                       # 可选；是否生成未来校验报告，默认 true；报告器暂未实现。
