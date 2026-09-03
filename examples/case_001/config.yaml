@@ -1,0 +1,80 @@
+# Complete interface example. No solver is invoked by loading this file.
+model:
+  name: "case_001"
+  description: "二维洪水演进输入接口示例"
+  gravity: 9.81                 # m/s^2
+  start_time: 0.0               # s
+  end_time: 3600.0              # s
+  output_interval: 60.0         # s; must match output.interval when present
+  coordinate_system: "EPSG:xxxx"
+  units: "SI"
+
+domain:
+  type: "structured"
+  dx: 10.0                      # m
+  dy: 10.0                      # m
+  nx: 100                       # optional cell count
+  ny: 100
+
+terrain:
+  type: "raster"
+  file: "data/dem.tif"
+  nodata: -9999
+
+initial_condition:
+  type: "constant_depth"
+  depth: 0.0                    # m
+  velocity: null                # reserved future velocity-field interface
+
+roughness:
+  type: "constant"
+  manning_n: 0.035
+
+boundary:
+  - id: "inflow"
+    location: "west"
+    type: "discharge"
+    timeseries:
+      file: "data/inflow.csv"
+      time_column: "time"
+      value_column: "value"
+      time_unit: "s"
+  - id: "outflow"
+    location: "east"
+    type: "water_level"
+    value: 100.0                 # m
+  - id: "north_wall"
+    location: "north"
+    type: "wall"
+  - id: "south_wall"
+    location: "south"
+    type: "wall"
+
+source:
+  rainfall:
+    enabled: false
+
+numerics:
+  scheme: null                   # intentionally undecided
+  flux: null                     # intentionally undecided
+  time_integrator: null          # intentionally undecided
+  cfl: 0.5
+  min_depth: 0.001               # m
+  dry_depth: 0.0001              # m
+
+output:
+  directory: "results"
+  interval: 60.0                 # s
+  variables:
+    - "water_depth"
+    - "water_level"
+    - "velocity_x"
+    - "velocity_y"
+    - "velocity_magnitude"
+    - "discharge"
+  format: "netcdf"
+
+validation:
+  enabled: true
+  mass_balance_check: true
+  report: true

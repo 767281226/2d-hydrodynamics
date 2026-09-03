@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "two-d-hydrodynamics"
+version = "0.1.0"
+description = "Typed input and configuration interface for a future 2-D hydrodynamics engine"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0,<3.0",
+    "PyYAML>=6.0,<7.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0,<9.0"]
+
+[tool.setuptools.packages.find]
+include = ["hydrodynamics*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
