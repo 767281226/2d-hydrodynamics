@@ -9,8 +9,10 @@ Validation is performed before any future solver is called.
    of unknown keys (`extra="forbid"`).
 3. Model validators enforce cross-field rules such as selected source fields,
    unique boundary IDs, time ordering, and matching output intervals.
-4. Raster/CSV existence and metadata checks are intentionally deferred to a
-   future case-preparation layer.
+4. Raster/CSV existence and metadata checks, DEM coverage/alignment checks, and
+   actual mapping are intentionally deferred to a future case-preparation layer.
+5. `TerrainField` validates `(ny, nx)` elevation/mask shape; `TerrainMapper`
+   validates its interface and then raises an explicit not-implemented error.
 
 Use `ConfigLoadError` for missing/unreadable/invalid-YAML files and
 `ConfigValidationError` for a syntactically valid YAML document that violates

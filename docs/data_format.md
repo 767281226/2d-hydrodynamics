@@ -36,6 +36,13 @@ ny = (ymax - ymin) / dy
 `error`：策略枚举还包含 `nearest` 和 `interpolate`，用于未来扩展；本阶段不
 实现任何替换或插值算法。
 
+## DEM 映射策略
+
+`terrain.resampling.strategy` 的可选值为 `auto`、`area_weighted_mean`、
+`direct` 和 `bilinear`，默认 `auto`。固定判定规则、覆盖范围要求和
+`TerrainField`/`TerrainMapper` 接口见 [terrain_mapping.md](terrain_mapping.md)。
+当前只保存配置和接口，不读取 DEM、不解析 GeoTIFF，也不执行重采样。
+
 ## CSV 时间序列
 
 默认列名为 `time,value`，可通过 `time_column` 和 `value_column` 覆盖。文件应

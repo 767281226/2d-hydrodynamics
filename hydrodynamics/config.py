@@ -6,10 +6,12 @@ rasters, execute time series, or call a hydrodynamics solver.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
-from math import isclose
+from math import isclose, isfinite
+from numbers import Real
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Sequence
 
 from pydantic import (
     BaseModel,
@@ -27,15 +29,18 @@ def _number(value: Any) -> float:
     """Accept YAML integers/floats, but reject booleans and strings."""
 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError("must be a number")
-    return float(value)
+        raise ValueError("must be a number")
+    converted = float(value)
+    if not isfinite(converted):
+        raise ValueError("must be finite")
+    return converted
 
 
 def _text(value: Any) -> str:
     """Accept only strings so paths and identifiers are not silently coerced."""
 
     if not isinstance(value, str):
-        raise TypeError("must be a string")
+        raise ValueError("must be a string")
     stripped = value.strip()
     if not stripped:
         raise ValueError("must not be empty")
@@ -68,6 +73,13 @@ class DomainType(str, Enum):
 class TerrainType(str, Enum):
     RASTER = "raster"
     CONSTANT = "constant"
+
+
+class ResamplingStrategy(str, Enum):
+    AUTO = "auto"
+    AREA_WEIGHTED_MEAN = "area_weighted_mean"
+    BILINEAR = "bilinear"
+    DIRECT = "direct"
 
 
 class InitialConditionType(str, Enum):
@@ -194,11 +206,16 @@ class NoDataStrategy(str, Enum):
     INTERPOLATE = "interpolate"
 
 
+class TerrainResamplingConfig(_SchemaModel):
+    strategy: ResamplingStrategy = ResamplingStrategy.AUTO
+
+
 class TerrainConfig(_SchemaModel):
     type: TerrainType
     file: Text | None = None
     nodata: Number | None = Field(default=None, description="dataset nodata value")
     nodata_strategy: NoDataStrategy = NoDataStrategy.ERROR
+    resampling: TerrainResamplingConfig = Field(default_factory=TerrainResamplingConfig)
     elevation: Number | None = Field(default=None, description="m")
 
     @model_validator(mode="after")
@@ -215,8 +232,232 @@ class TerrainConfig(_SchemaModel):
                 raise ValueError("file is only valid when terrain.type is 'raster'")
             if self.nodata is not None or self.nodata_strategy is not NoDataStrategy.ERROR:
                 raise ValueError("nodata and non-error nodata_strategy are only valid for raster terrain")
+            if self.resampling.strategy is not ResamplingStrategy.AUTO:
+                raise ValueError("non-auto resampling is only valid for raster terrain")
         return self
 
+
+class _Grid2D(tuple):
+    """Small dependency-free 2-D container supporting ``[j][i]`` and ``[j, i]``."""
+
+    def __new__(cls, rows: Any) -> "_Grid2D":
+        return super().__new__(cls, tuple(tuple(row) for row in rows))
+
+    def __getitem__(self, index: Any) -> Any:
+        if isinstance(index, tuple):
+            if len(index) != 2:
+                raise IndexError("a 2-D grid requires exactly two indices")
+            row_index, column_index = index
+            return super().__getitem__(row_index)[column_index]
+        return super().__getitem__(index)
+
+
+@dataclass(frozen=True)
+class TerrainField:
+    """Terrain values aligned one-to-one with the model grid.
+
+    ``elevation[j][i]`` is the representative elevation for the cell at row
+    ``j`` and column ``i``.  This container carries only grid metadata and
+    validates shape; it does not read or resample a DEM.
+    """
+
+    elevation: Sequence[Sequence[float]]
+    nx: int
+    ny: int
+    dx: float
+    dy: float
+    xmin: float
+    ymin: float
+    nodata_mask: Sequence[Sequence[bool]] | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.nx, bool) or not isinstance(self.nx, int) or self.nx <= 0:
+            raise ValueError("TerrainField.nx must be a positive integer")
+        if isinstance(self.ny, bool) or not isinstance(self.ny, int) or self.ny <= 0:
+            raise ValueError("TerrainField.ny must be a positive integer")
+        for name, value in (("dx", self.dx), ("dy", self.dy)):
+            if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(float(value)) or value <= 0:
+                raise ValueError(f"TerrainField.{name} must be a positive finite number")
+        for name, value in (("xmin", self.xmin), ("ymin", self.ymin)):
+            if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(float(value)):
+                raise ValueError(f"TerrainField.{name} must be a finite number")
+
+        try:
+            rows = tuple(tuple(row) for row in self.elevation)
+        except TypeError as exc:
+            raise ValueError("TerrainField.elevation must be a 2-D sequence") from exc
+        if len(rows) != self.ny:
+            raise ValueError(f"TerrainField.elevation must have {self.ny} rows, got {len(rows)}")
+        for row_index, row in enumerate(rows):
+            if len(row) != self.nx:
+                raise ValueError(
+                    f"TerrainField.elevation row {row_index} must have {self.nx} values, got {len(row)}"
+                )
+            for column_index, value in enumerate(row):
+                if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(float(value)):
+                    raise ValueError(
+                        f"TerrainField.elevation[{row_index}][{column_index}] must be a finite number"
+                    )
+        object.__setattr__(self, "elevation", _Grid2D(rows))
+
+        if self.nodata_mask is not None:
+            try:
+                mask_rows = tuple(tuple(row) for row in self.nodata_mask)
+            except TypeError as exc:
+                raise ValueError("TerrainField.nodata_mask must be a 2-D boolean sequence") from exc
+            if len(mask_rows) != self.ny:
+                raise ValueError(f"TerrainField.nodata_mask must have {self.ny} rows, got {len(mask_rows)}")
+            for row_index, row in enumerate(mask_rows):
+                if len(row) != self.nx:
+                    raise ValueError(
+                        f"TerrainField.nodata_mask row {row_index} must have {self.nx} values, got {len(row)}"
+                    )
+                if any(not isinstance(value, bool) for value in row):
+                    raise ValueError("TerrainField.nodata_mask values must be boolean")
+            object.__setattr__(self, "nodata_mask", _Grid2D(mask_rows))
+
+    @classmethod
+    def from_domain(
+        cls,
+        domain: DomainConfig,
+        elevation: Sequence[Sequence[float]],
+        nodata_mask: Sequence[Sequence[bool]] | None = None,
+    ) -> "TerrainField":
+        """Create a field whose dimensions and metadata come from ``domain``."""
+
+        if not isinstance(domain, DomainConfig):
+            raise TypeError("domain must be a DomainConfig")
+        return cls(
+            elevation=elevation,
+            nx=domain.nx,
+            ny=domain.ny,
+            dx=domain.dx,
+            dy=domain.dy,
+            xmin=domain.xmin,
+            ymin=domain.ymin,
+            nodata_mask=nodata_mask,
+        )
+
+    @property
+    def terrain_elevation(self) -> Sequence[Sequence[float]]:
+        """Read-only alias emphasizing the solver-facing array semantics."""
+
+        return self.elevation
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Array shape in ``(ny, nx)`` order."""
+
+        return self.ny, self.nx
+
+
+def _coerce_enum(value: Any, enum_type: type[Enum], field_name: str) -> Enum:
+    if isinstance(value, enum_type):
+        return value
+    if isinstance(value, str):
+        try:
+            return enum_type(value)
+        except ValueError as exc:
+            allowed = ", ".join(item.value for item in enum_type)
+            raise ValueError(f"{field_name} must be one of: {allowed}") from exc
+    raise ValueError(f"{field_name} must be a {enum_type.__name__} value or string")
+
+
+class TerrainMapper:
+    """Boundary for a future DEM-to-grid data preparation implementation."""
+
+    def map(
+        self,
+        domain: DomainConfig,
+        terrain: TerrainConfig,
+        *,
+        nodata_strategy: NoDataStrategy | None = None,
+        resampling_strategy: ResamplingStrategy | None = None,
+        coordinate_system: str | None = None,
+    ) -> TerrainField:
+        """Validate interface arguments, then explicitly remain unimplemented."""
+
+        if not isinstance(domain, DomainConfig):
+            raise TypeError("domain must be a DomainConfig")
+        if not isinstance(terrain, TerrainConfig):
+            raise TypeError("terrain must be a TerrainConfig")
+        if terrain.type is not TerrainType.RASTER:
+            raise ValueError("TerrainMapper requires terrain.type to be 'raster'")
+        normalized_nodata = (
+            _coerce_enum(nodata_strategy, NoDataStrategy, "nodata_strategy")
+            if nodata_strategy is not None
+            else None
+        )
+        normalized_resampling = (
+            _coerce_enum(resampling_strategy, ResamplingStrategy, "resampling_strategy")
+            if resampling_strategy is not None
+            else None
+        )
+        if coordinate_system is not None and (not isinstance(coordinate_system, str) or not coordinate_system.strip()):
+            raise ValueError("coordinate_system must be a non-empty string when provided")
+        effective_nodata = normalized_nodata or terrain.nodata_strategy
+        effective_resampling = normalized_resampling or terrain.resampling.strategy
+        if normalized_nodata is not None and normalized_nodata is not terrain.nodata_strategy:
+            raise ValueError("nodata_strategy override does not match terrain.nodata_strategy")
+        if normalized_resampling is not None and normalized_resampling is not terrain.resampling.strategy:
+            raise ValueError("resampling_strategy override does not match terrain.resampling.strategy")
+        if effective_nodata is not NoDataStrategy.ERROR:
+            raise NotImplementedError(
+                f"NoData strategy '{effective_nodata.value}' is declared but not implemented"
+            )
+        # ``effective_resampling`` is intentionally not executed here.  Its
+        # value is validated so a future mapper can consume the same contract.
+        _ = effective_resampling
+        raise NotImplementedError(
+            "TerrainMapper.map is an interface placeholder; DEM reading, CRS transformation, "
+            "NoData handling, and resampling are not implemented"
+        )
+
+    def map_terrain(self, domain: DomainConfig, terrain: TerrainConfig, **kwargs: Any) -> TerrainField:
+        """Descriptive alias for :meth:`map`."""
+
+        return self.map(domain, terrain, **kwargs)
+
+
+def resolve_auto_resampling_strategy(
+    dem_dx: float,
+    dem_dy: float,
+    grid_dx: float,
+    grid_dy: float,
+    *,
+    aligned: bool = False,
+) -> ResamplingStrategy:
+    """Resolve the frozen ``auto`` policy from supplied raster metadata.
+
+    This function only classifies resolutions; it never reads or modifies a
+    raster. ``aligned`` must be true only when CRS, extent, pixel boundaries,
+    and alignment have already been verified by a future data-preparation
+    layer. Mixed finer/coarser axes are rejected because V1.0 does not define
+    that case.
+    """
+
+    if not isinstance(aligned, bool):
+        raise ValueError("aligned must be a boolean")
+    values = {"dem_dx": dem_dx, "dem_dy": dem_dy, "grid_dx": grid_dx, "grid_dy": grid_dy}
+    for name, value in values.items():
+        if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(float(value)) or value <= 0:
+            raise ValueError(f"{name} must be a positive finite number")
+
+    same_resolution = isclose(dem_dx, grid_dx, rel_tol=1e-9, abs_tol=1e-9) and isclose(
+        dem_dy, grid_dy, rel_tol=1e-9, abs_tol=1e-9
+    )
+    if same_resolution:
+        if not aligned:
+            raise ValueError("same-resolution DEM requires verified CRS, extent, and pixel alignment for direct mapping")
+        return ResamplingStrategy.DIRECT
+
+    finer = dem_dx <= grid_dx and dem_dy <= grid_dy and (dem_dx < grid_dx or dem_dy < grid_dy)
+    coarser = dem_dx >= grid_dx and dem_dy >= grid_dy and (dem_dx > grid_dx or dem_dy > grid_dy)
+    if finer:
+        return ResamplingStrategy.AREA_WEIGHTED_MEAN
+    if coarser:
+        return ResamplingStrategy.BILINEAR
+    raise ValueError("DEM resolution is finer on one axis and coarser on the other; V1.0 auto policy is undefined")
 
 class VelocityFieldConfig(_SchemaModel):
     """Reserved initial velocity interface; no velocity computation occurs here."""
@@ -493,6 +734,10 @@ __all__ = [
     "DomainConfig",
     "DomainType",
     "NoDataStrategy",
+    "ResamplingStrategy",
+    "TerrainField",
+    "TerrainMapper",
+    "resolve_auto_resampling_strategy",
     "FieldType",
     "InitialConditionConfig",
     "InitialConditionType",
@@ -505,6 +750,7 @@ __all__ = [
     "RoughnessConfig",
     "SimulationConfig",
     "TerrainConfig",
+    "TerrainResamplingConfig",
     "TerrainType",
     "TimeSeriesRef",
     "Units",

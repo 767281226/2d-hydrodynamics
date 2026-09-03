@@ -17,6 +17,9 @@ be confirmed before implementing a solver or data readers.
 - Define path resolution, allowed path roots, and whether missing referenced
   files are checked during configuration loading or during case preparation.
 - Define the behavior of the reserved `nearest` and `interpolate` NoData strategies.
+- Confirm DEM metadata tolerances for `auto` (resolution, CRS, extent, and pixel
+  alignment) and the handling of mixed-resolution axes; V1 currently rejects
+  undefined cases rather than guessing.
 - Confirm the initial-condition representation for a water-level raster and
   the exact velocity-field metadata.
 - Confirm output formats and variable-to-format compatibility. The schema lists
@@ -37,5 +40,8 @@ be confirmed before implementing a solver or data readers.
 
 - Set the supported Python versions and dependency lock strategy.
 - Add raster and time-series readers after their contracts are approved.
+- Implement TerrainMapper only after DEM coverage, CRS, and resampling contracts
+  are approved; the current class is an explicit placeholder. Constant terrain
+  mapping behavior is intentionally outside the DEM mapper boundary.
 - Add solver-facing interfaces and result writers without coupling them to the
   YAML parser.

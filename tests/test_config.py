@@ -9,10 +9,17 @@ from hydrodynamics.config import (
     ConfigValidationError,
     DomainConfig,
     NoDataStrategy,
+    ResamplingStrategy,
     SimulationConfig,
+    TerrainConfig,
+    TerrainField,
+    TerrainMapper,
+    TerrainType,
     load_config,
+    resolve_auto_resampling_strategy,
 )
 from pydantic import ValidationError
+from hydrodynamics.terrain_mapping import TerrainField as PublicTerrainField
 
 
 EXAMPLE = Path(__file__).parents[1] / "examples" / "case_001" / "config.yaml"
@@ -61,6 +68,71 @@ class ConfigSchemaTests(unittest.TestCase):
         raw["terrain"]["nodata_strategy"] = "fill"
         with self.assertRaises(ValidationError):
             SimulationConfig.model_validate(raw)
+    def test_all_resampling_strategies_are_valid_for_raster(self) -> None:
+        for strategy in ResamplingStrategy:
+            terrain = TerrainConfig(type=TerrainType.RASTER, file="dem.tif", resampling={"strategy": strategy})
+            self.assertEqual(terrain.resampling.strategy, strategy)
+
+    def test_resampling_defaults_to_auto(self) -> None:
+        terrain = TerrainConfig(type=TerrainType.RASTER, file="dem.tif")
+        self.assertEqual(terrain.resampling.strategy, ResamplingStrategy.AUTO)
+
+    def test_constant_terrain_rejects_non_auto_resampling(self) -> None:
+        with self.assertRaises(ValidationError):
+            TerrainConfig(
+                type=TerrainType.CONSTANT,
+                elevation=100.0,
+                resampling={"strategy": "direct"},
+            )
+
+    def test_terrain_mapping_public_import_is_available(self) -> None:
+        self.assertIs(PublicTerrainField, TerrainField)
+
+    def test_terrain_field_from_domain_transfers_metadata(self) -> None:
+        domain = DomainConfig(xmin=10, xmax=110, ymin=20, ymax=120, dx=50, dy=50)
+        field = TerrainField.from_domain(domain, [[1.0, 2.0], [3.0, 4.0]])
+        self.assertEqual(field.shape, (2, 2))
+        self.assertEqual((field.nx, field.ny, field.dx, field.dy, field.xmin, field.ymin), (2, 2, 50.0, 50.0, 10.0, 20.0))
+        self.assertEqual(field.terrain_elevation[1][0], 3.0)
+
+    def test_terrain_field_rejects_wrong_shape(self) -> None:
+        domain = DomainConfig(xmin=0, xmax=100, ymin=0, ymax=100, dx=50, dy=50)
+        with self.assertRaises(ValueError):
+            TerrainField.from_domain(domain, [[1.0]])
+
+    def test_terrain_field_rejects_wrong_mask_shape(self) -> None:
+        domain = DomainConfig(xmin=0, xmax=100, ymin=0, ymax=100, dx=50, dy=50)
+        with self.assertRaises(ValueError):
+            TerrainField.from_domain(domain, [[1.0, 2.0], [3.0, 4.0]], [[False]])
+
+    def test_terrain_mapper_is_explicitly_unimplemented(self) -> None:
+        with self.assertRaises(NotImplementedError) as raised:
+            TerrainMapper().map(self.config.domain, self.config.terrain)
+        self.assertIn("not implemented", str(raised.exception))
+
+    def test_terrain_mapper_rejects_undeclared_nodata_algorithm(self) -> None:
+        terrain = TerrainConfig(type=TerrainType.RASTER, file="dem.tif", nodata_strategy="nearest")
+        with self.assertRaises(NotImplementedError):
+            TerrainMapper().map(self.config.domain, terrain)
+
+    def test_terrain_mapper_accepts_enum_strings_before_placeholder_error(self) -> None:
+        with self.assertRaises(NotImplementedError):
+            TerrainMapper().map(
+                self.config.domain,
+                self.config.terrain,
+                nodata_strategy="error",
+                resampling_strategy="auto",
+            )
+
+    def test_auto_resolution_policy(self) -> None:
+        self.assertEqual(resolve_auto_resampling_strategy(10, 10, 50, 50), ResamplingStrategy.AREA_WEIGHTED_MEAN)
+        self.assertEqual(resolve_auto_resampling_strategy(90, 90, 50, 50), ResamplingStrategy.BILINEAR)
+        self.assertEqual(resolve_auto_resampling_strategy(50, 50, 50, 50, aligned=True), ResamplingStrategy.DIRECT)
+        with self.assertRaises(ValueError):
+            resolve_auto_resampling_strategy(50, 50, 50, 50)
+        with self.assertRaises(ValueError):
+            resolve_auto_resampling_strategy(10, 90, 50, 50)
+
     def test_missing_required_parameter_fails(self) -> None:
         raw = copy.deepcopy(self.raw)
         del raw["model"]["name"]

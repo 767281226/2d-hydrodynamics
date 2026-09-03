@@ -14,8 +14,9 @@ simulation scenarios without changing engine code.
 
 ## Architecture boundary
 
-The current package contains only a typed configuration contract and YAML
-loader. It does not read GeoTIFF/CSV contents, build a grid, run a time step, or
+The current package contains a typed configuration contract, YAML loader, and a
+non-computational DEM mapping boundary. It does not read GeoTIFF/CSV contents,
+perform CRS conversion or resampling, build a solver grid, run a time step, or
 produce results. Those responsibilities will consume this contract later.
 
 ## Case convention
@@ -41,5 +42,9 @@ case/
 - Relative paths are interpreted relative to the case directory by the future
   engine; the current loader intentionally does not open referenced data.
 - Numerical scheme, flux, and time-integrator names remain placeholders.
+- Terrain mapping strategies and NoData policies are declared, but actual DEM
+  mapping remains unimplemented.
+- V1.0 grid resolution is 30–100 m; nx/ny are computed internally from the
+  explicit domain extent and dx/dy.
 
 See [TODO.md](TODO.md) for decisions intentionally left open.

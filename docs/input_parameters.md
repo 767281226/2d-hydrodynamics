@@ -55,6 +55,13 @@ V1.0 使用规则矩形结构化网格。`xmin/xmax/ymin/ymax` 定义计算区�
 | `nodata` | number/null | 栅格原值 | null | 否 | 栅格 NoData 标记 |
 | `nodata_strategy` | enum(`error`,`nearest`,`interpolate`) | — | `error` | 否 | `nearest`、`interpolate` 仅预留，插值算法暂未实现 |
 | `elevation` | number/null | m | null | 条件 | `constant` 时必填；raster 时禁止填写 |
+| `resampling` | object | — | `{strategy: auto}` | 否 | raster 的 DEM 映射策略配置；实际算法暂未实现 |
+| `resampling.strategy` | enum(`auto`,`area_weighted_mean`,`bilinear`,`direct`) | — | `auto` | 否 | `auto` 是 V1 推荐值；按 DEM/网格分辨率固定选择策略；算法暂未实现 |
+
+`resampling.strategy` 的固定规则为：DEM 更细使用 `area_weighted_mean`；
+同分辨率且 CRS、范围、像元边界完全对齐使用 `direct`；DEM 更粗使用
+`bilinear`。同分辨率但未验证完全对齐、或两个方向一细一粗时，V1.0 不猜测，
+由映射层报错。`auto` 只依据未来数据准备层提供的元数据，当前不读取 DEM。
 
 ### initial_condition（已实现：配置校验；速度场预留）
 

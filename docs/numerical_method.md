@@ -17,3 +17,11 @@ The general controls have schema-level sanity checks only:
 These checks do not define a physical dry-state algorithm. The later numerical
 design must document which methods accept these controls and whether their
 legal ranges differ.
+
+
+## Terrain mapping boundary
+
+DEM-to-grid mapping is a data-preparation concern, not a numerical Solver
+choice. `TerrainMapper` must provide `terrain_elevation[j, i]` before a future
+solver runs; this phase does not implement that conversion. NoData handling and
+CRS transformation likewise remain outside the Solver.

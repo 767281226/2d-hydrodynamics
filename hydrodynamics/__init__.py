@@ -9,7 +9,11 @@ from .config import (
     ConfigLoadError,
     ConfigValidationError,
     NoDataStrategy,
+    ResamplingStrategy,
     SimulationConfig,
+    TerrainField,
+    TerrainMapper,
+    resolve_auto_resampling_strategy,
     load_config,
 )
 
@@ -17,6 +21,10 @@ __all__ = [
     "ConfigLoadError",
     "ConfigValidationError",
     "NoDataStrategy",
+    "ResamplingStrategy",
     "SimulationConfig",
+    "TerrainField",
+    "TerrainMapper",
+    "resolve_auto_resampling_strategy",
     "load_config",
 ]

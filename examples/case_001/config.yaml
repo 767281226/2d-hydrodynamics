@@ -25,6 +25,8 @@ terrain:
   file: "data/dem.tif"              # raster 时必填；DEM 文件路径，当前仅校验字符串，不读取文件。
   nodata: -9999                     # 可选；栅格 NoData 数值标记，单位跟随地形栅格。
   nodata_strategy: "error"          # 可选；NoData 策略默认 error；nearest/interpolate 仅预留，算法暂未实现。
+  resampling:                       # 可选；DEM 到计算网格的映射配置，当前仅定义接口。
+    strategy: "auto"              # 可选；默认 auto，V1 推荐：DEM 更细用 area_weighted_mean、同分辨率完全对齐用 direct、DEM 更粗用 bilinear；算法暂未实现。
   # elevation: 100.0                # constant 时使用，单位 m；本 raster 示例中不可填写。
 
 initial_condition:

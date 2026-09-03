@@ -38,3 +38,16 @@ python -m pytest
 
 Tests cover valid loading, missing fields, invalid enum values, numeric ranges,
 and type-specific terrain/boundary rules. Numerical results are out of scope.
+
+
+## DEM mapping interface (placeholder)
+
+```python
+from hydrodynamics import TerrainMapper
+
+# Validates the interface, then raises NotImplementedError until the
+# data-preparation implementation is approved.
+mapper = TerrainMapper()
+```
+
+Do not add raster readers, CRS transformations, or resampling code in this phase.
