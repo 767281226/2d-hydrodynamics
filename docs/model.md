@@ -16,3 +16,12 @@ V1.0 使用规则矩形结构化网格：`domain` 显式给出 xmin/xmax/ymin/ym
 声明，`auto` 的分辨率判定规则和 NoData/覆盖约束见
 [terrain_mapping.md](terrain_mapping.md)。当前 `TerrainMapper` 仅为不产生伪造
 结果的占位接口，实际 DEM 读取、CRS 转换和重采样尚未实现。
+
+
+## DEM data contract boundary
+
+DEM 不直接进入 Solver。未来流程为 `DEMReader → DEMMetadata → TerrainMapper →
+TerrainField → Solver`；Solver 只接收与 V1.0 cell-centered 计算网格对应的
+`TerrainField`。垂直基准必须在运行前确认，`model.vertical_datum_required` 默认
+为 true，但当前不指定具体基准。详细字段和错误语义见
+[dem_data_contract.md](dem_data_contract.md)。

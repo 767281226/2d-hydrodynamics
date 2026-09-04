@@ -31,10 +31,13 @@ config = load_config("examples/case_001/config.yaml")
 ## 目录
 
 - `hydrodynamics/config.py`：Pydantic 配置模型、TerrainField/TerrainMapper 接口和 YAML 加载器。
-- `hydrodynamics/terrain_mapping.py`：DEM 映射接口的公共导出入口。
+- `hydrodynamics/terrain_mapping.py`：DEM 映射与数据契约 API 的公共导出入口。
+- `hydrodynamics/dem_contract.py`：DEMMetadata、DEMReader 和 DEMValidator 契约。
 - `TerrainMapper` 当前只做参数检查并明确抛出未实现异常，不读取 DEM。
 - `examples/`：完整配置案例；当前不会读取其中的栅格或 CSV 数据。
 - `docs/`：模型、参数、数据格式、数值接口、校验和开发约定。
 - `tests/`：配置加载与错误检测测试。
 - [TODO.md](TODO.md)：需要在求解器设计阶段确认的开放决策。
 - [docs/terrain_mapping.md](docs/terrain_mapping.md)：DEM → 计算网格 V1.0 规范。
+- [docs/dem_data_contract.md](docs/dem_data_contract.md)：DEM 数据契约 V1.0。
+- [docs/dem_inspection_report.md](docs/dem_inspection_report.md)：真实 DEM 只读体检报告。

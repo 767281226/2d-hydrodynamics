@@ -37,6 +37,14 @@ class ConfigSchemaTests(unittest.TestCase):
         self.assertEqual(self.config.domain.ny, 100)
         self.assertEqual(len(self.config.boundary), 4)
         self.assertEqual(self.config.terrain.nodata_strategy, NoDataStrategy.ERROR)
+        self.assertTrue(self.config.model.vertical_datum_required)
+        self.assertIsNone(self.config.terrain.min_valid_coverage)
+
+    def test_min_valid_coverage_range_is_checked(self) -> None:
+        raw = copy.deepcopy(self.raw)
+        raw["terrain"]["min_valid_coverage"] = 1.1
+        with self.assertRaises(ValidationError):
+            SimulationConfig.model_validate(raw)
 
     def test_domain_rejects_user_nx_ny(self) -> None:
         raw = copy.deepcopy(self.raw)

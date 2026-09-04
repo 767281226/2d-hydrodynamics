@@ -56,3 +56,26 @@ ny = (ymax - ymin) / dy
 - rainfall：毫米每小时（`mm/h`，默认）。
 
 重复时间、缺失值、插值和外推策略尚未实现。
+
+## DEM 数据契约
+
+原始 DEM 的标准数据流是：
+
+```text
+原始 DEM 文件 → DEMReader → DEMMetadata → TerrainMapper → TerrainField → Solver
+```
+
+`DEMMetadata` 保存尺寸、波段、dtype、extent、像元大小、transform、CRS、NoData
+和垂直单位等信息；`vertical_datum` 与 `elevation_type` 可以是 `None`，不得猜测。
+`DEMValidator` 在模型要求投影 CRS 或显式 NoData 时拒绝缺失元数据。当前没有正式
+Reader，核心包也不依赖 Rasterio/GDAL。
+
+必须区分两种覆盖率：DEM 有效空间范围对模型区域的覆盖，以及每个模型单元的
+`coverage_ratio = 有效 DEM 重叠面积 / 单元面积`。`area_weighted_mean` 只对有效
+像元按重叠面积计算，并应记录 `valid_area` 与单元 coverage；具体阈值由
+`terrain.min_valid_coverage` 预留字段表达，默认 `null`，尚未冻结。
+
+NoData 不得变成 0、最小值、最大值、边缘值或被静默忽略。`error` 表示无法取得
+可靠高程时失败；`nearest`/`interpolate` 仅声明，当前未实现。
+
+真实 DEM 的逐文件体检见 [dem_inspection_report.md](dem_inspection_report.md)。

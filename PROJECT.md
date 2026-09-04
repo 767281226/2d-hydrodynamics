@@ -44,6 +44,8 @@ case/
 - Numerical scheme, flux, and time-integrator names remain placeholders.
 - Terrain mapping strategies and NoData policies are declared, but actual DEM
   mapping remains unimplemented.
+- DEMMetadata/DEMValidator define a dependency-free metadata contract; the real DEM
+  is used only for compatibility validation and is not part of source control.
 - V1.0 grid resolution is 30–100 m; nx/ny are computed internally from the
   explicit domain extent and dx/dy.
 

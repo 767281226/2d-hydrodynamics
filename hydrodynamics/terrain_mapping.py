@@ -11,8 +11,20 @@ from .config import (
     TerrainMapper,
     resolve_auto_resampling_strategy,
 )
+from .dem_contract import (
+    DEMMetadata,
+    DEMReader,
+    DEMValidationError,
+    DEMValidator,
+    PlaceholderDEMReader,
+)
 
 __all__ = [
+    "DEMMetadata",
+    "DEMReader",
+    "DEMValidationError",
+    "DEMValidator",
+    "PlaceholderDEMReader",
     "ResamplingStrategy",
     "TerrainField",
     "TerrainMapper",

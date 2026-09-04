@@ -93,11 +93,15 @@ z_cell = Σ(A_k * z_k) / Σ(A_k)
 
 - `elevation`：二维序列，按 `[j][i]` 索引；
 - `nx`、`ny`、`dx`、`dy`、`xmin`、`ymin`；
-- 可选 `nodata_mask`，形状必须同为 `(ny, nx)`，元素为布尔值。
+- 可选 `nodata_mask`、`valid_mask`，形状必须同为 `(ny, nx)`；
+- 可选 `coverage_ratio`，每个单元有效 DEM 面积比例（0～1）；
+- `valid_area` 可由 `coverage_ratio * dx * dy` 派生，单位 m²；
+- `valid_mask` 与 `nodata_mask` 只提供一方时可推导，同时提供时保留独立语义。
 
-`TerrainField.from_domain(domain, elevation, nodata_mask=None)` 会从
-`DomainConfig` 传递网格元数据并校验二维形状。它不把 NoData sentinel 或 NaN
-转换成高程；每个 elevation 值仍必须是有限数值。
+`TerrainField.from_domain(domain, elevation, nodata_mask=None, valid_mask=None,
+coverage_ratio=None)` 会从 `DomainConfig` 传递网格元数据并校验二维形状。
+它不把 NoData sentinel 或 NaN 转换成高程；每个 elevation 值仍必须是有限数值。
+数据集级 valid ratio 与单元级 coverage ratio 是不同指标。
 
 ## 7. TerrainMapper
 

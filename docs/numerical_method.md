@@ -25,3 +25,10 @@ DEM-to-grid mapping is a data-preparation concern, not a numerical Solver
 choice. `TerrainMapper` must provide `terrain_elevation[j, i]` before a future
 solver runs; this phase does not implement that conversion. NoData handling and
 CRS transformation likewise remain outside the Solver.
+
+
+## DEM data contract boundary
+
+DEM 元数据校验和 TerrainField 质量信息属于数据准备前置层，不是数值离散或
+Solver 选择。`DEMMetadata.vertical_datum` 未确认时不得猜测或转换；模型可用
+`vertical_datum_required` 表达运行前置要求。

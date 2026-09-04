@@ -13,6 +13,14 @@ from numbers import Real
 from pathlib import Path
 from typing import Annotated, Any, Sequence
 
+from .dem_contract import (
+    DEMMetadata,
+    DEMReader,
+    DEMValidationError,
+    DEMValidator,
+    PlaceholderDEMReader,
+)
+
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -150,6 +158,10 @@ class ModelConfig(_SchemaModel):
     output_interval: Number | None = Field(default=None, gt=0, description="s")
     coordinate_system: Text
     units: Units = Units.SI
+    # A future preflight must require a confirmed vertical datum before
+    # comparing terrain elevations with water levels. The datum value itself
+    # remains intentionally unknown until supplied by the data provider.
+    vertical_datum_required: StrictBool = True
 
     @model_validator(mode="after")
     def validate_time_window(self) -> "ModelConfig":
@@ -216,6 +228,8 @@ class TerrainConfig(_SchemaModel):
     nodata: Number | None = Field(default=None, description="dataset nodata value")
     nodata_strategy: NoDataStrategy = NoDataStrategy.ERROR
     resampling: TerrainResamplingConfig = Field(default_factory=TerrainResamplingConfig)
+    # None keeps the threshold undefined until a later validation phase.
+    min_valid_coverage: Number | None = Field(default=None, ge=0, le=1)
     elevation: Number | None = Field(default=None, description="m")
 
     @model_validator(mode="after")
@@ -234,6 +248,8 @@ class TerrainConfig(_SchemaModel):
                 raise ValueError("nodata and non-error nodata_strategy are only valid for raster terrain")
             if self.resampling.strategy is not ResamplingStrategy.AUTO:
                 raise ValueError("non-auto resampling is only valid for raster terrain")
+            if self.min_valid_coverage is not None:
+                raise ValueError("min_valid_coverage is only valid for raster terrain")
         return self
 
 
@@ -254,11 +270,13 @@ class _Grid2D(tuple):
 
 @dataclass(frozen=True)
 class TerrainField:
-    """Terrain values aligned one-to-one with the model grid.
+    """Terrain values and per-cell quality information aligned to the grid.
 
-    ``elevation[j][i]`` is the representative elevation for the cell at row
-    ``j`` and column ``i``.  This container carries only grid metadata and
-    validates shape; it does not read or resample a DEM.
+    ``elevation[j][i]`` (and the conceptual ``elevation[j, i]``) is the
+    representative elevation for a cell.  ``valid_mask`` uses True for a
+    reliable cell; the legacy ``nodata_mask`` uses True for NoData.
+    ``coverage_ratio[j][i]`` is the valid DEM area divided by that cell area.
+    This container never reads or resamples a DEM.
     """
 
     elevation: Sequence[Sequence[float]]
@@ -269,6 +287,58 @@ class TerrainField:
     xmin: float
     ymin: float
     nodata_mask: Sequence[Sequence[bool]] | None = None
+    valid_mask: Sequence[Sequence[bool]] | None = None
+    coverage_ratio: Sequence[Sequence[float]] | None = None
+
+    @staticmethod
+    def _bool_grid(
+        value: Sequence[Sequence[bool]], name: str, nx: int, ny: int
+    ) -> tuple[tuple[bool, ...], ...]:
+        try:
+            rows = tuple(tuple(row) for row in value)
+        except TypeError as exc:
+            raise ValueError(f"TerrainField.{name} must be a 2-D boolean sequence") from exc
+        if len(rows) != ny:
+            raise ValueError(f"TerrainField.{name} must have {ny} rows, got {len(rows)}")
+        for row_index, row in enumerate(rows):
+            if len(row) != nx:
+                raise ValueError(
+                    f"TerrainField.{name} row {row_index} must have {nx} values, got {len(row)}"
+                )
+            if any(not isinstance(item, bool) for item in row):
+                raise ValueError(f"TerrainField.{name} values must be boolean")
+        return rows
+
+    @staticmethod
+    def _coverage_grid(
+        value: Sequence[Sequence[float]], nx: int, ny: int
+    ) -> tuple[tuple[float, ...], ...]:
+        try:
+            rows = tuple(tuple(row) for row in value)
+        except TypeError as exc:
+            raise ValueError("TerrainField.coverage_ratio must be a 2-D numeric sequence") from exc
+        if len(rows) != ny:
+            raise ValueError(f"TerrainField.coverage_ratio must have {ny} rows, got {len(rows)}")
+        normalized: list[tuple[float, ...]] = []
+        for row_index, row in enumerate(rows):
+            if len(row) != nx:
+                raise ValueError(
+                    f"TerrainField.coverage_ratio row {row_index} must have {nx} values, got {len(row)}"
+                )
+            normalized_row: list[float] = []
+            for column_index, item in enumerate(row):
+                if isinstance(item, bool) or not isinstance(item, Real):
+                    raise ValueError(
+                        f"TerrainField.coverage_ratio[{row_index}][{column_index}] must be a number"
+                    )
+                converted = float(item)
+                if not isfinite(converted) or not 0.0 <= converted <= 1.0:
+                    raise ValueError(
+                        f"TerrainField.coverage_ratio[{row_index}][{column_index}] must be between 0 and 1"
+                    )
+                normalized_row.append(converted)
+            normalized.append(tuple(normalized_row))
+        return tuple(normalized)
 
     def __post_init__(self) -> None:
         if isinstance(self.nx, bool) or not isinstance(self.nx, int) or self.nx <= 0:
@@ -300,21 +370,32 @@ class TerrainField:
                     )
         object.__setattr__(self, "elevation", _Grid2D(rows))
 
-        if self.nodata_mask is not None:
-            try:
-                mask_rows = tuple(tuple(row) for row in self.nodata_mask)
-            except TypeError as exc:
-                raise ValueError("TerrainField.nodata_mask must be a 2-D boolean sequence") from exc
-            if len(mask_rows) != self.ny:
-                raise ValueError(f"TerrainField.nodata_mask must have {self.ny} rows, got {len(mask_rows)}")
-            for row_index, row in enumerate(mask_rows):
-                if len(row) != self.nx:
-                    raise ValueError(
-                        f"TerrainField.nodata_mask row {row_index} must have {self.nx} values, got {len(row)}"
-                    )
-                if any(not isinstance(value, bool) for value in row):
-                    raise ValueError("TerrainField.nodata_mask values must be boolean")
-            object.__setattr__(self, "nodata_mask", _Grid2D(mask_rows))
+        nodata_rows = (
+            self._bool_grid(self.nodata_mask, "nodata_mask", self.nx, self.ny)
+            if self.nodata_mask is not None
+            else None
+        )
+        valid_rows = (
+            self._bool_grid(self.valid_mask, "valid_mask", self.nx, self.ny)
+            if self.valid_mask is not None
+            else None
+        )
+        # If only one mask is supplied, derive the other for compatibility. If
+        # both are supplied, keep their independent meanings: a mapper may
+        # carry a filled but still low-confidence cell in a later phase.
+        if nodata_rows is not None and valid_rows is None:
+            valid_rows = tuple(tuple(not item for item in row) for row in nodata_rows)
+        elif valid_rows is not None and nodata_rows is None:
+            nodata_rows = tuple(tuple(not item for item in row) for row in valid_rows)
+        if nodata_rows is not None:
+            object.__setattr__(self, "nodata_mask", _Grid2D(nodata_rows))
+        if valid_rows is not None:
+            object.__setattr__(self, "valid_mask", _Grid2D(valid_rows))
+
+        if self.coverage_ratio is not None:
+            object.__setattr__(
+                self, "coverage_ratio", _Grid2D(self._coverage_grid(self.coverage_ratio, self.nx, self.ny))
+            )
 
     @classmethod
     def from_domain(
@@ -322,6 +403,8 @@ class TerrainField:
         domain: DomainConfig,
         elevation: Sequence[Sequence[float]],
         nodata_mask: Sequence[Sequence[bool]] | None = None,
+        valid_mask: Sequence[Sequence[bool]] | None = None,
+        coverage_ratio: Sequence[Sequence[float]] | None = None,
     ) -> "TerrainField":
         """Create a field whose dimensions and metadata come from ``domain``."""
 
@@ -336,6 +419,8 @@ class TerrainField:
             xmin=domain.xmin,
             ymin=domain.ymin,
             nodata_mask=nodata_mask,
+            valid_mask=valid_mask,
+            coverage_ratio=coverage_ratio,
         )
 
     @property
@@ -349,6 +434,17 @@ class TerrainField:
         """Array shape in ``(ny, nx)`` order."""
 
         return self.ny, self.nx
+
+    @property
+    def valid_area(self) -> Sequence[Sequence[float]] | None:
+        """Derived valid DEM area per cell in square metres, when available."""
+
+        if self.coverage_ratio is None:
+            return None
+        cell_area = self.dx * self.dy
+        return _Grid2D(
+            tuple(tuple(ratio * cell_area for ratio in row) for row in self.coverage_ratio)
+        )
 
 
 def _coerce_enum(value: Any, enum_type: type[Enum], field_name: str) -> Enum:
@@ -374,6 +470,8 @@ class TerrainMapper:
         nodata_strategy: NoDataStrategy | None = None,
         resampling_strategy: ResamplingStrategy | None = None,
         coordinate_system: str | None = None,
+        vertical_datum_required: bool = True,
+        dem_metadata: DEMMetadata | None = None,
     ) -> TerrainField:
         """Validate interface arguments, then explicitly remain unimplemented."""
 
@@ -395,6 +493,14 @@ class TerrainMapper:
         )
         if coordinate_system is not None and (not isinstance(coordinate_system, str) or not coordinate_system.strip()):
             raise ValueError("coordinate_system must be a non-empty string when provided")
+        if not isinstance(vertical_datum_required, bool):
+            raise ValueError("vertical_datum_required must be a boolean")
+        if dem_metadata is not None:
+            DEMValidator().validate_for_model(
+                dem_metadata,
+                require_projected_crs=coordinate_system is not None,
+                require_vertical_datum=vertical_datum_required,
+            )
         effective_nodata = normalized_nodata or terrain.nodata_strategy
         effective_resampling = normalized_resampling or terrain.resampling.strategy
         if normalized_nodata is not None and normalized_nodata is not terrain.nodata_strategy:
@@ -731,6 +837,11 @@ __all__ = [
     "BoundaryType",
     "ConfigLoadError",
     "ConfigValidationError",
+    "DEMMetadata",
+    "DEMValidationError",
+    "DEMValidator",
+    "DEMReader",
+    "PlaceholderDEMReader",
     "DomainConfig",
     "DomainType",
     "NoDataStrategy",

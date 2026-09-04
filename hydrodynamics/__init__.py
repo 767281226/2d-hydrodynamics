@@ -16,10 +16,22 @@ from .config import (
     resolve_auto_resampling_strategy,
     load_config,
 )
+from .dem_contract import (
+    DEMMetadata,
+    DEMReader,
+    DEMValidationError,
+    DEMValidator,
+    PlaceholderDEMReader,
+)
 
 __all__ = [
     "ConfigLoadError",
     "ConfigValidationError",
+    "DEMMetadata",
+    "DEMReader",
+    "DEMValidationError",
+    "DEMValidator",
+    "PlaceholderDEMReader",
     "NoDataStrategy",
     "ResamplingStrategy",
     "SimulationConfig",

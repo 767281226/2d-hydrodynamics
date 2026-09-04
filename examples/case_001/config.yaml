@@ -7,8 +7,9 @@ model:
   start_time: 0.0                   # 可选；模拟开始时间，单位 s，必须 >= 0。
   end_time: 3600.0                  # 必填；模拟结束时间，单位 s，必须大于 start_time。
   output_interval: 60.0             # 可选/兼容字段；单位 s；若填写必须与 output.interval 相同。
-  coordinate_system: "EPSG:xxxx"   # 必填；坐标系标识。格式校验和重投影暂未实现。
+  coordinate_system: "EPSG:4548"   # 必填；示例使用 DEM 内嵌水平 CRS；正式使用前仍须确认，重投影暂未实现。
   units: "SI"                      # 可选；单位体系，目前唯一支持值为 SI。
+  vertical_datum_required: true       # 可选；运行前要求确认 DEM/水位共同垂直基准，默认 true；具体基准暂未确定，当前仅作前置标志。
 
 domain:
   type: "structured"                # 可选；网格类型，目前仅支持 structured。
@@ -22,9 +23,10 @@ domain:
 
 terrain:
   type: "raster"                    # 必填；地形输入方式：raster 或 constant。
-  file: "data/dem.tif"              # raster 时必填；DEM 文件路径，当前仅校验字符串，不读取文件。
-  nodata: -9999                     # 可选；栅格 NoData 数值标记，单位跟随地形栅格。
+  file: "data/dem/DEMn_1m.tif"              # raster 时必填；DEM 文件路径，当前仅校验字符串，不读取文件。
+  nodata: -32767                    # 可选；当前 DEM 的 NoData 数值标记；不得将 NoData 当作 0。
   nodata_strategy: "error"          # 可选；NoData 策略默认 error；nearest/interpolate 仅预留，算法暂未实现。
+  min_valid_coverage: null           # 可选；单元有效 DEM 面积比例阈值，范围 0～1；null 表示阈值尚未冻结且当前不判定。
   resampling:                       # 可选；DEM 到计算网格的映射配置，当前仅定义接口。
     strategy: "auto"              # 可选；默认 auto，V1 推荐：DEM 更细用 area_weighted_mean、同分辨率完全对齐用 direct、DEM 更粗用 bilinear；算法暂未实现。
   # elevation: 100.0                # constant 时使用，单位 m；本 raster 示例中不可填写。

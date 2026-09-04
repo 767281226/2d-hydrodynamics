@@ -26,6 +26,7 @@ GeoTIFF/CSV，也不启动 Solver。
 | `output_interval` | number/null | s | null | 否 | 兼容字段；填写时必须等于 `output.interval` |
 | `coordinate_system` | string | CRS 标识 | — | 是 | 不能为空；具体格式和重投影暂未实现 |
 | `units` | enum(`SI`) | — | `SI` | 否 | V1.0 目前只接受 `SI` |
+| `vertical_datum_required` | boolean | — | true | 否 | 运行前是否必须确认 DEM/水位共同垂直基准；具体基准值不在本字段中指定 |
 
 ### domain（已实现：范围、步长和整除校验）
 
@@ -55,6 +56,7 @@ V1.0 使用规则矩形结构化网格。`xmin/xmax/ymin/ymax` 定义计算区�
 | `nodata` | number/null | 栅格原值 | null | 否 | 栅格 NoData 标记 |
 | `nodata_strategy` | enum(`error`,`nearest`,`interpolate`) | — | `error` | 否 | `nearest`、`interpolate` 仅预留，插值算法暂未实现 |
 | `elevation` | number/null | m | null | 条件 | `constant` 时必填；raster 时禁止填写 |
+| `min_valid_coverage` | number/null | 0～1 | null | 否 | raster 的单元有效面积比例阈值；null 表示阈值尚未冻结且当前不执行门槛判断 |
 | `resampling` | object | — | `{strategy: auto}` | 否 | raster 的 DEM 映射策略配置；实际算法暂未实现 |
 | `resampling.strategy` | enum(`auto`,`area_weighted_mean`,`bilinear`,`direct`) | — | `auto` | 否 | `auto` 是 V1 推荐值；按 DEM/网格分辨率固定选择策略；算法暂未实现 |
 
@@ -151,3 +153,22 @@ V1.0 使用规则矩形结构化网格。`xmin/xmax/ymin/ymax` 定义计算区�
 配置加载阶段不会打开或读取栅格/CSV，不检查文件存在性、栅格尺寸、CRS、时间
 序列排序、插值/外推、NoData 替换，也不执行任何水动力计算。这些属于后续
 数据准备、求解器和结果输出设计。
+
+## DEM 数据契约补充
+
+`terrain.nodata`（数值）和 `terrain.nodata_strategy`（策略）继续保留为 V1.0
+兼容接口；本轮没有改成嵌套 `nodata: {strategy, min_valid_coverage}`，以避免
+破坏已有配置。`min_valid_coverage` 暂作为 terrain 级可选接口字段，默认 `null`，
+不代表已经确定阈值。
+
+数据集级 `DEMMetadata.valid_ratio` 是有效像元数 / 全部像元数；映射阶段
+`TerrainField.coverage_ratio[j][i]` 是单个计算单元内的有效 DEM 面积 / 单元面积，
+两者不可混用。`TerrainField.valid_area` 可由 coverage_ratio × dx × dy 得到，单位
+为 m²。
+
+`model.vertical_datum_required` 默认 true，表示未来运行前必须确认地形、初始
+水位和边界水位使用同一垂直基准；它不猜测或自动转换具体基准。当前真实 DEM
+只有 metre 垂直单位，垂直基准仍为 unknown。
+
+DEMMetadata、DEMReader、DEMValidator、TerrainField 质量字段和 TerrainMapper
+边界的完整说明见 [dem_data_contract.md](dem_data_contract.md)。

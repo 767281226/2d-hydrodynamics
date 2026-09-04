@@ -17,6 +17,8 @@ be confirmed before implementing a solver or data readers.
 - Define path resolution, allowed path roots, and whether missing referenced
   files are checked during configuration loading or during case preparation.
 - Define the behavior of the reserved `nearest` and `interpolate` NoData strategies.
+- Confirm whether `vertical_datum_required` should be a hard run precondition and
+  how a confirmed datum value is supplied by the caller.
 - Confirm DEM metadata tolerances for `auto` (resolution, CRS, extent, and pixel
   alignment) and the handling of mixed-resolution axes; V1 currently rejects
   undefined cases rather than guessing.
