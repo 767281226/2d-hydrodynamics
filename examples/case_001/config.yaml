@@ -1,5 +1,5 @@
 # 二维水动力模型 V1.0 标准用户配置模板。
-# 当前阶段仅加载并校验配置，不启动 Solver，也不读取栅格/CSV 内容。
+# 当前阶段：load_config 仅加载并校验配置，不启动 Solver，也不读取栅格/CSV；映射需由调用方显式执行。
 model:
   name: "case_001"                 # 必填；本次模拟案例名称，非空字符串。
   description: "二维洪水演进输入接口示例" # 可选；案例说明，非空字符串。
@@ -7,7 +7,7 @@ model:
   start_time: 0.0                   # 可选；模拟开始时间，单位 s，必须 >= 0。
   end_time: 3600.0                  # 必填；模拟结束时间，单位 s，必须大于 start_time。
   output_interval: 60.0             # 可选/兼容字段；单位 s；若填写必须与 output.interval 相同。
-  coordinate_system: "EPSG:4548"   # 必填；示例使用 DEM 内嵌水平 CRS；正式使用前仍须确认，重投影暂未实现。
+  coordinate_system: "EPSG:4548"   # 必填；水平 CRS 标识；DEM 映射要求与 DEM 相同且为平面/投影坐标；重投影暂未实现。
   units: "SI"                      # 可选；单位体系，目前唯一支持值为 SI。
   vertical_datum_required: true       # 可选；运行前要求确认 DEM/水位共同垂直基准，默认 true；具体基准暂未确定，当前仅作前置标志。
 
@@ -23,12 +23,12 @@ domain:
 
 terrain:
   type: "raster"                    # 必填；地形输入方式：raster 或 constant。
-  file: "data/dem/DEMn_1m.tif"              # raster 时必填；DEM 文件路径，当前仅校验字符串，不读取文件。
-  nodata: -32767                    # 可选；当前 DEM 的 NoData 数值标记；不得将 NoData 当作 0。
-  nodata_strategy: "error"          # 可选；NoData 策略默认 error；nearest/interpolate 仅预留，算法暂未实现。
+  file: "data/dem/DEMn_1m.tif"              # raster 时必填；相对 case 目录的 DEM 路径；本仓库根目录样本仅作本地输入，不随代码提交。
+  nodata: -32767                    # 可选；源栅格 NoData sentinel，必须是有限数值；不得将 NoData 当作 0。
+  nodata_strategy: "error"          # 可选；默认 error；映射调用无法取得可靠高程时失败；nearest/interpolate 仅预留，调用时暂未实现。
   min_valid_coverage: null           # 可选；单元有效 DEM 面积比例阈值，范围 0～1；null 表示阈值尚未冻结且当前不判定。
-  resampling:                       # 可选；DEM 到计算网格的映射配置，当前仅定义接口。
-    strategy: "auto"              # 可选；默认 auto，V1 推荐：DEM 更细用 area_weighted_mean、同分辨率完全对齐用 direct、DEM 更粗用 bilinear；算法暂未实现。
+  resampling:                       # 可选；DEM 到计算网格的映射策略；load_config 只保存，不自动读取或执行。
+    strategy: "auto"              # 可选；默认 auto。已读 DEMDataset 的内存映射：更细→area_weighted_mean，同分辨率且完全对齐→direct，更粗→bilinear；条件不满足时报错。
   # elevation: 100.0                # constant 时使用，单位 m；本 raster 示例中不可填写。
 
 initial_condition:

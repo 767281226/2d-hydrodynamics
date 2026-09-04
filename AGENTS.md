@@ -14,3 +14,6 @@ architecture phase for a future 2-D hydrodynamics engine.
 - Never stage or commit large/local DEM inputs (for example `data/dem/*.tif`);
   use them only for explicitly requested read-only compatibility checks.
 - Do not commit temporary analysis scripts or generated raster sidecars.
+
+- The optional GeoTIFF Reader may read raw source values and masks, but must not perform
+  CRS conversion, resampling, NoData filling, or Solver work.

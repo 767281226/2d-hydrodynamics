@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import unittest
 from pathlib import Path
 
@@ -123,7 +124,10 @@ class DEMContractTests(unittest.TestCase):
                 domain, [[1.0, 2.0], [3.0, 4.0]], coverage_ratio=[[1.0, 2.0], [0.0, 1.0]]
             )
 
-    @unittest.skipUnless(importlib.util.find_spec("rasterio"), "rasterio is optional")
+    @unittest.skipUnless(
+        importlib.util.find_spec("rasterio") and os.environ.get("RUN_REAL_DEM_TEST") == "1",
+        "real DEM test is opt-in; use a small temporary fixture by default",
+    )
     def test_real_dem_metadata_is_compatible(self) -> None:
         import rasterio
 

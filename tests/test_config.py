@@ -60,6 +60,13 @@ class ConfigSchemaTests(unittest.TestCase):
             SimulationConfig.model_validate(raw)
         self.assertIn("evenly divisible", str(raised.exception))
 
+    def test_y_extent_must_be_divisible(self) -> None:
+        raw = copy.deepcopy(self.raw)
+        raw["domain"]["ymax"] = 4999
+        with self.assertRaises(ValidationError) as raised:
+            SimulationConfig.model_validate(raw)
+        self.assertIn("evenly divisible", str(raised.exception))
+
     def test_domain_allows_different_dx_and_dy(self) -> None:
         config = DomainConfig(xmin=0, xmax=3000, ymin=0, ymax=4000, dx=50, dy=100)
         self.assertEqual(config.nx, 60)

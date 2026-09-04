@@ -1,7 +1,7 @@
 # TODO and decisions to confirm
 
 The following items are intentionally not decided in this phase. They should
-be confirmed before implementing a solver or data readers.
+be confirmed before implementing a solver or extending the data readers.
 
 ## Contract decisions
 
@@ -24,6 +24,7 @@ be confirmed before implementing a solver or data readers.
   undefined cases rather than guessing.
 - Confirm the initial-condition representation for a water-level raster and
   the exact velocity-field metadata.
+- Confirm Reader transform/bounds consistency checks and source metadata semantics.
 - Confirm output formats and variable-to-format compatibility. The schema lists
   `netcdf`, `geotiff`, and `csv` as interface values only; exporters do not yet
   exist.
@@ -41,9 +42,10 @@ be confirmed before implementing a solver or data readers.
 ## Engineering decisions
 
 - Set the supported Python versions and dependency lock strategy.
-- Add raster and time-series readers after their contracts are approved.
-- Implement TerrainMapper only after DEM coverage, CRS, and resampling contracts
-  are approved; the current class is an explicit placeholder. Constant terrain
-  mapping behavior is intentionally outside the DEM mapper boundary.
+- Extend the optional raster reader with chunked/windowed access for large files after
+  its memory and API contract is approved.
+- Extend and optimize the approved in-memory TerrainMapper implementation (for example,
+  chunked large-raster processing) without changing the TerrainField contract. Constant
+  terrain mapping behavior remains intentionally outside the DEM mapper boundary.
 - Add solver-facing interfaces and result writers without coupling them to the
   YAML parser.

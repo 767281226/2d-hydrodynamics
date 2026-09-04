@@ -1,130 +1,162 @@
 # DEM → 二维计算网格映射规范 V1.0
 
-本文档落实第二轮冻结规则。当前代码只提供配置、元数据判定函数和接口占位；
-不会读取 DEM/GeoTIFF、执行 CRS 重投影、进行重采样或调用 Solver。
+本文档描述第 5 轮已冻结并实现的“已读 DEM 数据集 → 模型计算网格”规则。
+实现只接收内存中的 `DEMDataset` 和已校验的 `DomainConfig`，不打开文件、
+不执行 CRS 重投影、不调用二维水动力 Solver。GeoTIFF 文件读取仍由可选的
+`GeoTIFFDEMReader` 负责。
 
-## 1. 计算区域与网格
+## 1. 数据流与职责边界
 
-DEM 不决定计算区域。计算区域由 `domain.xmin`、`xmax`、`ymin`、`ymax` 显式
-定义，单位为米。V1.0 网格是规则矩形、结构化、cell-centered 的有限体积控制
-体；`dx`、`dy` 分别是 x/y 方向尺寸，范围为 30～100 m（含），允许不同。
+```
+原始 DEM 文件
+    ↓  GeoTIFFDEMReader（读取原值、掩码和元数据）
+DEMDataset
+    ↓  TerrainMapper.map_dataset / map_dataset_to_field
+TerrainField（与模型网格一一对应）
+    ↓
+未来 Solver
+```
 
-区域长度必须被对应步长整除。内部网格数量由程序计算：
+`load_config` 只解析 YAML，不会自动读取 `terrain.file` 或执行映射。调用方
+必须显式读取 DEM，再调用映射 API。映射层不允许猜测 CRS、填补 NoData 或把
+外部 CRS 转换到模型 CRS。
+
+## 2. 模型计算区域与数组方向
+
+V1.0 是 cell-centered、规则矩形 structured 网格。计算区域由
+`domain.xmin`、`xmax`、`ymin`、`ymax` 显式定义，单位为 m；`dx`、`dy`
+分别是 x/y 方向的单元尺寸，均须在 30～100 m（含）范围内，允许不同。
 
 ```text
 nx = (xmax - xmin) / dx
 ny = (ymax - ymin) / dy
-```
-
-单元中心为：
-
-```text
 x_i = xmin + (i + 1/2) * dx
 y_j = ymin + (j + 1/2) * dy
 ```
 
-数组约定为 `elevation[j][i]`，形状为 `(ny, nx)`；当前无 NumPy 占位对象也支持
-概念性的 `elevation[j, i]` 访问。Solver 的未来输入是与该
-网格一一对应的 `terrain_elevation[j, i]`，不直接依赖原始 DEM 的格式、分辨率、
-CRS 或尺寸。
+长度不能整除步长时，`DomainConfig` 在配置阶段直接报错。用户不能配置
+`nx`/`ny`；它们是程序由区域和步长计算出的内部属性。输出
+`TerrainField.elevation[j][i]` 的形状为 `(ny, nx)`，其中 `j=0` 对应
+`ymin` 一侧（南侧），`i=0` 对应 `xmin` 一侧（西侧）。
 
-## 2. DEM 覆盖范围
+## 3. 映射前置检查
 
-DEM 的有效覆盖范围必须完全包含计算区域。实际缺失必须报错；禁止边缘值填充、
-零填充、自动 extrapolation 或静默忽略。未来数据准备层可以容忍极小浮点误差，
-但不能容忍真实空间缺失。
+`map_dataset_to_field` 在执行任何策略前检查：
 
-## 3. CRS 边界
+- DEM 必须是单波段，数据形状必须与 `DEMMetadata.width/height` 一致；
+- DEM transform 必须是北向上、轴对齐仿射变换：禁止旋转和剪切，x 像元尺度
+  为正、y 方向尺度为负；
+- transform 推导出的像元大小和边界必须与元数据一致；
+- DEM CRS 和模型 `coordinate_system` 都必须存在且相同，并且是平面/投影坐标；
+  CRS 不一致时映射失败，不在本层重投影；
+- 模型区域必须完全位于 DEM 几何边界内。只容忍极小浮点误差，不截断区域、
+  不外推、不用边缘值补齐；
+- `nodata_strategy` 目前只能为 `error`；`nearest` 和 `interpolate` 已
+  保留枚举，但调用时明确抛出 `NotImplementedError`。
 
-模型拥有自己的计算 CRS。若 DEM CRS 不一致，必须由数据准备/Terrain Mapping
-层先重投影，再映射到计算网格。Solver 不负责 CRS 转换。当前版本不执行实际重投影。
+## 4. 策略状态与适用条件
 
-## 4. 分辨率与映射策略
-
-配置字段为：
-
-```yaml
-terrain:
-  resampling:
-    strategy: auto
-```
-
-支持的枚举值：
-
-| 策略 | 固定含义 | 当前状态 |
+| 策略 | 适用条件和行为 | 当前状态 |
 |---|---|---|
-| `auto` | 按下述 V1.0 矩阵选择策略；推荐值 | 仅元数据判定，实际映射未实现 |
-| `area_weighted_mean` | DEM 比计算网格细时的面积加权平均 | 未实现 |
-| `direct` | CRS、分辨率、边界和像元完全对齐时一一对应 | 未实现 |
-| `bilinear` | DEM 比计算网格粗时的双线性插值 | 未实现 |
+| `auto` | DEM 两轴都更细 → `area_weighted_mean`；同分辨率且完全对齐 → `direct`；两轴都更粗 → `bilinear`；混合方向或同分辨率未对齐时报错 | 已实现（内存数据集） |
+| `area_weighted_mean` | DEM 在两轴均不粗于目标且至少一轴更细；按真实重叠面积加权 | 已实现 |
+| `direct` | 分辨率、范围、像元边界、轴方向完全一致 | 已实现 |
+| `bilinear` | DEM 在两轴均不细于目标且至少一轴更粗；按目标单元中心的四个源像元中心插值 | 已实现 |
 
-面积加权平均的规范公式为：
+显式策略如果不满足对应分辨率条件会报 `TerrainMappingError`，不会静默改用
+另一种策略。映射结果不代表求解器或物理模型已经实现。
+
+## 5. area_weighted_mean
+
+对每个模型单元，遍历与其相交的 DEM 像元，使用实际平面重叠面积：
 
 ```text
-z_cell = Σ(A_k * z_k) / Σ(A_k)
+z_cell = Σ(A_k × z_k) / Σ(A_k)
+coverage_ratio = Σ(A_k) / (dx × dy)
+valid_area = Σ(A_k)       [m²]
 ```
 
-其中 `A_k` 是 DEM 像元与计算单元的重叠面积。双线性插值不会创造新的真实
-地形信息，把粗 DEM 插值到更细网格不代表获得了更高精度的地形数据。
+只有 `valid_mask=True`、有限且不是 NoData sentinel 的像元才参与求和；
+NoData 和 NaN/Inf 从不被替换为 0、边缘值或其他高程。结果写入
+`TerrainField.elevation`、`coverage_ratio` 和 `valid_area`。当一个单元
+没有任何有效重叠时，`error` 策略立即失败。可选的
+`min_valid_coverage`（0～1，默认 `null`）只有在显式设置时才作为单元覆盖率
+下限；默认值尚未冻结，因此不会自行引入阈值。
 
-`auto` 的固定判定矩阵：
+## 6. direct
 
-- DEM 在两个方向均更细（每轴 `dem_step <= grid_step`，且至少一轴严格更细）
-  → `area_weighted_mean`；
-- DEM 与计算网格同分辨率，且未来数据层已验证 CRS、范围、像元边界和对齐
-  → `direct`；同分辨率但未验证对齐时显式报错；
-- DEM 在两个方向均更粗（每轴 `dem_step >= grid_step`，且至少一轴严格更粗）
-  → `bilinear`；
-- 一个方向更细、另一个方向更粗 → V1.0 未定义，显式报错，不猜测。
+只有 DEM 与模型网格在两方向分辨率相同、范围相同、像元边界相同且轴对齐时
+才能直接映射。GeoTIFF/北向上栅格的第 0 行是北侧，而
+`TerrainField[j=0]` 是南侧，因此实现会反转源行顺序；不会改变像元值。
+任一源单元无有效高程时，在 `error` 策略下失败。
 
-`resolve_auto_resampling_strategy` 只接收已经由未来数据层提供的分辨率和对齐
-元数据，负责分类，不读取或修改栅格。
+## 7. bilinear
 
-## 5. NoData
+双线性插值以每个目标单元中心为位置，使用包围该位置的四个源像元中心和标准
+双线性权重。四个邻域必须都在 DEM 内且都为有限有效值；缺少邻域或需要外推时
+明确失败。该策略只允许 DEM 较粗（两轴均不细于目标）的场景。双线性插值不会
+创造新的真实地形信息，把粗 DEM 插值到更细网格不等于获得更高精度地形。
 
-`terrain.nodata_strategy` 默认是 `error`。它表示映射过程中任一计算单元无法
-获得有效地形高程时必须失败。`nearest` 和 `interpolate` 已保留为枚举值，但
-当前不实现相应算法；`TerrainMapper` 对它们会明确抛出 `NotImplementedError`。
+## 8. auto 判定
 
-## 6. TerrainField
+`resolve_auto_resampling_strategy` 和映射器采用同一判定矩阵：
 
-`hydrodynamics.config.TerrainField`（也可从 `hydrodynamics.terrain_mapping`
-导入）是轻量、不可变的数据结构，保存：
+1. `dem_dx <= grid_dx` 且 `dem_dy <= grid_dy`，至少一轴严格更细
+   → `area_weighted_mean`；
+2. 两轴同分辨率且已验证完整对齐 → `direct`；
+3. `dem_dx >= grid_dx` 且 `dem_dy >= grid_dy`，至少一轴严格更粗
+   → `bilinear`；
+4. 一轴更细、一轴更粗，或同分辨率但未验证对齐 → 显式报错。
 
-- `elevation`：二维序列，按 `[j][i]` 索引；
-- `nx`、`ny`、`dx`、`dy`、`xmin`、`ymin`；
-- 可选 `nodata_mask`、`valid_mask`，形状必须同为 `(ny, nx)`；
-- 可选 `coverage_ratio`，每个单元有效 DEM 面积比例（0～1）；
-- `valid_area` 可由 `coverage_ratio * dx * dy` 派生，单位 m²；
-- `valid_mask` 与 `nodata_mask` 只提供一方时可推导，同时提供时保留独立语义。
+比较允许实现约定的极小浮点容差，但不允许借此掩盖真实空间错位。
 
-`TerrainField.from_domain(domain, elevation, nodata_mask=None, valid_mask=None,
-coverage_ratio=None)` 会从 `DomainConfig` 传递网格元数据并校验二维形状。
-它不把 NoData sentinel 或 NaN 转换成高程；每个 elevation 值仍必须是有限数值。
-数据集级 valid ratio 与单元级 coverage ratio 是不同指标。
-
-## 7. TerrainMapper
-
-`hydrodynamics.config.TerrainMapper` 定义未来数据准备层的边界：
+## 9. Python 调用示例
 
 ```python
-field = TerrainMapper().map(
-    domain,
-    terrain,
+from hydrodynamics import GeoTIFFDEMReader, TerrainMapper, load_config
+
+config = load_config("examples/case_001/config.yaml")
+dataset = GeoTIFFDEMReader().read_dataset("examples/case_001/data/dem.tif")
+
+field = TerrainMapper().map_dataset(
+    dataset,
+    config.domain,
     coordinate_system=config.model.coordinate_system,
+    strategy=config.terrain.resampling.strategy,
+    nodata_strategy=config.terrain.nodata_strategy,
+    min_valid_coverage=config.terrain.min_valid_coverage,
 )
+print(field.shape, field.elevation[0][0], field.coverage_ratio[0][0])
 ```
 
-当前 `map` 只接受 raster 地形，检查参数类型、策略一致性和已声明的 NoData 能力，
-然后抛出明确的 `NotImplementedError`；constant 地形不需要 DEM 映射，传入时会被
-显式拒绝。它不会伪造 elevation，也不会打开文件。真实 DEM 读取、
-GeoTIFF 解析、覆盖检查、CRS 转换、NoData 处理和三种重采样算法留到后续阶段。
+等价的函数入口是 `hydrodynamics.terrain_mapping.map_dataset_to_field`。两者都只
+接受已经读入内存的 `DEMDataset`。现有 `TerrainMapper.map(domain, terrain)`
+是保留的配置边界占位接口，仍会在不读取文件的情况下抛出
+`NotImplementedError`，不要把两个方法混淆。
 
-## 8. 明确未实现项
+## 10. TerrainField 输出
 
-- 实际 DEM/GeoTIFF 读取和元数据解析；
-- DEM 覆盖范围检查的运行时实现；
-- CRS 重投影；
-- `area_weighted_mean`、`direct`、`bilinear` 的实际计算；
-- `nearest`、`interpolate` NoData 算法；
-- Solver、数值通量、时间积分、Manning 计算和边界物理。
+`TerrainField` 是不可变、依赖无关的结果容器，包含：
+
+- `elevation`：形状 `(ny, nx)`，支持 `[j][i]` 和概念上的 `[j, i]`；
+- `nx`、`ny`、`dx`、`dy`、`xmin`、`ymin`；
+- `valid_mask`：目标单元是否得到可靠有限高程；
+- `nodata_mask`：保留的 NoData 状态；
+- `coverage_ratio`：有效 DEM 重叠面积占单元面积比例（0～1）；
+- `valid_area`：由 coverage 推导的有效面积，单位 m²。
+
+映射层不会返回 NoData sentinel 或非有限高程；源数据的原始值和掩码仍保留在
+`DEMDataset` 中。
+
+## 11. 明确未实现项
+
+- CRS 重投影、坐标转换和不同 CRS 之间的自动配准；
+- `nearest`、`interpolate` NoData 填补策略；
+- GeoTIFF 的分块/窗口式低内存映射和自动路径解析；
+- 初始水深、边界、降雨等物理过程；
+- 控制方程、空间离散、数值通量、时间积分、干湿处理和二维水动力 Solver；
+- 结果文件写出和运行时质量报告。
+
+本轮已实现的是纯数据准备层的内存映射，不代表任何 Solver 数值方案已经选定。
+
+\n

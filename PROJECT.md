@@ -14,10 +14,11 @@ simulation scenarios without changing engine code.
 
 ## Architecture boundary
 
-The current package contains a typed configuration contract, YAML loader, and a
-non-computational DEM mapping boundary. It does not read GeoTIFF/CSV contents,
-perform CRS conversion or resampling, build a solver grid, run a time step, or
-produce results. Those responsibilities will consume this contract later.
+The current package contains a typed configuration contract, YAML loader, an
+in-memory DEM mapping boundary, and an optional single-band GeoTIFF Reader.
+It can read source metadata and raw values when Rasterio is installed, and map
+an already-read DEMDataset to a TerrainField. It does not perform CRS conversion,
+run a time step, or produce results.
 
 ## Case convention
 
@@ -42,10 +43,12 @@ case/
 - Relative paths are interpreted relative to the case directory by the future
   engine; the current loader intentionally does not open referenced data.
 - Numerical scheme, flux, and time-integrator names remain placeholders.
-- Terrain mapping strategies and NoData policies are declared, but actual DEM
-  mapping remains unimplemented.
-- DEMMetadata/DEMValidator define a dependency-free metadata contract; the real DEM
-  is used only for compatibility validation and is not part of source control.
+- `area_weighted_mean`, `direct`, `bilinear`, and `auto` mapping are implemented
+  for in-memory DEMDataset values; CRS reprojection and nearest/interpolate
+  NoData filling remain unimplemented.
+- DEMMetadata/DEMValidator define a dependency-free metadata contract; the optional
+  GeoTIFF Reader is an adapter and is not a core dependency. The real DEM is used only
+  for explicitly requested local validation and is not part of source control.
 - V1.0 grid resolution is 30–100 m; nx/ny are computed internally from the
   explicit domain extent and dx/dy.
 

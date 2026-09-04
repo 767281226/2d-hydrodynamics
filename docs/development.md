@@ -15,39 +15,52 @@ Install the optional test dependency when using pytest:
 python -m pip install -e ".[test]"
 ```
 
-## Load a case from Python
+如需使用可选 GeoTIFF Reader：
 
-```python
-from hydrodynamics.config import load_config
-
-config = load_config("examples/case_001/config.yaml")
-print(config.model.name)
-print(config.output.variables)
+```bash
+python -m pip install -e ".[raster]"
 ```
 
-The returned `SimulationConfig` is a typed Pydantic object. It can be passed
-to a future engine without coupling that engine to YAML parsing. Referenced
-files are not opened yet.
+## Load and map a case from Python
+
+```python
+from hydrodynamics import GeoTIFFDEMReader, TerrainMapper, load_config
+
+config = load_config("examples/case_001/config.yaml")
+dataset = GeoTIFFDEMReader().read_dataset("path/to/dem.tif")
+field = TerrainMapper().map_dataset(
+    dataset,
+    config.domain,
+    coordinate_system=config.model.coordinate_system,
+    strategy=config.terrain.resampling.strategy,
+    nodata_strategy=config.terrain.nodata_strategy,
+    min_valid_coverage=config.terrain.min_valid_coverage,
+)
+```
+
+`SimulationConfig` 是类型明确的 Pydantic 对象；`load_config` 不打开引用文件。
+`map_dataset` 只接收已读入内存的 `DEMDataset`，不重投影、不调用 Solver。
 
 ## Checks
 
 ```bash
 python -m compileall hydrodynamics
 python -m pytest
+git diff --check
 ```
 
-Tests cover valid loading, missing fields, invalid enum values, numeric ranges,
-and type-specific terrain/boundary rules. Numerical results are out of scope.
+测试覆盖配置错误、DEM Reader 错误、几何/CRS/NoData 校验和三种内存映射策略。
+当前仍不包含任何二维水动力方程或时间步计算。
 
-
-## DEM mapping interface (placeholder)
+## Read a GeoTIFF (optional)
 
 ```python
-from hydrodynamics import TerrainMapper
+from hydrodynamics import GeoTIFFDEMReader
 
-# Validates the interface, then raises NotImplementedError until the
-# data-preparation implementation is approved.
-mapper = TerrainMapper()
+reader = GeoTIFFDEMReader()
+metadata = reader.read_metadata("path/to/dem.tif")
+dataset = reader.read_dataset("path/to/dem.tif")
 ```
 
-Do not add raster readers, CRS transformations, or resampling code in this phase.
+Reader 只读取源值、掩码和元数据；不重采样、不重投影、不填补 NoData。
+当前整幅读取接口不是大型栅格的分块处理方案，低内存优化留待后续。

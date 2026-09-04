@@ -1,228 +1,203 @@
 # DEM 数据契约 V1.0
 
-## 1. 范围
+## 1. 范围与数据流
 
-本契约定义原始 DEM 到二维模型地形字段之间的数据边界。它不实现二维水动力
-Solver、CRS 重投影、GeoTIFF 读取、NoData 填补或重采样算法。
+本契约定义原始 DEM、内存数据集、模型地形字段之间的边界。当前实现包括可选
+单波段 GeoTIFF Reader，以及不依赖栅格库的 DEMDataset → TerrainField 映射。
+仍不实现 CRS 重投影、NoData 填补、求解器或结果写出。
 
-数据流固定为：
-
-~~~
+```
 原始 DEM 文件
     ↓
-DEM Reader
+DEM Reader（读取原始值、掩码、元数据）
     ↓
-DEM Dataset / DEMMetadata
+DEMDataset / DEMMetadata
     ↓
-TerrainMapper
+TerrainMapper.map_dataset
     ↓
 TerrainField
     ↓
-Solver
-~~~
+未来 Solver
+```
 
-Solver 只接收 TerrainField，不应依赖 GeoTIFF、GDAL、Rasterio、CRS、原始 DEM
-分辨率或原始栅格尺寸。
+Solver 只接收 `TerrainField`，不应依赖 GeoTIFF、GDAL、Rasterio、CRS、原始
+DEM 分辨率或原始栅格尺寸。
 
-## 2. DEM 输入文件
+## 2. DEM 输入文件与 Reader
 
-用户通过 terrain.file 指定 DEM 文件路径。路径是描述信息，当前配置加载器和
-数据契约不会打开文件。未来 Reader 应支持并报告实际格式、波段、尺寸、仿射
-变换、CRS、NoData 和高程统计。
+用户通过 `terrain.file` 指定 DEM 路径。配置加载器只校验非空路径字符串；
+需要读取文件时显式调用 `GeoTIFFDEMReader`。V1 Reader 只接受 `.tif`/`.tiff`
+并拒绝多波段文件，不猜测高程波段。Rasterio 是可选依赖，不属于核心运行时依赖。
 
-当前真实样本为 data/dem/DEMn_1m.tif：GeoTIFF、26,677 × 36,813、单波段
-float32、1 m × 1 m、EPSG:4548、NoData=-32767；完整体检见
-dem_inspection_report.md。该 TIFF 不属于本轮提交对象。
+Reader 只读取格式、几何、CRS、NoData、原始高程和掩码；不重投影、不重采样、
+不填补 NoData。缺少 Rasterio 时抛出 `DEMReaderDependencyError`。
+
+仓库中的真实样本 `data/dem/DEMn_1m.tif` 仅用于本地只读兼容性检查，不属于
+源代码提交对象。体检报告见 [dem_inspection_report.md](dem_inspection_report.md)。
 
 ## 3. DEMMetadata
 
-hydrodynamics.dem_contract.DEMMetadata 是依赖无关的不可变元数据结构，至少包含：
+`hydrodynamics.dem_contract.DEMMetadata` 是依赖无关的不可变元数据结构：
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| width / height | int | 栅格列数/行数，必须 > 0 |
-| band_count | int | 波段数，必须 >= 1 |
-| dtype | string | 像元数据类型，不能为空 |
-| xmin / xmax / ymin / ymax | number | 栅格空间外边界 |
-| pixel_size_x / pixel_size_y | number | X/Y 像元尺寸，必须 > 0 |
-| transform | 6 或 9 个有限数值 | affine/matrix 变换 |
-| crs | string 或 None | 水平 CRS；未知时为 None |
+| width / height | int | 栅格列/行数，必须 > 0 |
+| band_count | int | 波段数，必须 >= 1；V1 Reader/Mapper 要求 1 |
+| dtype | string | 像元类型，不能为空 |
+| xmin / xmax / ymin / ymax | number | 栅格外边界 |
+| pixel_size_x / pixel_size_y | number | x/y 像元尺寸，必须 > 0 |
+| transform | 6 或 9 个有限数值 | 仿射/齐次变换 |
+| crs | string 或 None | 水平 CRS；缺失时映射失败 |
 | horizontal_unit | string 或 None | 水平坐标单位 |
-| nodata_value | number 或 None | 明确的 NoData 值；None 不是默认值 |
+| nodata_value | number 或 None | 源 NoData sentinel；None 不代表可猜测默认值 |
 | vertical_unit | string 或 None | 垂直单位 |
-| vertical_datum | string 或 None | 垂直基准；未知时必须 None |
-| elevation_type | string 或 None | DEM/DTM/DSM 类型；未知时必须 None |
-| area_or_point | string 或 None | 文件原始 AREA_OR_POINT 信息 |
-| valid_pixel_count | int 或 None | 选定波段有效像元数 |
-| nodata_pixel_count | int 或 None | 选定波段 NoData 像元数 |
+| vertical_datum | string 或 None | 垂直基准；未知时保持 None |
+| elevation_type | string 或 None | DEM/DTM/DSM 类型；未知时保持 None |
+| area_or_point | string 或 None | 源文件标记 |
+| valid_pixel_count | int 或 None | 有效像元统计 |
+| nodata_pixel_count | int 或 None | NoData 像元统计 |
+| nonfinite_pixel_count | int 或 None | NaN/Inf 像元统计 |
 | valid_coverage_ratio | number 或 None | 数据集级有效像元比例 |
 
-valid_coverage_ratio 是整个选定波段的像元比例：
-valid_pixel_count / (width × height)；代码也提供等价的 `valid_ratio` 和
-`dataset_valid_ratio` 只读别名，统计未扫描时返回 `None`。它不能代替映射阶段的
-逐计算单元面积比例。
+`vertical_datum` 和 `elevation_type` 不得根据文件名、位置或高程范围猜测。
+数据集级 `valid_coverage_ratio` 不能替代映射阶段逐单元的面积覆盖率。
 
-vertical_datum 和 elevation_type 不得根据文件名、位置或数值范围猜测。
+## 4. DEMDataset 与掩码
 
-## 4. DEMReader
+`DEMDataset` 保存 `DEMMetadata`、未修改的二维 `elevation` 以及：
 
-DEMReader 是未来具体文件读取器应实现的 Protocol：
+- `valid_mask`：有限且不是 NoData 的有效像元；
+- `nodata_mask`：源 mask 或 NoData sentinel；
+- `nonfinite_mask`：NaN/Inf。
 
-- read_metadata(source) -> DEMMetadata
-- read_elevation(source) -> 二维高程序列
-
-Reader 负责读取格式、几何、CRS、NoData 和原始高程，不负责模型网格映射。
-当前 PlaceholderDEMReader 只抛出明确的 NotImplementedError；没有 Rasterio/GDAL
-作为核心运行时强依赖。
+Reader 对非有限值优先归入 `nonfinite_mask`，三类统计互斥；原始 sentinel、
+NaN、Inf 仍原样保留。容器和映射层都不把 NoData 变成 0、边缘值或任何其他高程。
 
 ## 5. DEMValidator
 
-DEMValidator.validate() 只验证 DEMMetadata，不打开文件、不替换数据：
+`DEMValidator` 只验证元数据，不打开文件、不修改值：
 
-- width > 0、height > 0、band_count >= 1；
-- pixel_size_x > 0、pixel_size_y > 0；
-- 边界有序且所有数值有限；
-- transform 为 6/9 个有限数值；
-- require_projected_crs=True 时必须有 CRS；
-- 默认要求显式 nodata_value，不假设任何 sentinel；
-- 可选检查 valid_pixel_count、nodata_pixel_count 和 valid_ratio。
+- width/height 为正，band_count 至少为 1；
+- 像元大小为正；
+- 边界和 transform 为有限且有序；
+- `require_projected_crs=True` 时 CRS 不能为空；
+- 默认要求明确 `nodata_value`，不假设 sentinel；
+- 可选检查有效/NoData/非有限统计和比例；
+- `require_vertical_datum=True` 时必须显式提供垂直基准。
 
-validate_for_model() 是进入模型映射前的严格检查入口。它仍不验证 DEM 是否覆盖
-具体模型域；覆盖和像元元数据比较属于未来 TerrainMapper。调用方可选择
-`require_vertical_datum=True`，在垂直基准未确认时明确失败。
+`validate_for_model` 是进入模型前的严格元数据入口。映射器另外检查单波段、
+北向上几何、CRS 相等和模型域边界。
 
-## 6. CRS
+## 6. CRS 与高程基准
 
-模型 CRS 与 DEM CRS 必须独立记录。DEM CRS 缺失时不能猜测；如果模型要求投影
-坐标，Validator 应明确失败。CRS 不一致时由数据准备/TerrainMapper 层进入未来
-重投影流程，Solver 不处理 CRS。
+模型 CRS 与 DEM CRS 独立记录。映射只接受相同的平面/投影 CRS；CRS 缺失、
+不一致或为角度地理坐标时明确失败，不在本层转换。若数据供应方提供不同 CRS，
+应在外部数据准备阶段完成重投影并重新生成符合契约的 DEMDataset。
 
-当前样本文件内嵌 WKT/GeoKey 明确包含 EPSG:4548，水平单位为 metre；这不表示
-垂直基准已知。
+水平 CRS 已知不等于垂直基准已知。DEM 高程、初始水位和边界水位必须使用一致的
+垂直基准；`vertical_datum=None` 时禁止自动加减常数或依据数值猜测。
+`model.vertical_datum_required` 默认 true 只表达运行前置要求，不指定具体基准。
 
-## 7. 高程基准和单位
+## 7. 覆盖率定义
 
-当前样本明确提供：
+必须区分两种覆盖：
 
-- 垂直单位：metre（GeoKey EPSG:9001）；
-- 波段单位字段：metre。
+### 7.1 DEM 几何范围对模型区域的覆盖
 
-当前样本无法确定：
+模型区域必须完全位于 DEM 的几何边界内。越界、真实空间缺失、需要截断或外推
+都会失败；只容忍约定的极小浮点误差。
 
-- 垂直 CRS；
-- vertical datum；
-- 椭球高、正常高或正高；
-- geoid、EGM96、EGM2008 或国家高程基准关系。
+### 7.2 单个计算单元的有效覆盖率
 
-DEM 高程、初始水位、边界水位必须使用一致的垂直基准，否则可能产生系统水深
-偏差。禁止自动加减常数或依据数值范围转换。
+```text
+coverage_ratio = 有效 DEM 与单元的重叠面积 / 单元面积
+valid_area = 有效重叠面积（m²）
+```
 
-## 8. 两种有效覆盖率
+数据集级 `valid_coverage_ratio` 与单元级 `coverage_ratio` 不可混用。对于
+`area_weighted_mean`，只用有效重叠面积计算高程；无有效面积时在 `error`
+策略下失败。显式 `terrain.min_valid_coverage` 可设置 0～1 的单元阈值，默认
+`null` 表示阈值尚未冻结。
 
-必须区分：
+## 8. DEM → Model Grid 映射
 
-### 8.1 DEM 对模型计算区域的覆盖
+V1.0 网格由 `xmin/xmax/ymin/ymax`、`dx/dy` 定义，`nx/ny` 由程序计算，
+数组方向为 `[j][i]`，`j=0` 在南侧。
 
-模型区域必须被 DEM 的有效空间范围完全包含。超出或真实缺失必须失败；不能
-用边缘值、0、最小值、最大值或自动外推。
+### 8.1 area_weighted_mean（已实现）
 
-### 8.2 单个计算单元的有效覆盖率
+DEM 在两轴不粗于模型网格且至少一轴更细时，按每个 DEM 像元与模型单元的真实
+重叠面积计算 `Σ(Ak×zk)/Σ(Ak)`，并填充目标 `coverage_ratio`/ `valid_area`。
+NoData、NaN、Inf 被跳过但不被替换；无有效面积或低于显式阈值时报错。
 
-对于一个模型单元：
+### 8.2 direct（已实现）
 
-~~~
-valid_coverage_ratio =
-    有效 DEM 与单元的重叠面积 / 单元面积
-~~~
+要求两轴分辨率、范围、像元边界和轴方向完全一致。源北向上栅格行序与目标数组
+方向相反，因此输出行反转；不进行二次重采样。
 
-area_weighted_mean 使用有效重叠面积：
+### 8.3 bilinear（已实现）
 
-~~~
-z_cell = Σ(Ak × zk) / Σ(Ak)
-~~~
+DEM 在两轴不细于模型网格且至少一轴更粗时，以目标单元中心的四个源像元中心
+计算双线性值。四邻域必须完整位于 DEM 内且全部有效；禁止外推。粗 DEM 插值到
+细网格不产生新的真实精度。
 
-其中 Ak 是有效 DEM 像元与单元的重叠面积，zk 是有效高程；映射结果还应记录
-valid_area 和该单元 coverage_ratio。
+### 8.4 auto（已实现）
 
-数据集级 valid_coverage_ratio 不能直接当作每个计算单元的 coverage_ratio。
+`auto` 按两轴分辨率选择上述策略；同分辨率未完全对齐、混合细/粗方向时
+显式报错，不猜测。
 
-## 9. NoData
+公开入口：
 
-当前配置为兼容已有 V1.0 接口，保留 `terrain.nodata`（数值）与
-`terrain.nodata_strategy`（策略）两个平级字段；嵌套 `nodata: {strategy, ...}`
-形式暂不启用，避免破坏既有配置。
+```python
+from hydrodynamics import TerrainMapper
+field = TerrainMapper().map_dataset(
+    dataset, domain, coordinate_system="EPSG:4548", strategy="auto",
+    nodata_strategy="error", min_valid_coverage=None,
+)
+```
 
-NoDataStrategy 保持 error、nearest、interpolate：
+`map_dataset_to_field` 是等价函数入口。两者都只接收内存 DEMDataset；现有
+`TerrainMapper.map(domain, terrain)` 仍是兼容的配置占位接口。
 
-- error：目标单元无法得到可靠高程时立即失败；
-- nearest：未来邻近有效值填补，当前 NOT IMPLEMENTED；
-- interpolate：未来空间插值，当前 NOT IMPLEMENTED。
+## 9. TerrainField
 
-NoData 不得自动变成 0、最小值、最大值、边缘值，也不得静默忽略。
-terrain.min_valid_coverage 当前为可选接口字段，默认 null；null 表示阈值尚未
-冻结，不执行覆盖率门槛判断。显式值只做 0～1 范围校验。模型配置中的
-`vertical_datum_required` 默认 true，只表达运行前置要求，不提供具体基准名称。
+`TerrainField` 是不可变、依赖无关的模型网格地形容器，保存 `elevation`、
+`nx/ny`、`dx/dy`、`xmin/ymin`、`valid_mask`、`nodata_mask`、
+`coverage_ratio`，并以 `valid_area = coverage_ratio × dx × dy` 提供有效面积。
+所有二维形状都必须是 `(ny, nx)`。
 
-## 10. DEM → Model Grid
+## 10. 错误语义
 
-V1.0 计算网格由 domain 的 xmin/xmax/ymin/ymax、dx/dy 定义，cell-centered、
-regular rectangular structured grid。nx、ny 由程序内部计算。
+- 配置错误：`ConfigValidationError`，包含字段路径和清晰原因；
+- DEM 元数据错误：`DEMValidationError`；
+- 文件/格式错误：`DEMReaderError`、`DEMFormatError`、
+  `DEMBandCountError` 或缺依赖错误；
+- 映射几何、CRS、覆盖或策略错误：`TerrainMappingError`；
+- `nearest`/`interpolate`：声明为未来策略，调用抛 `NotImplementedError`。
 
-resampling.strategy 的固定接口值：
+## 11. 当前已实现
 
-- auto：DEM 更细 → area_weighted_mean；
-- 同分辨率且 CRS、范围、像元完全对齐 → direct；
-- DEM 更粗 → bilinear；
-- 一轴更细、一轴更粗或同分辨率未验证对齐 → 不猜测，报错。
+- 严格的 `DEMMetadata`、`DEMDataset` 和 `DEMValidator`；
+- 可选 Rasterio 单波段 GeoTIFF Reader，保留原始值及三类掩码；
+- `TerrainField` 形状、质量掩码和覆盖率校验；
+- 纯 Python `area_weighted_mean`、`direct`、`bilinear` 和 `auto` 内存映射；
+- 域边界、北向上几何、同 CRS、NoData/非有限值和显式覆盖阈值检查；
+- 所有接口的清晰异常。
 
-本契约只定义策略和元数据条件，不执行上述算法。
+## 12. 当前未实现
 
-## 11. TerrainField
+- CRS 重投影、不同 CRS 的自动配准；
+- nearest/interpolate NoData 填补；
+- 大型栅格分块/窗口读取优化；
+- DEM 路径自动解析和配置加载时文件存在性检查；
+- 任何二维水动力 Solver、控制方程、离散格式、数值通量、时间积分和物理过程。
 
-TerrainField 保存与模型网格一一对应的：
+## 13. 后续扩展
 
-- elevation，按 [j][i] 或概念上的 [j, i] 访问；
-- nx、ny、dx、dy、xmin、ymin；
-- 可选 nodata_mask（True 表示源 NoData）；
-- 可选 valid_mask（True 表示当前可靠）；
-- 可选 coverage_ratio[j][i]，范围 0～1。
+- 在保持 `TerrainField` 契约不变的前提下增加其他 Reader；
+- 评估分块读取和更低内存映射；
+- 验证 `min_valid_coverage` 默认阈值及与未来填补策略的协同；
+- 确认垂直基准元数据和运行前置条件；
+- 增加独立结果写出和质量报告适配器。
 
-valid_mask 与 nodata_mask 在只提供一方时可以互相推导；两者同时提供时保留
-独立语义，以允许未来“有填充值但可信度不足”的状态。TerrainField 不读取
-DEM，不把 NoData sentinel 转成 elevation。
-
-## 12. 错误处理
-
-- 配置错误：由现有 Pydantic ConfigValidationError 报告；
-- DEM 元数据错误：DEMValidationError，包含可读错误列表；
-- 未声明 NoData：默认严格失败，不隐式假设；
-- 缺 CRS（模型要求时）：明确失败；
-- 目标域超出有效 DEM 覆盖：未来 Mapper 必须失败；
-- 未实现 Reader、重投影、重采样或 nearest/interpolate：明确抛出
-  NotImplementedError。
-
-## 13. 当前已实现
-
-- DEMMetadata 数据结构及基础字段校验；
-- DEMValidator 基础元数据、CRS、NoData 和统计字段校验；
-- TerrainField 的质量 mask/coverage 结构和形状校验；
-- TerrainMapper 仍保持不产生伪造结果的占位边界；
-- 使用真实 DEM 构造 metadata 并通过兼容性校验的独立验证。
-
-## 14. 当前未实现
-
-- 正式 GeoTIFF/DEM Reader；
-- 实际 raster 数据读取封装；
-- DEM 覆盖范围运行时检查；
-- CRS 重投影；
-- area_weighted_mean、direct、bilinear；
-- nearest、interpolate；
-- 任意二维水动力 Solver 或物理计算。
-
-## 15. 后续扩展
-
-- 在不改变 Solver 输入的前提下增加具体 Reader；
-- 确认 min_valid_coverage 的默认阈值和失败/填补策略；
-- 确认垂直基准元数据是否必须作为一次运行的前置条件；
-- 确认 transform/bounds 一致性和像元对齐容差；
-- 为 Raster 数据集、质量报告和结果写出增加独立适配器。
+\n

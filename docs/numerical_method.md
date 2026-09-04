@@ -18,14 +18,14 @@ These checks do not define a physical dry-state algorithm. The later numerical
 design must document which methods accept these controls and whether their
 legal ranges differ.
 
-
 ## Terrain mapping boundary
 
-DEM-to-grid mapping is a data-preparation concern, not a numerical Solver
-choice. `TerrainMapper` must provide `terrain_elevation[j, i]` before a future
-solver runs; this phase does not implement that conversion. NoData handling and
-CRS transformation likewise remain outside the Solver.
-
+DEM-to-grid mapping is a data-preparation concern, not a numerical Solver choice.
+Round 5 implements pure in-memory `DEMDataset` → `TerrainField` mapping via
+`area_weighted_mean`, `direct`, `bilinear`, and `auto`. The mapper supplies
+`terrain_elevation[j, i]` to a future solver but does not choose or implement any
+equation, flux, limiter, or time integrator. CRS reprojection and NoData fill
+strategies remain outside the current scope.
 
 ## DEM data contract boundary
 

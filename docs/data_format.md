@@ -1,7 +1,7 @@
 # 输入数据格式约定
 
-当前 `load_config` 只校验文件引用字符串，不打开 GeoTIFF/CSV，也不执行重采样
-或 NoData 插值。下列内容是未来数据读取层需要遵循的接口约定。
+当前 `load_config` 只校验文件引用字符串，不打开 GeoTIFF/CSV；`GeoTIFFDEMReader` 只读取源值、掩码和元数据，二者都不执行重采样或 NoData 插值。显式调用 `TerrainMapper.map_dataset` 才会对已读 DEMDataset 执行 V1 内存映射。
+下列内容定义输入文件和数据准备层需要遵循的接口约定。
 
 ## Case 路径
 
@@ -41,7 +41,7 @@ ny = (ymax - ymin) / dy
 `terrain.resampling.strategy` 的可选值为 `auto`、`area_weighted_mean`、
 `direct` 和 `bilinear`，默认 `auto`。固定判定规则、覆盖范围要求和
 `TerrainField`/`TerrainMapper` 接口见 [terrain_mapping.md](terrain_mapping.md)。
-当前只保存配置和接口，不读取 DEM、不解析 GeoTIFF，也不执行重采样。
+配置加载阶段的 `load_config` 只保存并校验文件引用，不读取 DEM；需要读取 `.tif`/`.tiff` 时使用可选的 `GeoTIFFDEMReader`。将读取后的 `DEMDataset` 显式传给 `TerrainMapper.map_dataset` 才会执行重采样。
 
 ## CSV 时间序列
 
@@ -67,8 +67,8 @@ ny = (ymax - ymin) / dy
 
 `DEMMetadata` 保存尺寸、波段、dtype、extent、像元大小、transform、CRS、NoData
 和垂直单位等信息；`vertical_datum` 与 `elevation_type` 可以是 `None`，不得猜测。
-`DEMValidator` 在模型要求投影 CRS 或显式 NoData 时拒绝缺失元数据。当前没有正式
-Reader，核心包也不依赖 Rasterio/GDAL。
+`DEMValidator` 在模型要求投影 CRS 或显式 NoData 时拒绝缺失元数据。当前提供
+可选 Rasterio-backed `GeoTIFFDEMReader`，核心包仍不强制依赖 Rasterio/GDAL。
 
 必须区分两种覆盖率：DEM 有效空间范围对模型区域的覆盖，以及每个模型单元的
 `coverage_ratio = 有效 DEM 重叠面积 / 单元面积`。`area_weighted_mean` 只对有效
@@ -79,3 +79,18 @@ NoData 不得变成 0、最小值、最大值、边缘值或被静默忽略。`e
 可靠高程时失败；`nearest`/`interpolate` 仅声明，当前未实现。
 
 真实 DEM 的逐文件体检见 [dem_inspection_report.md](dem_inspection_report.md)。
+
+
+## GeoTIFF Reader（第 4 轮）
+
+`GeoTIFFDEMReader` 是可选 Rasterio-backed Reader，仅支持扩展名 `.tif` 和 `.tiff`，
+且 V1 要求恰好一个波段。它读取 `DEMMetadata`，并可通过 `read_dataset()` 返回
+未修改的原始二维值以及：
+
+- `valid_mask`：有限且非 NoData；
+- `nodata_mask`：源 mask 或显式 NoData sentinel；
+- `nonfinite_mask`：NaN/Inf；Reader 对非有限值优先归入此类，不与 NoData 计数重复。
+
+旧的 `read_elevation()` 仍只返回原始值序列，保持 `DEMReader` 兼容性。缺少
+Rasterio 时安装 `python -m pip install -e ".[raster]"`；Rasterio 不属于核心依赖。
+Reader 不执行 CRS 转换、覆盖检查、重采样、NoData 填补或 Solver 调用。

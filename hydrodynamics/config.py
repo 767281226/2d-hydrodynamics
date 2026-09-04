@@ -14,11 +14,21 @@ from pathlib import Path
 from typing import Annotated, Any, Sequence
 
 from .dem_contract import (
+    DEMBandCountError,
+    DEMDataset,
+    DEMFormatError,
     DEMMetadata,
     DEMReader,
+    DEMReaderDependencyError,
+    DEMReaderError,
     DEMValidationError,
     DEMValidator,
+    GeoTIFFDEMReader,
+    GeoTIFFReader,
+    GeoTiffDEMReader,
+    GeoTiffReader,
     PlaceholderDEMReader,
+    RasterioDEMReader,
 )
 
 from pydantic import (
@@ -460,7 +470,12 @@ def _coerce_enum(value: Any, enum_type: type[Enum], field_name: str) -> Enum:
 
 
 class TerrainMapper:
-    """Boundary for a future DEM-to-grid data preparation implementation."""
+    """Configuration and in-memory DEM-to-grid mapping entry points.
+
+    The map method is the legacy configuration-only placeholder. The
+    map_dataset method maps an already-read DEMDataset without file I/O
+    or reprojection.
+    """
 
     def map(
         self,
@@ -523,6 +538,38 @@ class TerrainMapper:
         """Descriptive alias for :meth:`map`."""
 
         return self.map(domain, terrain, **kwargs)
+
+    def map_dataset(
+        self,
+        dataset: DEMDataset,
+        domain: DomainConfig,
+        *,
+        coordinate_system: str | None = None,
+        strategy: ResamplingStrategy | str = ResamplingStrategy.AUTO,
+        nodata_strategy: NoDataStrategy | str = NoDataStrategy.ERROR,
+        min_valid_coverage: float | None = None,
+    ) -> TerrainField:
+        """Map an already-read DEMDataset to the model grid.
+
+        This method preserves the existing :meth:`map` configuration API. It
+        performs no file I/O, CRS conversion, or Solver work.
+        """
+
+        from .terrain_mapping_algorithms import map_dataset_to_field
+
+        return map_dataset_to_field(
+            dataset,
+            domain,
+            coordinate_system=coordinate_system,
+            strategy=strategy,
+            nodata_strategy=nodata_strategy,
+            min_valid_coverage=min_valid_coverage,
+        )
+
+    def map_field(self, dataset: DEMDataset, domain: DomainConfig, **kwargs: Any) -> TerrainField:
+        """Alias for :meth:`map_dataset` used by future engine adapters."""
+
+        return self.map_dataset(dataset, domain, **kwargs)
 
 
 def resolve_auto_resampling_strategy(
@@ -830,6 +877,9 @@ def load_config(path: str | Path) -> SimulationConfig:
         raise ConfigValidationError(_format_validation_error(exc), errors=details) from exc
 
 
+# Imported late to avoid a circular import while the configuration classes load.
+from .terrain_mapping_algorithms import TerrainMappingError, map_dataset_to_field
+
 __all__ = [
     "BoundaryConfig",
     "BoundaryLocation",
@@ -837,17 +887,29 @@ __all__ = [
     "BoundaryType",
     "ConfigLoadError",
     "ConfigValidationError",
+    "DEMBandCountError",
+    "DEMDataset",
+    "DEMFormatError",
     "DEMMetadata",
     "DEMValidationError",
     "DEMValidator",
     "DEMReader",
+    "DEMReaderDependencyError",
+    "DEMReaderError",
+    "GeoTIFFDEMReader",
+    "GeoTIFFReader",
+    "GeoTiffDEMReader",
+    "GeoTiffReader",
     "PlaceholderDEMReader",
+    "RasterioDEMReader",
     "DomainConfig",
     "DomainType",
     "NoDataStrategy",
     "ResamplingStrategy",
     "TerrainField",
     "TerrainMapper",
+    "TerrainMappingError",
+    "map_dataset_to_field",
     "resolve_auto_resampling_strategy",
     "FieldType",
     "InitialConditionConfig",
