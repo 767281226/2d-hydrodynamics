@@ -32,9 +32,12 @@ class ConfigSchemaTests(unittest.TestCase):
 
     def test_complete_config_loads(self) -> None:
         self.assertEqual(self.config.model.name, "case_001")
+        self.assertEqual(self.config.model.end_time, 288.0 * 3600.0)
+        self.assertEqual(self.config.output.interval, 3600.0)
+        self.assertEqual(self.config.model.output_interval, 3600.0)
         self.assertEqual(self.config.domain.dx, 50.0)
-        self.assertEqual(self.config.domain.nx, 100)
-        self.assertEqual(self.config.domain.ny, 100)
+        self.assertEqual(self.config.domain.nx, 507)
+        self.assertEqual(self.config.domain.ny, 719)
         self.assertEqual(len(self.config.boundary), 4)
         self.assertEqual(self.config.terrain.nodata_strategy, NoDataStrategy.ERROR)
         self.assertTrue(self.config.model.vertical_datum_required)
@@ -55,14 +58,14 @@ class ConfigSchemaTests(unittest.TestCase):
 
     def test_domain_extent_must_be_divisible(self) -> None:
         raw = copy.deepcopy(self.raw)
-        raw["domain"]["xmax"] = 4999
+        raw["domain"]["xmax"] = 499225
         with self.assertRaises(ValidationError) as raised:
             SimulationConfig.model_validate(raw)
         self.assertIn("evenly divisible", str(raised.exception))
 
     def test_y_extent_must_be_divisible(self) -> None:
         raw = copy.deepcopy(self.raw)
-        raw["domain"]["ymax"] = 4999
+        raw["domain"]["ymax"] = 4335525
         with self.assertRaises(ValidationError) as raised:
             SimulationConfig.model_validate(raw)
         self.assertIn("evenly divisible", str(raised.exception))
@@ -221,6 +224,10 @@ class ConfigSchemaTests(unittest.TestCase):
             self.assertIn("file is required", str(raised.exception))
         finally:
             path.unlink(missing_ok=True)
+
+
+
+
 
 
 if __name__ == "__main__":

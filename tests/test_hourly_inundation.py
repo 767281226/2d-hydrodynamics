@@ -177,6 +177,18 @@ def test_classify_qingbei_follows_daqing_river_track():
     assert bool(np.all(excluded == (active & ~qingbei)))
 
 
+def test_read_named_polylines_loads_daqing_in_epsg4548():
+    from hydrodynamics.vector_mask import read_named_polylines
+
+    path = Path(r'D:/devTools/project/2d-hydrodynamics/map/river_track/river_track.shp')
+    lines = read_named_polylines(path, name="大清河", target_crs="EPSG:4548")
+    assert len(lines) >= 1
+    xs = [pt[0] for line in lines for pt in line]
+    ys = [pt[1] for line in lines for pt in line]
+    assert min(xs) > 470000.0
+    assert max(xs) < 500000.0
+    assert min(ys) > 4310000.0
+    assert max(ys) < 4330000.0
 
 
 def test_connected_fill_does_not_wet_disconnected_pit():

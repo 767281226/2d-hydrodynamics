@@ -1,9 +1,4 @@
-"""Configuration interface for the 2-D hydrodynamics project.
-
-The package intentionally contains no numerical solver.  It provides typed,
-validated configuration objects that can be consumed by a future engine,
-command-line tool, or another Python application.
-"""
+"""Public input, calculation, result-export, and workflow interfaces."""
 
 from .config import (
     ConfigLoadError,
@@ -84,4 +79,16 @@ __all__ += [
     "GATE_RULES", "GateDispatchInput", "GateDispatchLog", "GateDispatchOptions",
     "GateDispatchSnapshot", "GateOperation", "GateWaterLevel", "build_gate_dispatch_log",
     "export_gate_dispatch_for_netcdf", "gate_dispatch_paths", "write_gate_dispatch_log",
+]
+
+from .nc2web import (
+    FRAME_MAGIC, MESH_MAGIC, Nc2WebError, Nc2WebManifest, Nc2WebStepJsonReport,
+    TARGET_WEB_EPSG, convert_netcdf_to_web, convert_netcdf_to_step_json, parse_netcdf_for_web,
+)
+from .workflow_config import WorkflowConfig, WorkflowError, load_workflow_config
+from .workflow import run_workflow, find_latest_completed_bundle
+__all__ += [
+    "FRAME_MAGIC", "MESH_MAGIC", "Nc2WebError", "Nc2WebManifest", "Nc2WebStepJsonReport",
+    "TARGET_WEB_EPSG", "convert_netcdf_to_web", "convert_netcdf_to_step_json", "parse_netcdf_for_web",
+    "WorkflowConfig", "WorkflowError", "load_workflow_config", "run_workflow", "find_latest_completed_bundle",
 ]

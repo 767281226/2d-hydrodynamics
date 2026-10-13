@@ -172,6 +172,7 @@ class ModelConfig(_SchemaModel):
     # comparing terrain elevations with water levels. The datum value itself
     # remains intentionally unknown until supplied by the data provider.
     vertical_datum_required: StrictBool = True
+    target_vertical_datum: Text = "1985国家高程基准"
 
     @model_validator(mode="after")
     def validate_time_window(self) -> "ModelConfig":

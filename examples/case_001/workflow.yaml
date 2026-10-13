@@ -1,0 +1,25 @@
+schema_version: '1.0'
+case_config: config.yaml
+prepared_grid: ../../work/inputs/qingbei_50m.npz
+forcing:
+  file: data/forcing.csv
+  source: 原模型重建边界过程；西河闸第262小时增加150m3/s；非站点实测及真实操作记录。
+  time_unit: s
+  discharge_unit: m3/s
+  rainfall_unit: mm/step
+time_origin: '2023-08-01T02:00:00+08:00'
+settings:
+  eta_crest_m: 4.449999999999999
+  water_surface_slope: 0.00013012777871987502
+  max_spread_m_s: 0.01929094687190116
+  area_schedule:
+    - {time_h: 0, fraction: 0}
+    - {time_h: 133, fraction: 0.5}
+    - {time_h: 179, fraction: 0.9}
+    - {time_h: 202, fraction: 0.99}
+    - {time_h: 220, fraction: 1}
+output_directory: ../../work/results
+result_name: dongdian_qingbei_2023_288h.nc
+dispatch_file: null
+record_xihe_component_changes: true
+socio_overlay_shp: ../../data/grid_50m_social_economy/shp/grid_cells_socio.shp

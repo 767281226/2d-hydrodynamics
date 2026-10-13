@@ -189,6 +189,9 @@ cython_debug/
 .idea/
 # Local DEM inputs and generated raster sidecars; never commit large source data.
 data/dem/
+# Local prepared grids, model outputs, and generated export sidecars.
+/work/
+/examples/case_001/results/
 
 
 # Abstra

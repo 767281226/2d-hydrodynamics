@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Qingbei 288h</title>
+<style>
+  :root { --bg:#0e1621; --panel:#162232; --line:#2a3d52; --ink:#e8f1fa; --muted:#8aa0b5; --accent:#3aa0ff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Microsoft YaHei",system-ui,sans-serif; background:var(--bg); color:var(--ink); height:100vh; display:flex; overflow:hidden; }
+  #stage { flex:1; display:flex; align-items:center; justify-content:center; min-width:0; }
+  #wrap { position:relative; background:#0b1220; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  canvas { display:block; }
+  #tip { position:absolute; pointer-events:none; background:rgba(8,16,28,.92); color:#dbeafe; font-size:12px; padding:8px 10px; border-radius:8px; display:none; white-space:nowrap; }
+  #side { width:320px; margin:12px; padding:16px; background:var(--panel); border:1px solid var(--line); border-radius:12px; display:flex; flex-direction:column; gap:12px; overflow:auto; }
+  h1 { font-size:16px; }
+  .sub { font-size:12px; color:var(--muted); line-height:1.55; }
+  .kpi { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .kpi div { background:#101b2a; border-radius:8px; padding:8px 10px; }
+  .kpi .v { font-size:18px; color:var(--accent); }
+  .kpi .l { font-size:11px; color:var(--muted); margin-top:2px; }
+  button { background:#1d4ed8; color:#fff; border:0; border-radius:8px; padding:8px 14px; cursor:pointer; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  #status { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div id="stage"><div id="wrap"><canvas id="cv"></canvas><div id="tip"></div></div></div>
+<div id="side">
+  <div>
+    <h1>清北淹没过程</h1>
+    <div class="sub">整幅底图固定，水深在图上慢慢出现，不再按湿格裁切画布。台头高地保持干。EPSG:4548。</div>
+  </div>
+  <div class="kpi">
+    <div><div class="v" id="kHour">--</div><div class="l">小时</div></div>
+    <div><div class="v" id="kH">--</div><div class="l">本帧最大水深 m</div></div>
+    <div><div class="v" id="kWet">--</div><div class="l">湿格 / 面积 km2</div></div>
+    <div><div class="v" id="kFrame">--</div><div class="l">帧</div></div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <button id="btn">播放</button>
+    <span class="sub" id="clock"></span>
+  </div>
+  <input type="range" id="seek" min="0" max="0" value="0">
+  <canvas id="leg" width="280" height="12" style="width:100%;height:12px;border-radius:6px;"></canvas>
+  <div class="sub" id="legTxt">水深</div>
+  <label class="sub"><input type="checkbox" id="chkSocio"> 叠加人口（可视化，非正式风险）</label>
+  <div id="status">加载…</div>
+</div>
+<script>
+const START = Date.parse("2023-08-01T02:00:00+08:00");
+const MAGIC = "NC2WF01\n";
+const PLAY_MS = 420;
+let M, socio=null, socioMax=1, playing=false, idx=0, timer=0, cache={}, VIEW=null, VIEW_MASK=null;
+const cv=document.getElementById("cv"), ctx=cv.getContext("2d"), tip=document.getElementById("tip");
+function color(h,hmax){
+  if(!(h>0)||!isFinite(h)) return [18,28,40,255];
+  const t=Math.max(0,Math.min(1,h/(hmax||1)));
+  if(t<0.25){const u=t/0.25;return [20,40+80*u,140+80*u,230];}
+  if(t<0.5){const u=(t-0.25)/0.25;return [20+40*u,120+80*u,220-80*u,230];}
+  if(t<0.75){const u=(t-0.5)/0.25;return [60+160*u,200-40*u,140-80*u,230];}
+  const u=(t-0.75)/0.25; return [220+35*u,160-120*u,60-40*u,230];
+}
+function land(){ return [46, 58, 52, 255]; }
+function empty(){ return [12, 18, 28, 255]; }
+function drawLegend(hmax){
+  const c=document.getElementById("leg").getContext("2d");
+  const w=c.canvas.width,h=c.canvas.height,img=c.createImageData(w,h);
+  for(let x=0;x<w;x++){const col=color((x/(w-1))*hmax,hmax); for(let y=0;y<h;y++){const i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=col[3];}}
+  c.putImageData(img,0,0);
+  document.getElementById("legTxt").textContent="水深 0 — "+hmax.toFixed(2)+" m";
+}
+function bbox(depth,ny,nx){
+  let r0=ny,r1=-1,c0=nx,c1=-1;
+  for(let r=0;r<ny;r++) for(let c=0;c<nx;c++){ const h=depth[r*nx+c]; if(h>0&&isFinite(h)){ if(r<r0)r0=r; if(r>r1)r1=r; if(c<c0)c0=c; if(c>c1)c1=c; } }
+  if(r1<r0) return {r0:0,r1:ny-1,c0:0,c1:nx-1};
+  const pr=Math.max(8,((r1-r0)*0.06)|0), pc=Math.max(8,((c1-c0)*0.06)|0);
+  return {r0:Math.max(0,r0-pr), r1:Math.min(ny-1,r1+pr), c0:Math.max(0,c0-pc), c1:Math.min(nx-1,c1+pc)};
+}
+async function loadFrame(i){
+  if(cache[i]) return cache[i];
+  if(!M.frames[i]) return null;
+  const buf=await (await fetch("nc2web/"+M.frames[i].file+"?v=10")).arrayBuffer();
+  const u8=new Uint8Array(buf);
+  const mag=String.fromCharCode.apply(null,u8.subarray(0,8));
+  if(mag!==MAGIC) throw new Error("magic "+JSON.stringify(mag));
+  const dv=new DataView(buf);
+  const ny=dv.getUint32(8,true), nx=dv.getUint32(12,true);
+  const depth=new Float32Array(buf,20,ny*nx);
+  cache[i]={ny,nx,depth};
+  return cache[i];
+}
+function render(fr){
+  const box=VIEW || bbox(fr.depth,fr.ny,fr.nx);
+  const ny=box.r1-box.r0+1, nx=box.c1-box.c0+1;
+  const hmax=(M.extrema.water_depth&&M.extrema.water_depth.max)||7.2;
+  const img=ctx.createImageData(nx,ny);
+  const d=img.data;
+  let wet=0,mh=0;
+  const useSocio=socio && document.getElementById("chkSocio").checked;
+  const landCol=land(), emptyCol=empty();
+  for(let r=0;r<ny;r++) for(let c=0;c<nx;c++){
+    const gr=r+box.r0, gc=c+box.c0;
+    const h=fr.depth[gr*fr.nx+gc];
+    const y=ny-1-r, o=(y*nx+c)*4;
+    let col;
+    if(h>0&&isFinite(h)){ wet++; if(h>mh) mh=h; col=color(h,hmax);}
+    else col = VIEW_MASK && VIEW_MASK[gr*fr.nx+gc] ? landCol : emptyCol;
+    if(useSocio){ const pop=socio[gr*fr.nx+gc]; if(pop>0){ const a=Math.min(0.65,0.15+0.5*pop/socioMax); col=[col[0]*(1-a)+220*a, col[1]*(1-a)+60*a, col[2]*(1-a)+140*a, 230]; } }
+    d[o]=col[0]; d[o+1]=col[1]; d[o+2]=col[2]; d[o+3]=col[3];
+  }
+  const off=document.createElement("canvas"); off.width=nx; off.height=ny;
+  off.getContext("2d").putImageData(img,0,0);
+  const H=Math.min(820, window.innerHeight-40);
+  const W=Math.max(280, Math.round(H*nx/ny));
+  cv.width=W; cv.height=H;
+  document.getElementById("wrap").style.width=W+"px";
+  document.getElementById("wrap").style.height=H+"px";
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(off,0,0,W,H);
+  document.getElementById("kH").textContent=mh.toFixed(2);
+  document.getElementById("kWet").textContent=wet+" / "+(wet*M.dx*M.dy/1e6).toFixed(2);
+  document.getElementById("kFrame").textContent=(idx+1)+" / "+M.frames.length;
+  const hour=(M.times[idx]||0)/3600;
+  document.getElementById("kHour").textContent=hour.toFixed(0)+" h";
+  document.getElementById("clock").textContent=new Date(START+(M.times[idx]||0)*1000).toLocaleString("zh-CN",{hour12:false,timeZone:"Asia/Shanghai"});
+  document.getElementById("status").textContent=M.epsg+" 固定全幅 "+nx+"x"+ny;
+  cv.onmousemove=e=>{
+    const rec=cv.getBoundingClientRect();
+    const c=box.c0+Math.floor((e.clientX-rec.left)/rec.width*nx);
+    const ydisp=Math.floor((e.clientY-rec.top)/rec.height*ny);
+    const row=box.r1-ydisp;
+    if(c<box.c0||c>box.c1||row<box.r0||row>box.r1){ tip.style.display="none"; return; }
+    const h=fr.depth[row*fr.nx+c];
+    const id=row*fr.nx+c+1;
+    tip.style.display="block"; tip.style.left=(e.clientX-rec.left+12)+"px"; tip.style.top=(e.clientY-rec.top+12)+"px";
+    let msg="格 "+id+" 水深 "+(h>0&&isFinite(h)?h.toFixed(3)+" m":"干");
+    if(socio) msg+="  人口 "+(socio[row*fr.nx+c]||0).toFixed(2);
+    tip.textContent=msg;
+  };
+}
+async function show(i){
+  idx=Math.max(0,Math.min(M.frames.length-1,i|0));
+  document.getElementById("seek").value=idx;
+  const fr=await loadFrame(idx);
+  if(!fr) return;
+  render(fr);
+  if(idx+1<M.frames.length) loadFrame(idx+1);
+}
+function play(){
+  playing=!playing;
+  document.getElementById("btn").textContent=playing?"暂停":"播放";
+  if(!playing){ clearInterval(timer); return; }
+  timer=setInterval(()=>show((idx+1)%M.frames.length),PLAY_MS);
+}
+async function lockView(){
+  const peak = Math.min(M.frames.length-1, 202);
+  const fr = await loadFrame(peak);
+  VIEW = bbox(fr.depth, fr.ny, fr.nx);
+  VIEW_MASK = new Uint8Array(fr.ny*fr.nx);
+  for(let i=0;i<fr.depth.length;i++) if(fr.depth[i]>0 && isFinite(fr.depth[i])) VIEW_MASK[i]=1;
+}
+async function main(){
+  M=await (await fetch("nc2web/manifest.json?v=10")).json();
+  try{
+    socio=new Float32Array(await (await fetch("nc2web/socio_pop.bin?v=10")).arrayBuffer());
+    socioMax=1e-6; for(let i=0;i<socio.length;i++) if(socio[i]>socioMax) socioMax=socio[i];
+  }catch(e){ socio=null; }
+  drawLegend((M.extrema.water_depth&&M.extrema.water_depth.max)||7);
+  document.getElementById("seek").max=M.frames.length-1;
+  document.getElementById("seek").oninput=e=>show(+e.target.value);
+  document.getElementById("btn").onclick=play;
+  document.getElementById("chkSocio").onchange=()=>{ if(cache[idx]) render(cache[idx]); };
+  await lockView();
+  await show(1);
+}
+main().catch(e=>{ document.getElementById("status").textContent=String(e); });
+</script>
+</body>
+</html>

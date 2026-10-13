@@ -49,3 +49,17 @@ config = load_config("examples/case_001/config.yaml")
 `NetCDFWriter.write()` 和 `write_hourly_netcdf()` 接收独立的 `GateDispatchInput`。
 安装输出依赖：`python -m pip install -e ".[netcdf]"`。
 输入格式、结果字段和已有结果补充记录的方法见 [调闸记录契约](docs/gate_dispatch_log.md)。
+
+## 计算与完整输出自动流程
+
+在仓库根目录执行 `python -m pip install -e ".[workflow]"` 后，运行：
+
+```powershell
+python -m hydrodynamics --id run01
+# 或 run_qingbei_nc.bat --id run01
+```
+
+流程配置为 `examples/case_001/workflow.yaml`，准备网格为本地外部输入。
+一次命令自动完成 NC、调闸记录、4 个 SHP 图层、nc2web、stepjson、viewer 和完整性检查，
+结果写入 `work/results/<id>/`。所有必需阶段通过才报告成功；失败返回非零退出码，错误和阶段状态
+记录在 `run_report.json`。查看脚本默认选择最新完整成功的结果。详见 [流程输入和运行说明](docs/workflow.md)。

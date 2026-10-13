@@ -12,3 +12,5 @@
 `write_hourly_netcdf(..., gate_dispatch=...)` 和 `SimulationOutput.gate_dispatch` 接收独立的
 `GateDispatchInput`，记录规则触发、条件解除、判断缺项和调用方提供的实际调闸动作及来源。
 时间戳、站点/基准、开度/流量前后值和来源随记录保存；详细契约见 [gate_dispatch_log.md](gate_dispatch_log.md)。
+
+统一入口 `python -m hydrodynamics` 自动执行计算和全部后处理，见 [workflow.md](workflow.md)。
