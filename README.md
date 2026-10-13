@@ -41,3 +41,11 @@ config = load_config("examples/case_001/config.yaml")
 - [docs/terrain_mapping.md](docs/terrain_mapping.md)：DEM → 计算网格 V1.0 规范。
 - [docs/dem_data_contract.md](docs/dem_data_contract.md)：DEM 数据契约 V1.0。
 - [docs/dem_inspection_report.md](docs/dem_inspection_report.md)：真实 DEM 只读体检报告。
+
+## 最终结果调闸记录
+
+最终 NetCDF 导出同时生成同目录的 `<文件名>_gate_dispatch.csv/.json` 调闸记录，保存规则触发时间、
+判断依据和调用方提供的调闸动作及来源。站点水位、潮位窗口或人工判断条件缺失时会记录缺项。
+`NetCDFWriter.write()` 和 `write_hourly_netcdf()` 接收独立的 `GateDispatchInput`。
+安装输出依赖：`python -m pip install -e ".[netcdf]"`。
+输入格式、结果字段和已有结果补充记录的方法见 [调闸记录契约](docs/gate_dispatch_log.md)。
