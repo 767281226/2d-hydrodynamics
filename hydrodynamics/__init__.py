@@ -3,6 +3,12 @@
 from .config import (
     ConfigLoadError,
     ConfigValidationError,
+    InitialConditionConfig,
+    InitialConditionError,
+    InitialConditionField,
+    InitialConditionQuantity,
+    InitialConditionType,
+    InitialWaterField,
     NoDataStrategy,
     ResamplingStrategy,
     SimulationConfig,
@@ -29,9 +35,20 @@ from .dem_contract import (
     RasterioDEMReader,
 )
 
+from .roughness import RoughnessError, RoughnessField, ResistanceField
+
 __all__ = [
     "ConfigLoadError",
     "ConfigValidationError",
+    "InitialConditionConfig",
+    "InitialConditionError",
+    "InitialConditionField",
+    "InitialConditionQuantity",
+    "InitialConditionType",
+    "InitialWaterField",
+    "RoughnessError",
+    "RoughnessField",
+    "ResistanceField",
     "DEMBandCountError",
     "DEMDataset",
     "DEMFormatError",

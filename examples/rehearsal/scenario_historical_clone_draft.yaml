@@ -1,0 +1,36 @@
+format: rehearsal-scenario-v1
+schema_version: "1.0"
+scenario_name: "2023 Dongdian public history copy"
+description: "Display/annotation draft. History does not become a continuous boundary series."
+creation_type: BUILTIN_CLONE
+template_ref:
+  template_key: TJ_2023_DONGDIAN_PUBLIC_HISTORY_V1
+  catalog_version: "2026-10-19.1"
+source_document_plan_id: null
+region_ids: []
+region_aliases: [DONGDIAN]
+event_id: null
+time_origin_local: null
+time_zone: Asia/Shanghai
+duration_hours: null
+output_step_minutes: null
+engine_mode: null
+input_profile_ref: null
+upper_boundaries: []
+rule_snapshot_ref: null
+initial_condition:
+  mode: UNKNOWN
+  profile_ref: null
+rainfall:
+  mode: UNKNOWN
+  profile_ref: null
+downstream_policy:
+  mode: DEFERRED_UNKNOWN
+  profile_ref: null
+  user_input_required: false
+  applied: false
+requested_products: []
+metric_policy_version: null
+historical_event_refs:
+  - TJ23-DONGDIAN-ACTIVATE
+  - TJ23-XIQING-JINGHAI-EVAC-STATUS

@@ -1,0 +1,46 @@
+format: rehearsal-scenario-v1
+schema_version: "1.0"
+scenario_name: "synthetic closed-box preflight"
+description: "Tiny packaged synthetic fixture; test-only and not an operational forecast."
+creation_type: MANUAL
+template_ref: null
+source_document_plan_id: null
+region_ids: [SYNTHETIC_REGION_1]
+region_aliases: []
+event_id: null
+time_origin_local: null
+time_zone: Asia/Shanghai
+duration_hours: 120.0
+output_step_minutes: 60.0
+engine_mode: triangular_closed_experimental
+input_profile_ref:
+  profile_id: synthetic_closed_box_v1
+  profile_version: "1.0"
+upper_boundaries: []
+rule_snapshot_ref: null
+initial_condition:
+  mode: PROFILE_REF
+  profile_ref:
+    profile_id: synthetic_closed_box_v1
+    profile_version: "1.0"
+rainfall:
+  mode: EXPLICIT_NONE
+  profile_ref: null
+downstream_policy:
+  mode: SYNTHETIC_CLOSED_DOMAIN
+  profile_ref:
+    profile_id: synthetic_closed_box_v1
+    profile_version: "1.0"
+  user_input_required: false
+  applied: false
+requested_products:
+  - product_code: water_depth
+    required: true
+    scope_id: SYNTHETIC_CLOSED_SCOPE
+    aggregation: FRAME
+  - product_code: maximum_depth
+    required: true
+    scope_id: SYNTHETIC_CLOSED_SCOPE
+    aggregation: MAX_OVER_WINDOW
+metric_policy_version: synthetic-demo-policy-v1
+historical_event_refs: []

@@ -7,6 +7,7 @@ reproject coordinates, or invoke a hydrodynamics solver.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from math import floor, isclose, isfinite
 from numbers import Real
 import re
@@ -517,14 +518,21 @@ def map_dataset_to_field(
     if selected is ResamplingStrategy.AREA_WEIGHTED_MEAN:
         if not (finer_or_equal_x and finer_or_equal_y and not same_resolution):
             raise TerrainMappingError("area_weighted_mean requires a finer DEM on both axes")
-        return _area_weighted_mean(dataset, domain, affine, min_valid_coverage)
-    if selected is ResamplingStrategy.DIRECT:
-        return _direct(dataset, domain, affine, min_valid_coverage)
-    if selected is ResamplingStrategy.BILINEAR:
+        field = _area_weighted_mean(dataset, domain, affine, min_valid_coverage)
+    elif selected is ResamplingStrategy.DIRECT:
+        field = _direct(dataset, domain, affine, min_valid_coverage)
+    elif selected is ResamplingStrategy.BILINEAR:
         if not (coarser_or_equal_x and coarser_or_equal_y and not same_resolution):
             raise TerrainMappingError("bilinear requires a coarser DEM on both axes")
-        return _bilinear(dataset, domain, affine, min_valid_coverage)
-    raise TerrainMappingError(f"Unsupported mapping strategy: {selected.value}")
-
+        field = _bilinear(dataset, domain, affine, min_valid_coverage)
+    else:
+        raise TerrainMappingError(f"Unsupported mapping strategy: {selected.value}")
+    # Preserve the verified model CRS and any explicitly supplied source datum
+    # on the solver-facing preparation field for later absolute-level checks.
+    return replace(
+        field,
+        coordinate_system=coordinate_system,
+        vertical_datum=dataset.metadata.vertical_datum,
+    )
 
 __all__ = ["TerrainMappingError", "map_dataset_to_field"]

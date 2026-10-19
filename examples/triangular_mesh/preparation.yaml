@@ -1,0 +1,14 @@
+version: 1
+coordinate_system: EPSG:4548
+mesh:
+  type: json
+  file: mesh.json
+terrain:
+  type: json
+  file: dem.json
+  minimum_valid_coverage: 0.0
+  vertical_datum: "1985国家高程基准"
+output_file: prepared_mesh.nc
+minimum_face_quality: 0.0
+geometry_tolerance_m: 1.0e-8
+minimum_face_area_m2: 1.0e-12

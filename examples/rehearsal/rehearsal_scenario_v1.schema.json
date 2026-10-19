@@ -1,0 +1,1015 @@
+{
+  "$defs": {
+    "BoundarySeriesReference": {
+      "additionalProperties": false,
+      "properties": {
+        "series_id": {
+          "description": "Stable series reference, not a display label",
+          "title": "Series Id",
+          "type": "string"
+        },
+        "dataset_version_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Immutable external dataset version; unresolved references block computation",
+          "title": "Dataset Version Id"
+        },
+        "content_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Claimed source digest; never treated as trusted until a resolver verifies it",
+          "title": "Content Sha256"
+        },
+        "quantity": {
+          "description": "Boundary quantity represented by the samples",
+          "enum": [
+            "discharge",
+            "water_level"
+          ],
+          "title": "Quantity",
+          "type": "string"
+        },
+        "unit": {
+          "description": "Required native unit: discharge m3/s or absolute level m",
+          "enum": [
+            "m3/s",
+            "m"
+          ],
+          "title": "Unit",
+          "type": "string"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "enum": [
+                "inflow",
+                "outflow"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required for non-negative discharge; direction is separate from Q sign",
+          "title": "Direction"
+        },
+        "vertical_datum": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required for absolute water_level; must exactly match resolved terrain datum",
+          "title": "Vertical Datum"
+        },
+        "time_basis": {
+          "const": "SCENARIO_RELATIVE_S",
+          "default": "SCENARIO_RELATIVE_S",
+          "description": "R1 normalized sample times in seconds from scenario start",
+          "title": "Time Basis",
+          "type": "string"
+        },
+        "temporal_policy": {
+          "description": "Explicit input interpolation policy; engine support is checked separately",
+          "enum": [
+            "piecewise_constant",
+            "piecewise_linear"
+          ],
+          "title": "Temporal Policy",
+          "type": "string"
+        },
+        "points": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ScenarioTimePoint"
+              },
+              "maxItems": 100000,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline samples; omitted means external series content has not been resolved",
+          "title": "Points"
+        }
+      },
+      "required": [
+        "series_id",
+        "quantity",
+        "unit",
+        "temporal_policy"
+      ],
+      "title": "BoundarySeriesReference",
+      "type": "object"
+    },
+    "DesignBoundarySource": {
+      "additionalProperties": false,
+      "properties": {
+        "source_mode": {
+          "const": "DESIGN",
+          "title": "Source Mode",
+          "type": "string"
+        },
+        "section_id": {
+          "description": "Stable hydraulic section ID",
+          "title": "Section Id",
+          "type": "string"
+        },
+        "design_dataset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Approved design source identity",
+          "title": "Design Dataset Id"
+        },
+        "design_version_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Immutable design data version",
+          "title": "Design Version Id"
+        },
+        "design_method_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reviewed design hydrograph method reference",
+          "title": "Design Method Id"
+        },
+        "return_period_years": {
+          "anyOf": [
+            {
+              "gt": 0.0,
+              "le": 10000.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Return period in years; does not generate a hydrograph by itself",
+          "title": "Return Period Years"
+        },
+        "approval_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Approval/evidence reference for a design dataset",
+          "title": "Approval Ref"
+        },
+        "series_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundarySeriesReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Complete section-specific design series"
+        }
+      },
+      "required": [
+        "source_mode",
+        "section_id"
+      ],
+      "title": "DesignBoundarySource",
+      "type": "object"
+    },
+    "DownstreamPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "default": "DEFERRED_UNKNOWN",
+          "description": "Unknown is not zero flow/stage, free outflow, or a wall",
+          "enum": [
+            "DEFERRED_UNKNOWN",
+            "SYNTHETIC_CLOSED_DOMAIN"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "profile_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only the pinned synthetic profile can authorize the synthetic closed-wall policy"
+        },
+        "user_input_required": {
+          "const": false,
+          "default": false,
+          "description": "Lower-boundary entry is deferred from the ordinary user form",
+          "title": "User Input Required",
+          "type": "boolean"
+        },
+        "applied": {
+          "const": false,
+          "default": false,
+          "description": "R1 does not apply boundary conditions",
+          "title": "Applied",
+          "type": "boolean"
+        }
+      },
+      "title": "DownstreamPolicy",
+      "type": "object"
+    },
+    "ForecastBoundarySource": {
+      "additionalProperties": false,
+      "properties": {
+        "source_mode": {
+          "const": "FORECAST",
+          "title": "Source Mode",
+          "type": "string"
+        },
+        "section_id": {
+          "description": "Stable hydraulic section ID; display name is not an identity",
+          "title": "Section Id",
+          "type": "string"
+        },
+        "forecast_dataset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Forecast product/batch identity",
+          "title": "Forecast Dataset Id"
+        },
+        "forecast_version_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Immutable forecast publication version",
+          "title": "Forecast Version Id"
+        },
+        "issued_at_local": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Forecast issue time in yyyy-MM-dd HH:mm:ss; not valid time",
+          "title": "Issued At Local"
+        },
+        "issued_time_zone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "IANA timezone for issued_at_local",
+          "title": "Issued Time Zone"
+        },
+        "series_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundarySeriesReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-section forecast series; missing content is a draft blocker for computation"
+        }
+      },
+      "required": [
+        "source_mode",
+        "section_id"
+      ],
+      "title": "ForecastBoundarySource",
+      "type": "object"
+    },
+    "HistoricalBoundarySource": {
+      "additionalProperties": false,
+      "properties": {
+        "source_mode": {
+          "const": "HISTORICAL",
+          "title": "Source Mode",
+          "type": "string"
+        },
+        "section_id": {
+          "description": "Stable observed/model section ID",
+          "title": "Section Id",
+          "type": "string"
+        },
+        "event_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Historical event identity; a catalog event alone is not a continuous series",
+          "title": "Event Id"
+        },
+        "observation_dataset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Observation dataset identity",
+          "title": "Observation Dataset Id"
+        },
+        "observation_version_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Immutable observation/quality-control version",
+          "title": "Observation Version Id"
+        },
+        "observation_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "OBSERVED",
+                "RECONSTRUCTED",
+                "TRANSCRIBED"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observation Kind"
+        },
+        "station_or_section_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Observed station/section mapping evidence",
+          "title": "Station Or Section Ref"
+        },
+        "series_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundarySeriesReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Complete time series; isolated news values do not qualify"
+        }
+      },
+      "required": [
+        "source_mode",
+        "section_id"
+      ],
+      "title": "HistoricalBoundarySource",
+      "type": "object"
+    },
+    "InitialConditionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "default": "UNKNOWN",
+          "description": "UNKNOWN is a saved but non-computable state; never infer zero depth",
+          "enum": [
+            "UNKNOWN",
+            "PROFILE_REF"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "profile_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Trusted initial profile reference, required only for PROFILE_REF"
+        }
+      },
+      "title": "InitialConditionInput",
+      "type": "object"
+    },
+    "ManualBoundarySource": {
+      "additionalProperties": false,
+      "properties": {
+        "source_mode": {
+          "const": "MANUAL",
+          "title": "Source Mode",
+          "type": "string"
+        },
+        "section_id": {
+          "description": "Stable hydraulic section ID",
+          "title": "Section Id",
+          "type": "string"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why the explicit manual series is being used",
+          "title": "Rationale"
+        },
+        "input_source_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source document/file reference; not a verified approval by itself",
+          "title": "Input Source Ref"
+        },
+        "series_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BoundarySeriesReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Explicit manual series; values are not defaulted or interpolated silently"
+        }
+      },
+      "required": [
+        "source_mode",
+        "section_id"
+      ],
+      "title": "ManualBoundarySource",
+      "type": "object"
+    },
+    "ProductRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "product_code": {
+          "description": "Controlled product registry code",
+          "enum": [
+            "water_depth",
+            "water_level",
+            "velocity",
+            "maximum_depth",
+            "wet_area",
+            "storage_volume",
+            "peak_inundation_area",
+            "inundation_footprint",
+            "first_arrival",
+            "wet_duration",
+            "depth_band_stat",
+            "boundary_series",
+            "gate_audit",
+            "affected_population",
+            "flood_loss",
+            "evacuation_plan",
+            "scene_3d"
+          ],
+          "title": "Product Code",
+          "type": "string"
+        },
+        "required": {
+          "description": "Required products block preflight when unsupported; optional products remain explicitly unavailable",
+          "title": "Required",
+          "type": "boolean"
+        },
+        "scope_id": {
+          "description": "Stable requested scope ID; resolution/hash comes from the trusted profile or result manifest",
+          "title": "Scope Id",
+          "type": "string"
+        },
+        "aggregation": {
+          "description": "Product-specific aggregation selector from the closed allowlist",
+          "enum": [
+            "FRAME",
+            "SERIES",
+            "MAX_OVER_WINDOW",
+            "PEAK_AREA_OVER_WINDOW",
+            "UNION_FOOTPRINT",
+            "FIRST_ARRIVAL",
+            "WET_DURATION",
+            "EVENT_TIMELINE"
+          ],
+          "title": "Aggregation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "product_code",
+        "required",
+        "scope_id",
+        "aggregation"
+      ],
+      "title": "ProductRequest",
+      "type": "object"
+    },
+    "ProfileReference": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "description": "Resolved input profile identifier; the user cannot assert its support status",
+          "title": "Profile Id",
+          "type": "string"
+        },
+        "profile_version": {
+          "description": "Immutable profile version",
+          "title": "Profile Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile_id",
+        "profile_version"
+      ],
+      "title": "ProfileReference",
+      "type": "object"
+    },
+    "RainfallInput": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "default": "UNKNOWN",
+          "description": "UNKNOWN differs from an explicit no-rain declaration",
+          "enum": [
+            "UNKNOWN",
+            "EXPLICIT_NONE",
+            "PROFILE_REF"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "profile_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProfileReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Trusted rainfall profile reference, required only for PROFILE_REF"
+        }
+      },
+      "title": "RainfallInput",
+      "type": "object"
+    },
+    "RuleSnapshotReference": {
+      "additionalProperties": false,
+      "properties": {
+        "rule_id": {
+          "description": "Existing dispatch-rule identity",
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "rule_version": {
+          "description": "Immutable rule version",
+          "title": "Rule Version",
+          "type": "string"
+        },
+        "source_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source-document digest verified by an authorized resolver",
+          "title": "Source Sha256"
+        },
+        "rule_usage": {
+          "default": "REFERENCE_ONLY",
+          "description": "R1 retains references only; rule evaluation is not implemented",
+          "enum": [
+            "REFERENCE_ONLY",
+            "EVALUATE_APPROVED_RULE"
+          ],
+          "title": "Rule Usage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_id",
+        "rule_version"
+      ],
+      "title": "RuleSnapshotReference",
+      "type": "object"
+    },
+    "ScenarioTimePoint": {
+      "additionalProperties": false,
+      "properties": {
+        "time_s": {
+          "description": "Seconds relative to the scenario start; output-axis alignment is checked in preflight",
+          "maximum": 31536000.0,
+          "minimum": 0.0,
+          "title": "Time S",
+          "type": "number"
+        },
+        "value": {
+          "description": "Finite sample in the series quantity/unit declared by the parent",
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "time_s",
+        "value"
+      ],
+      "title": "ScenarioTimePoint",
+      "type": "object"
+    },
+    "TemplateReference": {
+      "additionalProperties": false,
+      "properties": {
+        "template_key": {
+          "enum": [
+            "TJ_2023_DONGDIAN_PUBLIC_HISTORY_V1",
+            "TJ_2023_YONGDING_PUBLIC_HISTORY_V1",
+            "TJ_2025_ECO_WATER_REPLENISHMENT_V1",
+            "TJ_2025_FLOOD_JOINT_THEME_V1",
+            "DESIGN_FLOOD_PARAMETERIZED_V1",
+            "FORECAST_ROLLING_V1",
+            "MANUAL_COMPARISON_V1"
+          ],
+          "title": "Template Key",
+          "type": "string"
+        },
+        "catalog_version": {
+          "title": "Catalog Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "template_key",
+        "catalog_version"
+      ],
+      "title": "TemplateReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict business draft; saving and calculation readiness are separate.",
+  "properties": {
+    "format": {
+      "const": "rehearsal-scenario-v1",
+      "default": "rehearsal-scenario-v1",
+      "title": "Format",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scenario_name": {
+      "description": "Required non-empty business display name; not a model case ID",
+      "title": "Scenario Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "creation_type": {
+      "enum": [
+        "MANUAL",
+        "BUILTIN_CLONE",
+        "COPY",
+        "SYSTEM_RECOMMENDED"
+      ],
+      "title": "Creation Type",
+      "type": "string"
+    },
+    "template_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TemplateReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "source_document_plan_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional reference to the existing document catalog; not a run ID",
+      "title": "Source Document Plan Id"
+    },
+    "region_ids": {
+      "description": "Stable region IDs; required to save and bound by the trusted region registry",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 1000,
+      "title": "Region Ids",
+      "type": "array"
+    },
+    "region_aliases": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 1000,
+      "title": "Region Aliases",
+      "type": "array"
+    },
+    "event_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event Id"
+    },
+    "time_origin_local": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Required field; null means absolute event time is unknown, otherwise yyyy-MM-dd HH:mm:ss",
+      "title": "Time Origin Local"
+    },
+    "time_zone": {
+      "description": "Required IANA timezone for displayed local times",
+      "title": "Time Zone",
+      "type": "string"
+    },
+    "duration_hours": {
+      "anyOf": [
+        {
+          "gt": 0.0,
+          "le": 8760.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Scenario duration in hours; optional in a saved draft, required for computation",
+      "title": "Duration Hours"
+    },
+    "output_step_minutes": {
+      "anyOf": [
+        {
+          "gt": 0.0,
+          "le": 525600.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Requested output/save interval in minutes; not the solver integration dt; optional in draft",
+      "title": "Output Step Minutes"
+    },
+    "engine_mode": {
+      "anyOf": [
+        {
+          "enum": [
+            "structured_hourly",
+            "triangular_closed_experimental",
+            "triangular_source_experimental"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Engine identifier checked against the package-owned capability registry",
+      "title": "Engine Mode"
+    },
+    "input_profile_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProfileReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "upper_boundaries": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "DESIGN": "#/$defs/DesignBoundarySource",
+            "FORECAST": "#/$defs/ForecastBoundarySource",
+            "HISTORICAL": "#/$defs/HistoricalBoundarySource",
+            "MANUAL": "#/$defs/ManualBoundarySource"
+          },
+          "propertyName": "source_mode"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ForecastBoundarySource"
+          },
+          {
+            "$ref": "#/$defs/DesignBoundarySource"
+          },
+          {
+            "$ref": "#/$defs/HistoricalBoundarySource"
+          },
+          {
+            "$ref": "#/$defs/ManualBoundarySource"
+          }
+        ]
+      },
+      "maxItems": 10000,
+      "title": "Upper Boundaries",
+      "type": "array"
+    },
+    "rule_snapshot_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuleSnapshotReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "initial_condition": {
+      "$ref": "#/$defs/InitialConditionInput"
+    },
+    "rainfall": {
+      "$ref": "#/$defs/RainfallInput"
+    },
+    "downstream_policy": {
+      "$ref": "#/$defs/DownstreamPolicy"
+    },
+    "requested_products": {
+      "items": {
+        "$ref": "#/$defs/ProductRequest"
+      },
+      "maxItems": 100,
+      "title": "Requested Products",
+      "type": "array"
+    },
+    "metric_policy_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Versioned metric thresholds/aggregation policy; required by preflight",
+      "title": "Metric Policy Version"
+    },
+    "historical_event_refs": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10000,
+      "title": "Historical Event Refs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "scenario_name",
+    "creation_type",
+    "time_origin_local",
+    "time_zone"
+  ],
+  "title": "ScenarioDraft",
+  "type": "object"
+}

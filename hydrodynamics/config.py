@@ -106,6 +106,11 @@ class InitialConditionType(str, Enum):
     RASTER = "raster"
 
 
+class InitialConditionQuantity(str, Enum):
+    DEPTH = "depth"
+    LEVEL = "level"
+
+
 class FieldType(str, Enum):
     CONSTANT = "constant"
     RASTER = "raster"
@@ -287,7 +292,9 @@ class TerrainField:
     representative elevation for a cell.  ``valid_mask`` uses True for a
     reliable cell; the legacy ``nodata_mask`` uses True for NoData.
     ``coverage_ratio[j][i]`` is the valid DEM area divided by that cell area.
-    This container never reads or resamples a DEM.
+    This container never reads or resamples a DEM. ``coordinate_system`` and
+    ``vertical_datum`` are optional provenance/attestation metadata used by
+    later data-preparation checks; they are not numerical solver settings.
     """
 
     elevation: Sequence[Sequence[float]]
@@ -300,6 +307,8 @@ class TerrainField:
     nodata_mask: Sequence[Sequence[bool]] | None = None
     valid_mask: Sequence[Sequence[bool]] | None = None
     coverage_ratio: Sequence[Sequence[float]] | None = None
+    coordinate_system: str | None = None
+    vertical_datum: str | None = None
 
     @staticmethod
     def _bool_grid(
@@ -362,6 +371,11 @@ class TerrainField:
         for name, value in (("xmin", self.xmin), ("ymin", self.ymin)):
             if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(float(value)):
                 raise ValueError(f"TerrainField.{name} must be a finite number")
+        for name, value in (("coordinate_system", self.coordinate_system), ("vertical_datum", self.vertical_datum)):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"TerrainField.{name} must be a non-empty string or None")
+            if isinstance(value, str):
+                object.__setattr__(self, name, value.strip())
 
         try:
             rows = tuple(tuple(row) for row in self.elevation)
@@ -416,6 +430,8 @@ class TerrainField:
         nodata_mask: Sequence[Sequence[bool]] | None = None,
         valid_mask: Sequence[Sequence[bool]] | None = None,
         coverage_ratio: Sequence[Sequence[float]] | None = None,
+        coordinate_system: str | None = None,
+        vertical_datum: str | None = None,
     ) -> "TerrainField":
         """Create a field whose dimensions and metadata come from ``domain``."""
 
@@ -432,6 +448,8 @@ class TerrainField:
             nodata_mask=nodata_mask,
             valid_mask=valid_mask,
             coverage_ratio=coverage_ratio,
+            coordinate_system=coordinate_system,
+            vertical_datum=vertical_datum,
         )
 
     @property
@@ -445,6 +463,12 @@ class TerrainField:
         """Array shape in ``(ny, nx)`` order."""
 
         return self.ny, self.nx
+
+    @property
+    def crs(self) -> str | None:
+        """Alias for the horizontal coordinate-system identifier."""
+
+        return self.coordinate_system
 
     @property
     def valid_area(self) -> Sequence[Sequence[float]] | None:
@@ -641,6 +665,8 @@ class InitialConditionConfig(_SchemaModel):
     type: InitialConditionType
     depth: Number | None = Field(default=None, ge=0, description="m")
     level: Number | None = Field(default=None, description="m")
+    # Optional confirmed datum label; required at data-preparation time for absolute levels.
+    vertical_datum: Text | None = None
     depth_file: Text | None = None
     level_file: Text | None = None
     velocity: VelocityFieldConfig | None = None
@@ -705,6 +731,7 @@ class BoundaryConfig(_SchemaModel):
     value: Number | None = None
     timeseries: TimeSeriesRef | None = None
     quantity: BoundaryQuantity | None = None
+    vertical_datum: Text | None = None
 
     @field_validator("value")
     @classmethod
@@ -715,8 +742,10 @@ class BoundaryConfig(_SchemaModel):
 
     @model_validator(mode="after")
     def validate_source(self) -> "BoundaryConfig":
+        if self.type is not BoundaryType.WATER_LEVEL and self.vertical_datum is not None:
+            raise ValueError("vertical_datum is only valid for water_level boundaries")
         if self.type is BoundaryType.WALL:
-            if self.value is not None or self.timeseries is not None or self.quantity is not None:
+            if self.value is not None or self.timeseries is not None or self.quantity is not None or self.vertical_datum is not None:
                 raise ValueError("wall boundary does not accept value, timeseries, or quantity")
         elif self.type is BoundaryType.TIMESERIES:
             if self.timeseries is None:
@@ -843,7 +872,6 @@ def _format_validation_error(error: ValidationError) -> str:
         lines.append(f"{location}: {item['msg']}")
     return "Invalid simulation configuration:\n- " + "\n- ".join(lines)
 
-
 def load_config(path: str | Path) -> SimulationConfig:
     """Load and validate a YAML configuration file.
 
@@ -880,6 +908,12 @@ def load_config(path: str | Path) -> SimulationConfig:
 
 # Imported late to avoid a circular import while the configuration classes load.
 from .terrain_mapping_algorithms import TerrainMappingError, map_dataset_to_field
+from .roughness import RoughnessError, RoughnessField, ResistanceField
+from .initial_condition import (
+    InitialConditionError,
+    InitialConditionField,
+    InitialWaterField,
+)
 
 __all__ = [
     "BoundaryConfig",
@@ -914,7 +948,11 @@ __all__ = [
     "resolve_auto_resampling_strategy",
     "FieldType",
     "InitialConditionConfig",
+    "InitialConditionError",
+    "InitialConditionField",
+    "InitialConditionQuantity",
     "InitialConditionType",
+    "InitialWaterField",
     "ModelConfig",
     "NumericsConfig",
     "OutputConfig",
@@ -922,6 +960,9 @@ __all__ = [
     "OutputVariable",
     "RainfallConfig",
     "RoughnessConfig",
+    "RoughnessError",
+    "RoughnessField",
+    "ResistanceField",
     "SimulationConfig",
     "TerrainConfig",
     "TerrainResamplingConfig",

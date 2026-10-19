@@ -1,0 +1,37 @@
+{
+  "format": "rehearsal-synthetic-closed-profile-v1",
+  "profile_id": "synthetic_closed_box_v1",
+  "profile_version": "1.0",
+  "classification": "SYNTHETIC_ONLY",
+  "engine_mode": "triangular_closed_experimental",
+  "mesh": {
+    "mesh_id": "rehearsal-synthetic-box-v1",
+    "coordinate_system": "EPSG:32650",
+    "node_xy_m": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]],
+    "face_nodes": [[0, 1, 2], [0, 2, 3]],
+    "face_id": [2001, 2002],
+    "boundary_groups": {
+      "outer_boundary": [[0, 1], [1, 2], [2, 3], [3, 0]]
+    },
+    "constraint_groups": {}
+  },
+  "terrain": {
+    "elevation_m": [0.0, 0.0],
+    "vertical_datum": "synthetic local datum",
+    "vertical_datum_source": "config_declaration"
+  },
+  "initial_condition": {
+    "quantity": "depth",
+    "values_m": [0.1, 0.1],
+    "source": "packaged synthetic fixture"
+  },
+  "roughness": {
+    "manning_n": 0.035,
+    "source": "packaged synthetic fixture"
+  },
+  "boundary_policy": "closed_wall",
+  "initial_momentum": "zero",
+  "sources": "none",
+  "scope_id": "SYNTHETIC_CLOSED_SCOPE",
+  "region_id": "SYNTHETIC_REGION_1"
+}

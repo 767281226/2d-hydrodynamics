@@ -1,0 +1,10 @@
+format: rehearsal-scenario-v1
+schema_version: "1.0"
+scenario_name: invalid hidden lower boundary
+creation_type: MANUAL
+region_ids: [REAL_REGION_EXAMPLE]
+time_origin_local: null
+time_zone: Asia/Shanghai
+downstream_policy:
+  mode: CLOSED_WALL
+  water_level_m: 0.0

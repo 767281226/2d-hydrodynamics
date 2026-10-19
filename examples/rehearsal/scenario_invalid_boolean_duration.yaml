@@ -1,0 +1,10 @@
+format: rehearsal-scenario-v1
+schema_version: "1.0"
+scenario_name: invalid bool numeric
+creation_type: MANUAL
+region_ids: [SYNTHETIC_REGION_1]
+time_origin_local: null
+time_zone: Asia/Shanghai
+duration_hours: true
+output_step_minutes: 60.0
+engine_mode: triangular_closed_experimental

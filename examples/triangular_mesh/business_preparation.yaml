@@ -1,0 +1,31 @@
+version: 1
+mesh_file: prepared_mesh.nc
+output_file: business_preparation.json
+roughness:
+  type: constant
+  manning_n: 0.035
+  source: synthetic case assumption
+initial_condition:
+  type: face_values
+  quantity: depth
+  assignments:
+    - face_id: 1001
+      value: 0.20
+    - face_id: 1002
+      value: 0.10
+    - face_id: 1003
+      value: 0.00
+  source: synthetic initial depth fixture
+boundary_bindings:
+  - type: timeseries
+    group_name: outer_boundary
+    quantity: discharge
+    time_s: [0.0, 3600.0, 7200.0]
+    values: [0.0, 1.5, 1.5]
+    source: synthetic total inflow series
+  - type: constant
+    group_name: hole_0
+    quantity: water_level
+    value: 102.0
+    vertical_datum: "1985国家高程基准"
+    source: synthetic hole-edge level

@@ -1,0 +1,34 @@
+version: 1
+coordinate_system: EPSG:4548
+mesh:
+  type: gmsh
+  outer_boundary:
+    - [0.0, 0.0]
+    - [6.0, 0.0]
+    - [7.0, 2.0]
+    - [5.0, 5.0]
+    - [0.0, 4.0]
+  holes:
+    - [[2.5, 1.5], [3.5, 1.5], [3.5, 2.5], [2.5, 2.5]]
+  boundary_groups:
+    - name: outer_boundary
+      points: [[0.0, 0.0], [6.0, 0.0], [7.0, 2.0], [5.0, 5.0], [0.0, 4.0]]
+      closed: true
+  constraints:
+    - name: channel_centerline
+      points: [[0.0, 0.0], [2.0, 1.0], [2.2, 1.3]]
+  default_size_m: 0.8
+  minimum_size_m: 0.2
+  refinement_points:
+    - point: [1.5, 2.5]
+      size_m: 0.25
+      radius_m: 1.2
+  maximum_nodes: 50000
+terrain:
+  type: json
+  file: gmsh_dem.json
+  minimum_valid_coverage: 0.0
+output_file: gmsh_prepared_mesh.nc
+minimum_face_quality: 0.0
+geometry_tolerance_m: 1.0e-8
+minimum_face_area_m2: 1.0e-12
