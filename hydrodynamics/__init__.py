@@ -109,3 +109,10 @@ __all__ += [
     "TARGET_WEB_EPSG", "convert_netcdf_to_web", "convert_netcdf_to_step_json", "parse_netcdf_for_web",
     "WorkflowConfig", "WorkflowError", "load_workflow_config", "run_workflow", "find_latest_completed_bundle",
 ]
+
+# G1 evidence required by the offline result-package adapter.
+from .gate_dispatch import GateDatumConversionEvidence, check_time_origin_consistency, validate_gate_dispatch_exports
+__all__.extend(["GateDatumConversionEvidence", "check_time_origin_consistency", "validate_gate_dispatch_exports"])
+
+from .external_evidence import validate_external_evidence, VerticalDatumAttestation, DispatchApprovalEvidence, LeveeCrestEvidence, BenchmarkEvidence
+__all__.extend(["validate_external_evidence", "VerticalDatumAttestation", "DispatchApprovalEvidence", "LeveeCrestEvidence", "BenchmarkEvidence"])

@@ -1,0 +1,10 @@
+{
+  "format": "triangular-mesh-json-v1",
+  "mesh_id": "r2a-flat-bed-closed-mesh-v1",
+  "coordinate_system": "EPSG:32650",
+  "node_xy": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]],
+  "face_nodes": [[0, 1, 2], [0, 2, 3]],
+  "face_id": [92001, 92002],
+  "boundary_groups": {"outer_boundary": [[0, 1], [1, 2], [2, 3], [3, 0]]},
+  "constraint_groups": {}
+}

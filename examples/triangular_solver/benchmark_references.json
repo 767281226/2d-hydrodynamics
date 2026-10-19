@@ -1,0 +1,133 @@
+{
+  "format": "triangular-swe-benchmark-references-v1",
+  "status": "frozen_before_P4-1",
+  "scope": "synthetic verification contract only; no solver output is included",
+  "units": {
+    "length": "m",
+    "time": "s",
+    "water_depth": "m",
+    "momentum_per_width": "m2/s",
+    "velocity": "m/s",
+    "area": "m2",
+    "volume": "m3",
+    "gravity": "m/s2"
+  },
+  "reference_gravity_m_s2": 9.81,
+  "volume_scale_rule": "max(initial_volume_m3, total_area_m2 * reference_depth_m, 1 m3)",
+  "cases": [
+    {
+      "case_id": "flat_lake_at_rest",
+      "reference_kind": "exact_constant_state",
+      "domain_m": [10.0, 10.0],
+      "mesh_definition": {"type": "rectangular_triangles", "columns": 4, "rows": 4, "cell_width_m": 2.5, "cell_height_m": 2.5, "split": "lower_left_to_upper_right", "face_id_start": 100001},
+      "bed_elevation_m": 0.0,
+      "initial_water_depth_m": 1.0,
+      "initial_momentum_x_m2_s": 0.0,
+      "initial_momentum_y_m2_s": 0.0,
+      "closed_wall": true,
+      "sources": "none",
+      "output_time_s": 100.0,
+      "reference_state": {
+        "water_depth_m": 1.0,
+        "momentum_x_m2_s": 0.0,
+        "momentum_y_m2_s": 0.0,
+        "volume_m3": 100.0
+      },
+      "tolerances": {
+        "maximum_absolute_depth_error_m": 1e-10,
+        "maximum_absolute_velocity_error_m_s": 1e-10,
+        "maximum_absolute_volume_residual_m3": 1e-8,
+        "mass_correction_allowed": false
+      }
+    },
+    {
+      "case_id": "stepped_bed_lake_at_rest_with_dry_faces",
+      "reference_kind": "exact_hydrostatic_equilibrium",
+      "mesh_definition": {"type": "rectangular_triangles", "columns": 3, "rows": 1, "cell_width_m": 1.0, "cell_height_m": 1.0, "split": "lower_left_to_upper_right", "face_id_start": 200001, "face_bed_values_follow_face_id_order": true},
+      "free_surface_elevation_m": 2.0,
+      "face_bed_elevation_m": [0.0, 0.25, 0.75, 1.5, 2.0, 2.5],
+      "reference_water_depth_rule": "max(2.0 - face_bed_elevation_m, 0.0)",
+      "reference_momentum_x_m2_s": 0.0,
+      "reference_momentum_y_m2_s": 0.0,
+      "closed_wall": true,
+      "sources": "none",
+      "output_time_s": 100.0,
+      "tolerances": {
+        "maximum_absolute_depth_error_m": 1e-10,
+        "maximum_absolute_velocity_error_m_s": 1e-10,
+        "maximum_absolute_volume_residual_m3": 1e-8,
+        "mass_correction_allowed": false
+      }
+    },
+    {
+      "case_id": "all_dry_closed_box",
+      "reference_kind": "exact_zero_state",
+      "domain_m": [10.0, 10.0],
+      "mesh_definition": {"type": "rectangular_triangles", "columns": 4, "rows": 4, "cell_width_m": 2.5, "cell_height_m": 2.5, "split": "lower_left_to_upper_right", "face_id_start": 300001},
+      "initial_water_depth_m": 0.0,
+      "initial_momentum_x_m2_s": 0.0,
+      "initial_momentum_y_m2_s": 0.0,
+      "closed_wall": true,
+      "sources": "none",
+      "output_times_s": [0.0, 100.0],
+      "reference_state": [0.0, 0.0, 0.0],
+      "tolerances": {
+        "maximum_absolute_state_error": 0.0,
+        "maximum_absolute_volume_residual_m3": 0.0,
+        "mass_correction_allowed": false,
+        "zero_step_loop_allowed": false
+      }
+    },
+    {
+      "case_id": "wet_bed_stoker_riemann_dam_break",
+      "reference_kind": "analytic_1d_saint_venant_riemann_solution",
+      "domain_m": [2.0, 1.0],
+      "mesh_definition": {"type": "rectangular_triangles", "projected_origin_m": [500000.0, 0.0], "columns": 8, "rows": 1, "cell_width_m": 0.25, "cell_height_m": 1.0, "split": "lower_left_to_upper_right", "face_id_start": 400001, "reference_x_m_is_relative_to_projected_origin": true},
+      "dam_x_m": 1.0,
+      "initial_left": {"water_depth_m": 2.0, "velocity_x_m_s": 0.0},
+      "initial_right": {"water_depth_m": 1.0, "velocity_x_m_s": 0.0},
+      "bed_elevation_m": 0.0,
+      "gravity_m_s2": 9.81,
+      "comparison_time_s": 0.1,
+      "star_depth_equation": "2*(sqrt(g*h_star)-sqrt(g*h_left)) + (h_star-h_right)*sqrt((g/2)*(1/h_star+1/h_right)) = 0",
+      "analytic_intermediate_state": {
+        "star_depth_m": 1.453840892374573,
+        "star_velocity_x_m_s": 1.3058337531817275,
+        "left_fan_head_speed_m_s": -4.4294469180700204,
+        "left_fan_tail_speed_m_s": -2.4706962882974293,
+        "right_shock_speed_m_s": 4.183127921958328,
+        "shock_position_x_m_at_comparison_time": 1.4183127921958328
+      },
+      "coarse_8_column_face_centroid_reference": [
+        {"x_m": 0.0833333333333333, "water_depth_m": 2.0, "momentum_x_m2_s": 0.0},
+        {"x_m": 0.1666666666666667, "water_depth_m": 2.0, "momentum_x_m2_s": 0.0},
+        {"x_m": 0.3333333333333333, "water_depth_m": 2.0, "momentum_x_m2_s": 0.0},
+        {"x_m": 0.4166666666666667, "water_depth_m": 2.0, "momentum_x_m2_s": 0.0},
+        {"x_m": 0.5833333333333334, "water_depth_m": 1.921681123709119, "momentum_x_m2_s": 0.33665323253690854},
+        {"x_m": 0.6666666666666666, "water_depth_m": 1.6836607016881266, "momentum_x_m2_s": 1.2303222448051054},
+        {"x_m": 0.8333333333333334, "water_depth_m": 1.453840892374573, "momentum_x_m2_s": 1.8984745090185604},
+        {"x_m": 0.9166666666666666, "water_depth_m": 1.453840892374573, "momentum_x_m2_s": 1.8984745090185604},
+        {"x_m": 1.0833333333333333, "water_depth_m": 1.453840892374573, "momentum_x_m2_s": 1.8984745090185604},
+        {"x_m": 1.1666666666666667, "water_depth_m": 1.453840892374573, "momentum_x_m2_s": 1.8984745090185604},
+        {"x_m": 1.3333333333333333, "water_depth_m": 1.453840892374573, "momentum_x_m2_s": 1.8984745090185604},
+        {"x_m": 1.4166666666666667, "water_depth_m": 1.453840892374573, "momentum_x_m2_s": 1.8984745090185604},
+        {"x_m": 1.5833333333333333, "water_depth_m": 1.0, "momentum_x_m2_s": 0.0},
+        {"x_m": 1.6666666666666667, "water_depth_m": 1.0, "momentum_x_m2_s": 0.0},
+        {"x_m": 1.8333333333333333, "water_depth_m": 1.0, "momentum_x_m2_s": 0.0},
+        {"x_m": 1.9166666666666667, "water_depth_m": 1.0, "momentum_x_m2_s": 0.0}
+      ],
+      "grid_refinement": {
+        "column_counts": [8, 16, 32],
+        "strict_error_decrease_required": true,
+        "relative_area_weighted_l1_depth_error_max": [0.35, 0.25, 0.18],
+        "relative_area_weighted_l1_momentum_x_error_max": [0.4, 0.3, 0.22],
+        "closed_box_relative_volume_residual_max": 1e-10
+      }
+    }
+  ],
+  "review_notes": [
+    "The dam-break state is the analytic wet-bed Riemann reference, independent of any project solver output.",
+    "Cell-centroid comparisons use the exact profile evaluated at the frozen face centroids; they do not claim second-order accuracy.",
+    "These synthetic thresholds are method acceptance gates only, not real-event engineering tolerances."
+  ]
+}

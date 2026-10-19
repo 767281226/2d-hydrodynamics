@@ -1,0 +1,10 @@
+version: 1
+coordinate_system: EPSG:4548
+mesh:
+  type: json
+  file: ../triangular_mesh/mesh.json
+terrain:
+  type: json
+  file: full_terrain.json
+  minimum_valid_coverage: 1.0
+output_file: prepared_mesh.nc

@@ -2,20 +2,24 @@
   "schema_version": "1.0",
   "time_origin": "2023-08-01T02:00:00+08:00",
   "provenance": "假设示例，仅展示字段格式；数值和调闸动作均非2023实测或真实操作记录",
-  "options": {"near_5_75_tolerance_m": 0.05},
+  "options": {
+    "near_5_75_tolerance_m": 0.05,
+    "near_5_75_tolerance_source": "假设示例解释；不是源文档中的算法",
+    "snapshot_time_mode": "output_aligned"
+  },
   "snapshots": [
-    {"time_s": 0, "source": "假设示例",
+    {"time_s": 0, "source": "假设示例，非实测", "source_category": "undeclared",
      "sixth_port_level": {"value_m": 4.0, "vertical_datum": "大沽高程"}},
-    {"time_s": 3600, "source": "假设示例",
+    {"time_s": 3600, "source": "假设示例，非实测", "source_category": "undeclared",
      "sixth_port_level": {"value_m": 4.3, "vertical_datum": "大沽高程"}},
-    {"time_s": 7200, "source": "假设示例",
+    {"time_s": 7200, "source": "假设示例，非实测", "source_category": "undeclared",
      "sixth_port_level": {"value_m": 4.5, "vertical_datum": "大沽高程"}}
   ],
   "operations": [
     {
       "time_s": 3600, "gate_id": "duliu_inlet", "rule_id": "GDR-001",
       "action": "调整开度", "reason": "假设示例：水位达到4.2m后记录调用方报告的调闸动作",
-      "source": "假设示例，非真实操作记录",
+      "source": "假设示例，非真实操作记录", "source_category": "undeclared",
       "opening_before_ratio": 0.2, "opening_after_ratio": 0.8
     }
   ]

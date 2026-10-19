@@ -29,7 +29,7 @@ class NetCDFWriter:
             ds_values.append((field,values))
         if len(vertical_datums) > 1:
             raise OutputError("output fields with vertical_datum must use one consistent datum")
-        origin = (output.metadata or {}).get("event_start") if times[0] == 0 else None
+        origin = (output.metadata or {}).get("event_start")
         dispatch_log = build_gate_dispatch_log(times, output.gate_dispatch, time_origin=origin)
         check_gate_dispatch_paths(target, overwrite=overwrite)
         try: import netCDF4
@@ -53,6 +53,13 @@ class NetCDFWriter:
             ds.gate_dispatch_csv = csv_path.name
             ds.gate_dispatch_json = json_path.name
             ds.gate_dispatch_reported_operation_count = len(dispatch_log.inputs.operations)
+            categories = ("model_prescribed_change", "reconstruction", "external_report", "undeclared")
+            counts = {category: sum(op.source_category == category for op in dispatch_log.inputs.operations) for category in categories}
+            ds.gate_dispatch_model_prescribed_change_count = counts["model_prescribed_change"]
+            ds.gate_dispatch_reconstruction_operation_count = counts["reconstruction"]
+            ds.gate_dispatch_external_reported_operation_count = counts["external_report"]
+            ds.gate_dispatch_undeclared_operation_source_count = counts["undeclared"]
+            ds.gate_dispatch_schema_version = "1.1"
             if dispatch_log.inputs.time_origin:
                 ds.gate_dispatch_time_origin = dispatch_log.inputs.time_origin
         write_gate_dispatch_log(target, dispatch_log, overwrite=overwrite)

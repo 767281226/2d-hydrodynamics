@@ -1,0 +1,29 @@
+{
+  "format": "rehearsal-r2a-synthetic-profile-v1",
+  "profile_id": "r2a_flat_bed_closed_v1",
+  "profile_version": "1.0",
+  "classification": "SYNTHETIC_ONLY",
+  "model_case_id": "r2a-flat-bed-closed-v1",
+  "engine_mode": "triangular_closed_experimental",
+  "scope_id": "R2A_SYNTHETIC_CLOSED_SCOPE",
+  "region_id": "R2A_SYNTHETIC_REGION_1",
+  "mesh": {
+    "mesh_id": "r2a-flat-bed-closed-mesh-v1",
+    "coordinate_system": "EPSG:32650",
+    "node_xy_m": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]],
+    "face_nodes": [[0, 1, 2], [0, 2, 3]],
+    "face_id": [92001, 92002],
+    "boundary_groups": {"outer_boundary": [[0, 1], [1, 2], [2, 3], [3, 0]]},
+    "constraint_groups": {}
+  },
+  "terrain": {
+    "elevation_m": [0.0, 0.0],
+    "vertical_datum": "R2A synthetic local datum",
+    "vertical_datum_source": "config_declaration"
+  },
+  "initial_condition": {"quantity": "depth", "values_m": [0.2, 0.2]},
+  "roughness_manning_n": 0.035,
+  "boundary_policy": "closed_wall",
+  "initial_momentum": "zero",
+  "sources": "none"
+}

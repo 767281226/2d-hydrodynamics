@@ -24,6 +24,8 @@ triangular = ["netCDF4>=1.6,<2.0", "pyproj>=3.6,<4.0", "shapely>=2.0,<3.0"]
 gmsh = ["gmsh>=4.11,<5.0"]
 
 [project.scripts]
+hydrodynamics-triangular-run = "hydrodynamics.triangular_solver:main"
+hydrodynamics-rehearsal-package = "hydrodynamics.rehearsal_package:main"
 hydrodynamics-run = "hydrodynamics.workflow:main"
 hydrodynamics-mesh-prepare = "hydrodynamics.mesh_preparation:main"
 hydrodynamics-business-prepare = "hydrodynamics.triangular_business:main"

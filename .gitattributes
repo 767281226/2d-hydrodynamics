@@ -1,3 +1,9 @@
 # Keep reviewed byte-level digests stable on Windows checkouts.
 hydrodynamics/rehearsal_data/*.json text eol=lf
 tests/acceptance/test_rehearsal_r1_independent.py text eol=lf
+tests/acceptance/test_r2a_independent.py text eol=lf
+tests/acceptance/test_r2a_source_race_independent.py text eol=lf
+tests/acceptance/test_r2a_rollback_ownership_independent.py text eol=lf
+tests/acceptance/test_r2a_manifest_recovery_independent.py text eol=lf
+tests/acceptance/test_r2a_windows_junction_independent.py text eol=lf
+examples/triangular_solver/benchmark_references.json text eol=lf

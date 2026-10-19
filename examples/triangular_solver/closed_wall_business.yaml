@@ -1,0 +1,13 @@
+version: 1
+mesh_file: prepared_mesh.nc
+output_file: closed_wall_business.json
+roughness:
+  type: constant
+  manning_n: 0.035
+  source: synthetic fixture; retained but not applied in P4-1 scope
+initial_condition:
+  type: constant
+  quantity: depth
+  value_m: 0.2
+  source: synthetic complete initial depth
+boundary_bindings: []

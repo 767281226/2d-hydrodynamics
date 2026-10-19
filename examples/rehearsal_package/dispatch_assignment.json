@@ -1,0 +1,15 @@
+{
+  "format": "rehearsal-local-dispatch-assignment-v1",
+  "assignment_basis": "LOCAL_SYNTHETIC_TEST_CONTEXT",
+  "tenant_id": "tenant-r2a-synthetic",
+  "project_id": "project-r2a-synthetic",
+  "scenario_id": "scenario-r2a-synthetic",
+  "scenario_version_id": "scenario-version-r2a-synthetic",
+  "platform_run_id": "platform-run-r2a-synthetic",
+  "attempt_id": "attempt-r2a-synthetic-1",
+  "attempt_no": 1,
+  "script_id": "20261019-1792400000000000000",
+  "local_run_id": "20261019-1792400000000000000",
+  "model_case_id": "r2a-flat-bed-closed-v1",
+  "scope_id": "R2A_SYNTHETIC_CLOSED_SCOPE"
+}

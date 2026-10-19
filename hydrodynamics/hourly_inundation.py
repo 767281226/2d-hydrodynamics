@@ -527,8 +527,9 @@ def write_hourly_netcdf(
     target = Path(path)
     if target.exists() and not overwrite:
         raise FileExistsError(target)
-    origin = (extra_attrs or {}).get("event_start") if times_s[0] == 0 else None
-    dispatch_log = build_gate_dispatch_log(times_s, gate_dispatch, time_origin=origin)
+    origin = (extra_attrs or {}).get("event_start")
+    context = {key: (extra_attrs or {})[key] for key in ("case_id", "run_id", "script_id") if key in (extra_attrs or {})}
+    dispatch_log = build_gate_dispatch_log(times_s, gate_dispatch, time_origin=origin, result_context=context)
     check_gate_dispatch_paths(target, overwrite=overwrite)
     try:
         import netCDF4
@@ -650,6 +651,12 @@ def write_hourly_netcdf(
         ds.gate_dispatch_csv = csv_path.name
         ds.gate_dispatch_json = json_path.name
         ds.gate_dispatch_reported_operation_count = len(dispatch_log.inputs.operations)
+        category_counts = {category: sum(op.source_category == category for op in dispatch_log.inputs.operations) for category in ("model_prescribed_change", "reconstruction", "external_report", "undeclared")}
+        ds.gate_dispatch_model_prescribed_change_count = category_counts["model_prescribed_change"]
+        ds.gate_dispatch_reconstruction_operation_count = category_counts["reconstruction"]
+        ds.gate_dispatch_external_reported_operation_count = category_counts["external_report"]
+        ds.gate_dispatch_undeclared_operation_source_count = category_counts["undeclared"]
+        ds.gate_dispatch_schema_version = "1.1"
         if dispatch_log.inputs.time_origin:
             ds.gate_dispatch_time_origin = dispatch_log.inputs.time_origin
     write_gate_dispatch_log(target, dispatch_log, overwrite=overwrite)

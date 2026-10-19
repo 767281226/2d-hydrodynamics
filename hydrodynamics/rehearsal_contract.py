@@ -755,6 +755,13 @@ def _load_synthetic_profile() -> _ResolvedSyntheticProfile:
     return _ResolvedSyntheticProfile(profile, digest, top_hash, bed_hash, scope_hash, mesh.mesh_id or "")
 
 
+def resolve_verified_synthetic_profile(profile_ref: ProfileReference) -> _ResolvedSyntheticProfile:
+    """Resolve only the fixed packaged synthetic profile; never trust user capability flags."""
+    if profile_ref.profile_id != "synthetic_closed_box_v1" or profile_ref.profile_version != "1.0":
+        raise RehearsalContractError("profile reference is not present in the trusted synthetic registry")
+    return _load_synthetic_profile()
+
+
 def load_scenario_document(path: str | Path) -> ScenarioDraft:
     source = Path(path).resolve()
     try:
@@ -1053,6 +1060,45 @@ def validate_execution_envelope(
         raise RehearsalContractError("preflight report is stale, self-asserted, or does not correspond to the current scenario")
     if not actual_report.can_compute:
         raise RehearsalContractError("execution envelope cannot be accepted because scenario preflight can_compute is false")
+    if actual_report.resolved_input_sha256 is None or actual_report.resolved_model_case_id is None:
+        raise RehearsalContractError("current preflight does not contain trusted resolved input/model identity")
+    validate_execution_identity(
+        envelope,
+        trusted_tenant_id=trusted_tenant_id,
+        trusted_project_id=trusted_project_id,
+        trusted_scenario_id=trusted_scenario_id,
+        trusted_scenario_version_id=trusted_scenario_version_id,
+        trusted_platform_run_id=trusted_platform_run_id,
+        trusted_attempt_id=trusted_attempt_id,
+        trusted_attempt_no=trusted_attempt_no,
+        trusted_script_id=trusted_script_id,
+        trusted_model_case_id=actual_report.resolved_model_case_id,
+        trusted_input_sha256=actual_report.resolved_input_sha256,
+        trusted_engine_mode=scenario.engine_mode,
+    )
+
+
+def validate_execution_identity(
+    envelope: ExecutionEnvelope,
+    *,
+    trusted_tenant_id: str,
+    trusted_project_id: str,
+    trusted_scenario_id: str,
+    trusted_scenario_version_id: str,
+    trusted_platform_run_id: str,
+    trusted_attempt_id: str,
+    trusted_attempt_no: int,
+    trusted_script_id: str,
+    trusted_model_case_id: str,
+    trusted_input_sha256: str,
+    trusted_engine_mode: str,
+) -> None:
+    """Compare an envelope to separate trusted dispatch values, never to itself.
+
+    R2A may reuse this identity-only validator with an explicitly labeled local
+    source-graph assignment. R1 platform execution additionally uses
+    ``validate_execution_envelope`` to recompute and verify the preflight.
+    """
     if envelope.tenant_id != trusted_tenant_id or envelope.project_id != trusted_project_id:
         raise RehearsalContractError("execution envelope tenant/project does not match trusted service context")
     if envelope.scenario_id != trusted_scenario_id or envelope.scenario_version_id != trusted_scenario_version_id:
@@ -1067,12 +1113,12 @@ def validate_execution_envelope(
         raise RehearsalContractError(f"backend-assigned script_id is invalid: {exc}") from exc
     if envelope.script_id != assigned_script_id or envelope.local_run_id != assigned_script_id:
         raise RehearsalContractError("execution envelope script/local run ID differs from the backend assignment")
-    if actual_report.resolved_input_sha256 is None or envelope.input_sha256 != actual_report.resolved_input_sha256:
-        raise RehearsalContractError("execution envelope input_sha256 does not match verified resolved inputs")
-    if envelope.engine_mode != scenario.engine_mode:
-        raise RehearsalContractError("execution envelope engine_mode does not match scenario")
-    if actual_report.resolved_model_case_id is not None and envelope.model_case_id != actual_report.resolved_model_case_id:
-        raise RehearsalContractError("model_case_id does not match the trusted synthetic profile")
+    if envelope.input_sha256 != trusted_input_sha256:
+        raise RehearsalContractError("execution envelope input_sha256 differs from the trusted resolved-input digest")
+    if envelope.engine_mode != trusted_engine_mode:
+        raise RehearsalContractError("execution envelope engine_mode differs from trusted dispatch context")
+    if envelope.model_case_id != trusted_model_case_id:
+        raise RehearsalContractError("model_case_id differs from trusted model case identity")
 
 
 def validate_selector_against_manifest(selector: ResultProductSelector, manifest: ResultSetManifest) -> SelectorValidation:
@@ -1244,7 +1290,7 @@ __all__ = [
     "ResultProductSelector", "ResultSetManifest", "RehearsalContractError", "ScenarioDraft",
     "ScenarioPreflightReport", "UpperBoundarySource", "evaluate_scenario", "export_schemas",
     "load_scenario_document", "main", "normalize_output_times", "validate_execution_envelope",
-    "validate_selector_against_manifest",
+    "resolve_verified_synthetic_profile", "validate_execution_identity", "validate_selector_against_manifest",
 ]
 
 

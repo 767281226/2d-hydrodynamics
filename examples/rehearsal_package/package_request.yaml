@@ -1,0 +1,26 @@
+format: rehearsal-result-package-export-request-v1
+schema_version: "1.0"
+run_config_file: run.yaml
+dispatch_assignment_file: dispatch_assignment.json
+execution_envelope_file: execution_envelope.json
+output_directory: result_package
+scope_id: R2A_SYNTHETIC_CLOSED_SCOPE
+metric_policy_version: r2a-static-flat-bed-v1
+requested_products:
+  - product_code: water_depth
+    required: true
+    scope_id: R2A_SYNTHETIC_CLOSED_SCOPE
+    aggregation: FRAME
+  - product_code: storage_volume
+    required: true
+    scope_id: R2A_SYNTHETIC_CLOSED_SCOPE
+    aggregation: FRAME
+  - product_code: maximum_depth
+    required: true
+    scope_id: R2A_SYNTHETIC_CLOSED_SCOPE
+    aggregation: MAX_OVER_WINDOW
+  - product_code: gate_audit
+    required: false
+    scope_id: AUDIT_RUN_GLOBAL
+    aggregation: EVENT_TIMELINE
+require_complete: false
