@@ -1,0 +1,7 @@
+format: triangular-manning-run-v1
+schema_version: '1.0'
+case_id: security-exclusion-synthetic-v1
+sources: manning
+base_run_config_file: run_dry.yaml
+source_config_file: manning_zero_source_preparation.yaml
+result_file: manning_zero.nc

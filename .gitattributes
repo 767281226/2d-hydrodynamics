@@ -27,3 +27,5 @@ tests/acceptance/data/security_exclusion_references_v1.json text eol=lf
 examples/triangular_sources/source_benchmark_references.json text eol=lf
 examples/security_exclusion/*.json text eol=lf
 examples/security_exclusion/*.geojson text eol=lf
+tests/acceptance/source_fixture.py text eol=lf
+tests/acceptance/test_native_source_shp_independent.py text eol=lf

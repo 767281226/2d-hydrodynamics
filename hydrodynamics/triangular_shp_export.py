@@ -24,7 +24,7 @@ from .config import Number, Text
 from .triangular_business import terrain_fingerprint, topology_fingerprint
 from .triangular_solver_contract import TriangularRunCapability, TriangularSolverRunConfig, validate_triangular_run_request
 from .triangular_solver_netcdf import TriangularResultContract, read_triangular_result
-from .security_exclusion import security_evidence_sha256
+from .security_exclusion import SecurityExclusionEvidence, security_evidence_sha256
 
 
 class NativeTriangleSHPError(ValueError):
@@ -77,6 +77,36 @@ class NativeTriangleSHPExportRequest(_StrictModel):
 
     @model_validator(mode="after")
     def distinct_input_and_output(self) -> "NativeTriangleSHPExportRequest":
+        if Path(self.run_config_file.replace("\\", "/")).as_posix().casefold() == Path(self.output_directory.replace("\\", "/")).as_posix().casefold():
+            raise ValueError("output_directory must differ from run_config_file")
+        return self
+
+
+class NativeSourceTriangleSHPExportRequest(_StrictModel):
+    """Version-2 request for a strictly read Manning/rainfall native result."""
+
+    format: Literal["native-triangle-result-shp-export-request-v2"]
+    schema_version: Literal["2.0"]
+    result_kind: Literal["manning", "rainfall", "manning_and_rainfall"]
+    run_config_file: Text
+    output_directory: Text
+    selector: NativeTriangleSHPSelector
+    scope_selection: Literal["FULL_DOMAIN", "MAXIMUM_WET_SURFACE"]
+    wet_depth_threshold_m: Number = Field(default=0.0, ge=0.0)
+    target_crs: Literal["NATIVE", "EPSG:4490"] = "NATIVE"
+
+    @field_validator("run_config_file", "output_directory")
+    @classmethod
+    def normalized_relative_path(cls, value: str) -> str:
+        win = PureWindowsPath(value)
+        posix = PurePosixPath(value.replace("\\", "/"))
+        if (not value.strip() or Path(value).is_absolute() or win.is_absolute() or win.drive
+                or posix.is_absolute() or any(part in {"", ".", ".."} for part in value.replace("\\", "/").split("/"))):
+            raise ValueError("run_config_file/output_directory must be normalized relative paths without traversal")
+        return value
+
+    @model_validator(mode="after")
+    def distinct_input_and_output(self) -> "NativeSourceTriangleSHPExportRequest":
         if Path(self.run_config_file.replace("\\", "/")).as_posix().casefold() == Path(self.output_directory.replace("\\", "/")).as_posix().casefold():
             raise ValueError("output_directory must differ from run_config_file")
         return self
@@ -204,6 +234,191 @@ class NativeTriangleSHPManifest(_StrictModel):
         return self
 
 
+class NativeTriangleSHPSourceArtifact(_StrictModel):
+    role: Literal[
+        "request", "top_level_run_config", "base_run_config", "source_config",
+        "source_preparation", "p3_business", "p2_mesh", "native_result",
+        "security_input_config", "security_geometry", "security_shx", "security_prj",
+        "security_domain",
+    ]
+    path: Text
+    sha256: Text
+    byte_count: StrictInt = Field(ge=0)
+
+    @field_validator("sha256")
+    @classmethod
+    def valid_source_digest(cls, value: str) -> str:
+        if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
+            raise ValueError("source graph sha256 must be a lowercase SHA-256 digest")
+        return value
+
+
+class NativeTriangleSHPFrameBudget(_StrictModel):
+    frame_index: StrictInt = Field(ge=0)
+    time_s: Number = Field(ge=0.0)
+    integrated_volume_m3: Number = Field(ge=0.0)
+    ledger_initial_volume_m3: Number = Field(ge=0.0)
+    ledger_boundary_net_volume_m3: Number
+    ledger_source_net_volume_m3: Number
+    ledger_correction_volume_m3: Number = Field(ge=0.0)
+    ledger_final_volume_m3: Number = Field(ge=0.0)
+    ledger_residual_m3: Number
+
+
+class NativeTriangleSHPSourcesSummary(_StrictModel):
+    result_kind: Literal["manning", "rainfall", "manning_and_rainfall"]
+    sources_applied: Literal["manning", "rainfall", "manning_and_rainfall"]
+    manning_enabled: StrictBool
+    manning_applied: StrictBool
+    nonzero_manning_effect_applied: StrictBool
+    manning_source_unit: Literal["1"] | None
+    manning_physical_unit: Literal["s/m^(1/3)"] | None
+    manning_interpretation_policy: Literal["legacy_unit1_as_si_manning"] | None
+    manning_interpretation_rationale: Text | None
+    manning_face_count: StrictInt = Field(ge=0)
+    manning_face_id_sha256: Text | None
+    manning_n_min: Number | None = Field(default=None, gt=0.0, le=1.0)
+    manning_n_max: Number | None = Field(default=None, gt=0.0, le=1.0)
+    source_cfl_fraction: Number | None = Field(default=None, gt=0.0, le=1.0)
+    manning_nonzero_face_stage_evaluation_count: StrictInt = Field(ge=0)
+    manning_maximum_gamma_per_s: Number = Field(ge=0.0)
+    manning_maximum_source_magnitude_m2_s2: Number = Field(ge=0.0)
+    manning_source_cfl_limited_step_count: StrictInt = Field(ge=0)
+    manning_source_cfl_rejected_step_count: StrictInt = Field(ge=0)
+    rainfall_enabled: StrictBool
+    rainfall_applied: StrictBool
+    rainfall_nonzero_effect_applied: StrictBool
+    rainfall_input_unit: Literal["mm/h", "m/s"] | None
+    rainfall_stage_evaluation_count: StrictInt = Field(ge=0)
+    rainfall_nonzero_source_stage_evaluation_count: StrictInt = Field(ge=0)
+    rainfall_rate_m_s_by_interval: list[Number]
+    rainfall_accepted_active_volume_m3_by_interval: list[Number]
+    rainfall_accepted_active_volume_m3: Number = Field(ge=0.0)
+    rainfall_total_depth_m: Number = Field(ge=0.0)
+    rainfall_total_volume_m3: Number = Field(ge=0.0)
+    rainfall_excluded_unmodeled_volume_m3_by_interval: list[Number]
+    rainfall_excluded_unmodeled_volume_m3: Number = Field(ge=0.0)
+    excluded_rain_is_accepted_budget_loss: Literal[False] = False
+    automatic_flow_transfer_from_excluded_area: Literal[False] = False
+
+    @field_validator("manning_face_id_sha256")
+    @classmethod
+    def manning_face_digest(cls, value: str | None) -> str | None:
+        if value is not None and (len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value)):
+            raise ValueError("manning_face_id_sha256 must be a lowercase SHA-256 digest")
+        return value
+
+
+class NativeSourceTriangleSHPManifest(NativeTriangleSHPManifest):
+    """Independent version-2 manifest; the version-1 manifest remains unchanged."""
+
+    format: Literal["native-triangular-result-shapefile-v2"]
+    schema_version: Literal["2.0"]
+    package_type: Literal["native_triangular_source_result_shapefile"]
+    product_type: Literal["experimental_native_triangular_p4_2_source_result"]
+    validation_basis: Literal["P4_2_NATIVE_SOURCE_READER_AND_SOURCE_GRAPH"]
+    engine_mode: Literal[
+        "triangular_manning_experimental", "triangular_rainfall_experimental",
+        "triangular_manning_and_rainfall_experimental",
+    ]
+    result_kind: Literal["manning", "rainfall", "manning_and_rainfall"]
+    native_format: Literal["triangular-manning-result-v1", "triangular-source-result-v1"]
+    native_product_type: Literal[
+        "experimental_triangular_manning_shallow_water_result",
+        "experimental_triangular_source_shallow_water_result",
+    ]
+    solver_version: Text
+    sources_applied: Literal["manning", "rainfall", "manning_and_rainfall"]
+    manning_enabled: StrictBool
+    manning_applied: StrictBool
+    rainfall_enabled: StrictBool
+    rainfall_applied: StrictBool
+    nonzero_manning_effect_applied: StrictBool
+    rainfall_nonzero_effect_applied: StrictBool
+    source_graph_sha256: Text
+    source_graph: list[NativeTriangleSHPSourceArtifact] = Field(min_length=8)
+    source_summary: NativeTriangleSHPSourcesSummary
+    frame_budgets: list[NativeTriangleSHPFrameBudget] = Field(min_length=2)
+    maximum_synchronous_water_volume_m3: Number = Field(ge=0.0)
+    selected_window_maximum_synchronous_water_volume_m3: Number = Field(ge=0.0)
+    security_exclusion_evidence: SecurityExclusionEvidence | None = None
+
+    @field_validator("source_graph_sha256")
+    @classmethod
+    def source_manifest_hashes(cls, value: str | None) -> str | None:
+        if value is not None and (len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value)):
+            raise ValueError("source manifest hashes must be lowercase SHA-256 digests")
+        return value
+
+    @model_validator(mode="after")
+    def source_identity_and_budget_are_consistent(self) -> "NativeSourceTriangleSHPManifest":
+        expected_manning = self.result_kind in {"manning", "manning_and_rainfall"}
+        expected_rainfall = self.result_kind in {"rainfall", "manning_and_rainfall"}
+        if (self.sources_applied != self.result_kind or self.source_summary.result_kind != self.result_kind
+                or self.source_summary.sources_applied != self.result_kind):
+            raise ValueError("source manifest result_kind and sources_applied must match")
+        if ((self.manning_enabled, self.manning_applied) != (expected_manning, expected_manning)
+                or (self.rainfall_enabled, self.rainfall_applied) != (expected_rainfall, expected_rainfall)):
+            raise ValueError("source manifest enabled/applied flags must match result_kind")
+        if (self.source_summary.manning_enabled, self.source_summary.manning_applied) != (expected_manning, expected_manning):
+            raise ValueError("source summary Manning flags must match result_kind")
+        if (self.source_summary.rainfall_enabled, self.source_summary.rainfall_applied) != (expected_rainfall, expected_rainfall):
+            raise ValueError("source summary rainfall flags must match result_kind")
+        if len(self.frame_budgets) != len(self.frame_times_s):
+            raise ValueError("frame_budgets must contain one row per native saved time")
+        if any(row.frame_index != index or row.time_s != self.frame_times_s[index]
+               for index, row in enumerate(self.frame_budgets)):
+            raise ValueError("frame_budgets must be in exact native saved-time order")
+        if any(not math.isclose(row.integrated_volume_m3, row.ledger_final_volume_m3, rel_tol=1e-12, abs_tol=1e-12)
+               for row in self.frame_budgets):
+            raise ValueError("integrated frame volumes must match native mass-budget final_volume_m3")
+        if any(not math.isclose(
+            row.ledger_residual_m3,
+            row.ledger_final_volume_m3 - row.ledger_initial_volume_m3 - row.ledger_boundary_net_volume_m3
+            - row.ledger_source_net_volume_m3 - row.ledger_correction_volume_m3,
+            rel_tol=1e-12, abs_tol=1e-12,
+        ) for row in self.frame_budgets):
+            raise ValueError("frame budget rows must preserve the native mass-ledger equation")
+        frame_volumes = [row.integrated_volume_m3 for row in self.frame_budgets]
+        if not math.isclose(self.maximum_synchronous_water_volume_m3, max(frame_volumes), rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("maximum_synchronous_water_volume_m3 must be the maximum of saved-frame integrals")
+        selected_volume = max(frame_volumes[index] for index in self.selected_frame_indices)
+        if not math.isclose(self.selected_window_maximum_synchronous_water_volume_m3, selected_volume, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError("selected-window water volume must use only selected saved frames")
+        required_roles = {
+            "request", "top_level_run_config", "base_run_config", "source_config", "source_preparation",
+            "p3_business", "p2_mesh", "native_result",
+        }
+        roles = [item.role for item in self.source_graph]
+        if len(roles) != len(set(roles)) or not required_roles.issubset(roles):
+            raise ValueError("source_graph must contain each required role exactly once")
+        graph_sha = _canonical_sha256([item.model_dump(mode="json") for item in self.source_graph])
+        if graph_sha != self.source_graph_sha256:
+            raise ValueError("source_graph_sha256 does not match the embedded source graph")
+        source_result = next(item for item in self.source_graph if item.role == "native_result")
+        if source_result.sha256 != self.native_result_sha256 or source_result.path != self.native_result_path:
+            raise ValueError("native_result source-graph entry must match native_result identity fields")
+        if self.security_exclusion_evidence is None:
+            if self.security_exclusion_sha256 is not None or self.security_active_face_id_sha256 is not None:
+                raise ValueError("security identity fields require security_exclusion_evidence")
+        else:
+            evidence = self.security_exclusion_evidence
+            if (self.security_exclusion_sha256 != security_evidence_sha256(evidence)
+                    or self.security_active_face_id_sha256 != evidence.active_face_id_sha256
+                    or evidence.active_face_id_sha256 != self.native_face_id_sha256
+                    or evidence.mesh_face_count != self.native_face_count):
+                raise ValueError("security evidence must match the native active face set and manifest digest")
+        if expected_rainfall:
+            interval_count = len(self.frame_times_s) - 1
+            if (len(self.source_summary.rainfall_rate_m_s_by_interval) != interval_count
+                    or len(self.source_summary.rainfall_accepted_active_volume_m3_by_interval) != interval_count
+                    or len(self.source_summary.rainfall_excluded_unmodeled_volume_m3_by_interval) != interval_count):
+                raise ValueError("rainfall source summary arrays must align with native saved-time intervals")
+        elif self.source_summary.rainfall_rate_m_s_by_interval or self.source_summary.rainfall_accepted_active_volume_m3_by_interval:
+            raise ValueError("Manning-only manifest may not contain rainfall intervals")
+        return self
+
+
 class NativeTriangleSHPValidationReport(_StrictModel):
     valid: StrictBool
     complete: StrictBool
@@ -229,6 +444,23 @@ class _SHPContext:
 
 
 @dataclass(frozen=True)
+class _NativeSourceSHPContext:
+    request_path: Path
+    request_bytes: bytes
+    request: NativeSourceTriangleSHPExportRequest
+    run_config_path: Path
+    run_config_bytes: bytes
+    capability: TriangularRunCapability
+    source_capability: Any
+    result: TriangularResultContract
+    native_result_path: Path
+    native_result_bytes: bytes
+    source_hashes: dict[str, str]
+    source_paths: dict[str, Path]
+    source_graph: tuple[NativeTriangleSHPSourceArtifact, ...]
+
+
+@dataclass(frozen=True)
 class _SHPFeature:
     face_id: int
     polygon_points: tuple[tuple[float, float], ...]
@@ -238,6 +470,8 @@ class _SHPFeature:
 
 _SHP_REQUEST_FORMAT = "native-triangle-result-shp-export-request-v1"
 _SHP_FORMAT = "native-triangular-result-shapefile-v1"
+_SOURCE_SHP_REQUEST_FORMAT = "native-triangle-result-shp-export-request-v2"
+_SOURCE_SHP_FORMAT = "native-triangular-result-shapefile-v2"
 _DBF_DECIMALS = 12
 _FRAME_FIELDS = (
     ("face_id", "C", 32, 0), ("time_s", "N", 20, _DBF_DECIMALS),
@@ -423,13 +657,242 @@ def _read_result_context(request_path: str | Path) -> _SHPContext:
     )
 
 
-def _assert_sources_unchanged(context: _SHPContext) -> None:
+def _load_source_request(
+    request_path: str | Path,
+) -> tuple[Path, NativeSourceTriangleSHPExportRequest, bytes]:
+    candidate = Path(os.path.abspath(request_path))
+    if _is_reparse_component(candidate):
+        raise NativeTriangleSHPError(f"request path must not traverse a symlink or reparse point: {candidate}")
+    resolved = candidate.resolve()
+    raw = _regular_bytes(resolved, "native source SHP export request")
+    try:
+        request = NativeSourceTriangleSHPExportRequest.model_validate(_strict_yaml(raw, "native source SHP export request"))
+    except ValidationError as exc:
+        raise NativeTriangleSHPError(f"invalid native source triangle SHP request: {exc}") from exc
+    if request.format != _SOURCE_SHP_REQUEST_FORMAT:
+        raise NativeTriangleSHPError(f"request format must be {_SOURCE_SHP_REQUEST_FORMAT}")
+    return resolved, request, raw
+
+
+def _read_native_source_context(request_path: str | Path) -> _NativeSourceSHPContext:
+    """Read only an existing Manning/rainfall native result and its strict source graph."""
+    request_file, request, request_raw = _load_source_request(request_path)
+    run_config_path = _resolve_relative_file(request_file.parent, request.run_config_file, "run_config_file")
+    run_config_bytes = _regular_bytes(run_config_path, "native source run config")
+    run_config_data = _strict_yaml(run_config_bytes, "native source run config")
+    if not isinstance(run_config_data, dict):
+        raise NativeTriangleSHPError("v2 run_config_file must be a strict YAML mapping")
+
+    try:
+        if request.result_kind == "manning":
+            from .triangular_manning_contract import (
+                load_triangular_manning_run_config,
+                validate_triangular_manning_run_request,
+            )
+            from .triangular_manning_netcdf import read_triangular_manning_result
+
+            if run_config_data.get("sources") != "manning":
+                raise NativeTriangleSHPError("result_kind manning requires a top-level sources: manning config")
+            declared = load_triangular_manning_run_config(run_config_path)
+            if declared.format != "triangular-manning-run-v1":
+                raise NativeTriangleSHPError("result_kind manning requires triangular-manning-run-v1")
+            declared_base_path = _resolve_relative_file(run_config_path.parent, declared.base_run_config_file, "base_run_config_file")
+            declared_source_path = _resolve_relative_file(run_config_path.parent, declared.source_config_file, "source_config_file")
+            declared_result_path = _resolve_relative_file(run_config_path.parent, declared.result_file, "result_file")
+            source_capability = validate_triangular_manning_run_request(run_config_path, allow_existing_result=True)
+            if (source_capability.config != declared or declared_base_path != source_capability.base_run_config_path
+                    or declared_source_path != source_capability.source_config_path
+                    or declared_result_path != source_capability.result_path):
+                raise NativeTriangleSHPError("Manning run config changed while it was being validated")
+            base_capability = source_capability.base_run
+            result = None
+            native_result_path = source_capability.result_path
+            reader = lambda: read_triangular_manning_result(
+                native_result_path, run_config_path, enforce_configured_result_path=True,
+            )
+        else:
+            from .triangular_source_contract import (
+                load_triangular_source_run_config,
+                validate_triangular_source_run_request,
+            )
+            from .triangular_source_netcdf import read_triangular_source_result
+
+            if run_config_data.get("sources") != request.result_kind:
+                raise NativeTriangleSHPError(
+                    f"result_kind {request.result_kind} requires a matching top-level sources value"
+                )
+            declared = load_triangular_source_run_config(run_config_path)
+            if declared.format != "triangular-source-run-v1":
+                raise NativeTriangleSHPError("rainfall/combined result_kind requires triangular-source-run-v1")
+            declared_base_path = _resolve_relative_file(run_config_path.parent, declared.base_run_config_file, "base_run_config_file")
+            declared_source_path = _resolve_relative_file(run_config_path.parent, declared.source_config_file, "source_config_file")
+            declared_result_path = _resolve_relative_file(run_config_path.parent, declared.result_file, "result_file")
+            source_capability = validate_triangular_source_run_request(run_config_path, allow_existing_result=True)
+            if (source_capability.config != declared or declared_base_path != source_capability.base_run_config_path
+                    or declared_source_path != source_capability.source_config_path
+                    or declared_result_path != source_capability.result_path):
+                raise NativeTriangleSHPError("source run config changed while it was being validated")
+            base_capability = source_capability.base_run
+            result = None
+            native_result_path = source_capability.result_path
+            reader = lambda: read_triangular_source_result(
+                native_result_path, run_config_path, enforce_configured_result_path=True,
+            )
+    except NativeTriangleSHPError:
+        raise
+    except (ValueError, OSError, ImportError) as exc:
+        raise NativeTriangleSHPError(f"native source run/P2/P3-A graph failed strict validation: {exc}") from exc
+
+    if base_capability.business.boundary_bindings:
+        raise NativeTriangleSHPError("native source SHP does not support P3-A open-boundary bindings")
+
+    # Snapshot the declared graph before the existing strict native reader runs;
+    # it validates the embedded P2/P3/source preparation again without reading
+    # or requiring the base-none result_file.
+    graph_paths: dict[str, Path] = {}
+    graph_bytes: dict[str, bytes] = {}
+
+    def add_source(role: str, path: str | Path, label: str, expected_sha256: str | None = None) -> None:
+        source = Path(path).resolve()
+        raw = _regular_bytes(source, label)
+        digest = _sha256_bytes(raw)
+        if expected_sha256 is not None and digest != expected_sha256:
+            raise NativeTriangleSHPError(f"{label} SHA-256 differs from the freshly validated native evidence")
+        if role in graph_paths:
+            raise NativeTriangleSHPError(f"duplicate source graph role {role}")
+        graph_paths[role], graph_bytes[role] = source, raw
+
+    base_config_data = _strict_yaml(
+        _regular_bytes(source_capability.base_run_config_path, "base run config"), "base run config",
+    )
+    if not isinstance(base_config_data, dict) or not isinstance(base_config_data.get("business_file"), str):
+        raise NativeTriangleSHPError("base run config must declare a relative P3 business_file")
+    business_path = _resolve_relative_file(
+        source_capability.base_run_config_path.parent, base_config_data["business_file"], "business_file",
+    )
+    business_data = _strict_json(_regular_bytes(business_path, "P3 business package"), "P3 business package")
+    if not isinstance(business_data, dict) or not isinstance(business_data.get("mesh_artifact"), str):
+        raise NativeTriangleSHPError("P3 business package must declare a relative P2 mesh_artifact")
+    mesh_path = _resolve_relative_file(business_path.parent, business_data["mesh_artifact"], "mesh_artifact")
+    source_preparation_path = _resolve_relative_file(
+        source_capability.source_config_path.parent,
+        source_capability.source_config.output_file,
+        "source-preparation output_file",
+    )
+    if (business_path != base_capability.business_path or mesh_path != base_capability.mesh_path
+            or source_preparation_path != source_capability.source_preparation_path):
+        raise NativeTriangleSHPError("freshly resolved P2/P3/source-preparation paths differ from the validated capabilities")
+
+    add_source("request", request_file, "v2 export request")
+    add_source("top_level_run_config", run_config_path, "top-level source run config")
+    add_source("base_run_config", source_capability.base_run_config_path, "base run config")
+    add_source("source_config", source_capability.source_config_path, "source-preparation config")
+    add_source("source_preparation", source_preparation_path, "source-preparation artifact")
+    add_source("p3_business", business_path, "P3 business package")
+    add_source("p2_mesh", mesh_path, "P2 mesh/terrain artifact")
+    add_source("native_result", native_result_path, "native source result")
+
+    evidence = base_capability.business.security_exclusion
+    if evidence is not None:
+        security_config_path = Path(evidence.security_input_config_path).resolve()
+        security_config_data = _strict_yaml(
+            _regular_bytes(security_config_path, "security input config"), "security input config",
+        )
+        security_policy = security_config_data.get("security_exclusion") if isinstance(security_config_data, dict) else None
+        if not isinstance(security_policy, dict) or not isinstance(security_policy.get("source_file"), str):
+            raise NativeTriangleSHPError("security input config does not contain a strict relative source_file")
+        security_geometry_path = _resolve_relative_file(
+            security_config_path.parent, security_policy["source_file"], "security geometry source_file",
+        )
+        if security_geometry_path != Path(evidence.source_file_path).resolve():
+            raise NativeTriangleSHPError("security geometry path differs from the path recorded in P2 evidence")
+        if evidence.domain_source_kind == "P2_GMSH_CONFIG":
+            security_domain_path = security_config_path
+        elif evidence.domain_source_kind == "DOMAIN_GEOJSON":
+            domain_relative = security_policy.get("domain_geometry_file")
+            if not isinstance(domain_relative, str):
+                raise NativeTriangleSHPError("imported security mesh requires its explicit source-domain GeoJSON")
+            security_domain_path = _resolve_relative_file(
+                security_config_path.parent, domain_relative, "security domain_geometry_file",
+            )
+        else:
+            raise NativeTriangleSHPError(f"unsupported security domain source kind {evidence.domain_source_kind}")
+        if security_domain_path != Path(evidence.domain_source_path).resolve():
+            raise NativeTriangleSHPError("original-domain path differs from the path recorded in P2 evidence")
+        add_source("security_input_config", evidence.security_input_config_path, "security input config", evidence.security_input_config_sha256)
+        add_source("security_geometry", security_geometry_path, "security geometry", evidence.source_file_sha256)
+        if evidence.source_shx_sha256 is not None:
+            shx_path = _resolve_relative_file(
+                security_config_path.parent,
+                str(PurePosixPath(security_policy["source_file"].replace("\\", "/")).with_suffix(".shx")),
+                "security SHX sidecar",
+            )
+            add_source("security_shx", shx_path, "security SHX sidecar", evidence.source_shx_sha256)
+        if evidence.source_prj_sha256 is not None:
+            prj_path = _resolve_relative_file(
+                security_config_path.parent,
+                str(PurePosixPath(security_policy["source_file"].replace("\\", "/")).with_suffix(".prj")),
+                "security PRJ sidecar",
+            )
+            add_source("security_prj", prj_path, "security PRJ sidecar", evidence.source_prj_sha256)
+        add_source("security_domain", security_domain_path, "original domain geometry/config", evidence.domain_source_sha256)
+
+    try:
+        result = reader()
+    except Exception as exc:
+        raise NativeTriangleSHPError(
+            f"native {request.result_kind} result failed its existing strict reader/source binding: {exc}"
+        ) from exc
+    if (result.sources_applied != request.result_kind or result.boundary_policy != "closed_wall"
+            or result.gate_hydraulics_enabled or result.production_approved):
+        raise NativeTriangleSHPError("native source result family/closed-wall flags differ from the v2 request")
+    expected_manning = request.result_kind in {"manning", "manning_and_rainfall"}
+    expected_rainfall = request.result_kind in {"rainfall", "manning_and_rainfall"}
+    if (bool(result.manning_enabled) != expected_manning or bool(result.manning_applied) != expected_manning
+            or bool(result.rainfall_enabled) != expected_rainfall or bool(result.rainfall_applied) != expected_rainfall):
+        raise NativeTriangleSHPError("native result enabled/applied flags conflict with result_kind")
+    result_security = result.security_exclusion
+    if (result_security is None) != (evidence is None):
+        raise NativeTriangleSHPError("native source result security evidence differs from the validated P2/P3 active domain")
+    if result_security is not None and evidence is not None:
+        if security_evidence_sha256(result_security) != security_evidence_sha256(evidence):
+            raise NativeTriangleSHPError("native source result security evidence differs from the P2/P3 source graph")
+    if not base_capability.business.terrain.vertical_datum:
+        raise NativeTriangleSHPError("source SHP requires the native P3-A vertical datum for water_level_m")
+
+    hashes = {role: _sha256_bytes(raw) for role, raw in graph_bytes.items()}
+    hashes.update({
+        "request": hashes["request"],
+        "run_config": hashes["top_level_run_config"],
+        "business_package": hashes["p3_business"],
+        "mesh": hashes["p2_mesh"],
+        "native_result": hashes["native_result"],
+    })
+    source_graph = tuple(
+        NativeTriangleSHPSourceArtifact(
+            role=role, path=str(graph_paths[role]), sha256=hashes[role], byte_count=len(graph_bytes[role]),
+        )
+        for role in graph_paths
+    )
+    context = _NativeSourceSHPContext(
+        request_path=request_file, request_bytes=request_raw, request=request,
+        run_config_path=run_config_path, run_config_bytes=run_config_bytes,
+        capability=base_capability, source_capability=source_capability,
+        result=result, native_result_path=native_result_path,
+        native_result_bytes=graph_bytes["native_result"],
+        source_hashes=hashes, source_paths=graph_paths, source_graph=source_graph,
+    )
+    _assert_sources_unchanged(context)
+    return context
+
+
+def _assert_sources_unchanged(context: _SHPContext | _NativeSourceSHPContext) -> None:
     for name, path in context.source_paths.items():
         if _sha256_bytes(_regular_bytes(path, f"source {name}")) != context.source_hashes[name]:
             raise NativeTriangleSHPError(f"source graph changed while the SHP package was being processed: {path}")
 
 
-def _selected_frames(context: _SHPContext) -> tuple[tuple[int, ...], dict[str, Any]]:
+def _selected_frames(context: _SHPContext | _NativeSourceSHPContext) -> tuple[tuple[int, ...], dict[str, Any]]:
     result = context.result
     selector = context.request.selector
     times = tuple(float(value) for value in result.time_s)
@@ -504,7 +967,7 @@ def _output_crs_and_transform(source_crs_text: str, target_crs_selector: str):
         raise NativeTriangleSHPError(f"cannot resolve output CRS: {exc}") from exc
 
 
-def _build_features(context: _SHPContext) -> dict[str, Any]:
+def _build_features(context: _SHPContext | _NativeSourceSHPContext) -> dict[str, Any]:
     result = context.result
     mesh = context.capability.business.mesh
     terrain = context.capability.business.terrain
@@ -927,7 +1390,7 @@ def _manifest_base(context: _SHPContext, built: Mapping[str, Any]) -> dict[str, 
     }
 
 
-def _write_layer(directory: Path, context: _SHPContext, built: Mapping[str, Any]) -> None:
+def _write_layer(directory: Path, context: _SHPContext | _NativeSourceSHPContext, built: Mapping[str, Any]) -> None:
     try:
         import shapefile
     except ImportError as exc:
@@ -962,7 +1425,7 @@ def _file_records(directory: Path) -> list[NativeTriangleSHPFile]:
     return records
 
 
-def _validate_layer(package_directory: Path, context: _SHPContext, built: Mapping[str, Any]) -> None:
+def _validate_layer(package_directory: Path, context: _SHPContext | _NativeSourceSHPContext, built: Mapping[str, Any]) -> None:
     try:
         import shapefile
     except ImportError as exc:
@@ -1008,6 +1471,245 @@ def _manifest_for_package(context: _SHPContext, built: Mapping[str, Any], packag
     return NativeTriangleSHPManifest.model_validate({
         **_manifest_base(context, built), "files": [item.model_dump(mode="json") for item in _file_records(package_directory)],
     })
+
+
+def _source_budget_and_summary(
+    context: _NativeSourceSHPContext,
+    built: Mapping[str, Any],
+) -> tuple[list[NativeTriangleSHPFrameBudget], float, float, NativeTriangleSHPSourcesSummary]:
+    result = context.result
+    mesh = context.capability.business.mesh
+    areas = tuple(float(value) for value in mesh.face_area)
+    if len(result.water_depth_m) != len(result.time_s) or len(result.mass_budget) != len(result.time_s):
+        raise NativeTriangleSHPError("native source water states, time axis, and mass budget must align")
+    frame_volumes: list[float] = []
+    budget_rows: list[NativeTriangleSHPFrameBudget] = []
+    initial_volume = None
+    rainfall_mode = context.request.result_kind in {"rainfall", "manning_and_rainfall"}
+    rainfall_cumulative = tuple(float(value) for value in getattr(result, "cumulative_rainfall_volume_m3_by_time", ()))
+    if rainfall_mode and len(rainfall_cumulative) != len(result.time_s):
+        raise NativeTriangleSHPError("native rainfall cumulative-volume ledger must align with saved time")
+    for frame_index, (time_s, depths, ledger) in enumerate(zip(result.time_s, result.water_depth_m, result.mass_budget)):
+        if len(depths) != len(areas):
+            raise NativeTriangleSHPError(f"native depth frame {frame_index} does not align with active face areas")
+        volume = math.fsum(float(depth) * area for depth, area in zip(depths, areas))
+        if not math.isfinite(volume):
+            raise NativeTriangleSHPError(f"native integrated water volume is non-finite at frame {frame_index}")
+        frame_volumes.append(volume)
+        if initial_volume is None:
+            initial_volume = float(ledger.initial_volume_m3)
+        if not math.isclose(float(ledger.initial_volume_m3), initial_volume, rel_tol=1e-12, abs_tol=1e-12):
+            raise NativeTriangleSHPError("native mass-budget initial volume must remain constant across saved frames")
+        if float(ledger.boundary_net_volume_m3) != 0.0:
+            raise NativeTriangleSHPError("native closed-wall source result must have zero boundary net volume")
+        if not math.isclose(volume, float(ledger.final_volume_m3), rel_tol=1e-12, abs_tol=1e-12):
+            raise NativeTriangleSHPError(f"depth-times-area volume disagrees with native mass budget at frame {frame_index}")
+        source_volume = float(ledger.source_net_volume_m3)
+        expected_source = rainfall_cumulative[frame_index] if rainfall_mode else 0.0
+        if not math.isclose(source_volume, expected_source, rel_tol=1e-12, abs_tol=1e-12):
+            raise NativeTriangleSHPError(f"native source ledger disagrees with applied source summary at frame {frame_index}")
+        expected_residual = (
+            float(ledger.final_volume_m3) - float(ledger.initial_volume_m3)
+            - float(ledger.boundary_net_volume_m3) - source_volume - float(ledger.correction_volume_m3)
+        )
+        if not math.isclose(float(ledger.residual_m3), expected_residual, rel_tol=1e-12, abs_tol=1e-12):
+            raise NativeTriangleSHPError(f"native mass-budget residual is inconsistent at frame {frame_index}")
+        budget_rows.append(NativeTriangleSHPFrameBudget(
+            frame_index=frame_index, time_s=float(time_s), integrated_volume_m3=volume,
+            ledger_initial_volume_m3=float(ledger.initial_volume_m3),
+            ledger_boundary_net_volume_m3=float(ledger.boundary_net_volume_m3),
+            ledger_source_net_volume_m3=source_volume,
+            ledger_correction_volume_m3=float(ledger.correction_volume_m3),
+            ledger_final_volume_m3=float(ledger.final_volume_m3), ledger_residual_m3=float(ledger.residual_m3),
+        ))
+
+    selected_indices = tuple(int(value) for value in built["selector_indices"])
+    if not selected_indices or any(index < 0 or index >= len(frame_volumes) for index in selected_indices):
+        raise NativeTriangleSHPError("selected native frame indices are empty or outside the saved time axis")
+    maximum_synchronous = max(frame_volumes)
+    selected_maximum_synchronous = max(frame_volumes[index] for index in selected_indices)
+
+    expected_manning = context.request.result_kind in {"manning", "manning_and_rainfall"}
+    expected_rainfall = context.request.result_kind in {"rainfall", "manning_and_rainfall"}
+    manning_ids = tuple(int(value) for value in getattr(result, "manning_face_id", ()))
+    manning_values = tuple(float(value) for value in getattr(result, "manning_n", ()))
+    if expected_manning:
+        if manning_ids != tuple(int(value) for value in result.face_id) or len(manning_values) != mesh.n_face:
+            raise NativeTriangleSHPError("native Manning values must align with the complete active face set")
+        manning_unit = getattr(result, "manning_source_unit", None)
+        manning_physical_unit = getattr(result, "manning_physical_unit", None)
+        manning_policy = getattr(result, "manning_interpretation_policy", None)
+        manning_rationale = getattr(result, "manning_interpretation_rationale", None)
+        if (manning_unit != "1" or manning_physical_unit != "s/m^(1/3)"
+                or manning_policy != "legacy_unit1_as_si_manning" or not manning_rationale):
+            raise NativeTriangleSHPError("native Manning result is missing its strict legacy-unit SI interpretation evidence")
+        manning_id_hash = _canonical_sha256([str(value) for value in manning_ids])
+        manning_min, manning_max = min(manning_values), max(manning_values)
+    else:
+        manning_ids, manning_values = (), ()
+        manning_unit = manning_physical_unit = manning_policy = manning_rationale = None
+        manning_id_hash = None
+        manning_min = manning_max = None
+
+    rates: list[float] = []
+    accepted_interval_volumes: list[float] = []
+    excluded_interval_volumes: list[float] = []
+    excluded_total = 0.0
+    accepted_total = 0.0
+    rainfall_depth = 0.0
+    rainfall_total_volume = 0.0
+    rainfall_input_unit = None
+    rainfall_stage_count = 0
+    rainfall_nonzero_stage_count = 0
+    rainfall_nonzero_effect = False
+    evidence = result.security_exclusion
+    if expected_rainfall:
+        rates = [float(value) for value in result.rainfall_rate_m_s_by_interval]
+        accepted_native = [float(value) for value in result.rainfall_volume_m3_by_interval]
+        if len(rates) != len(result.time_s) - 1 or len(accepted_native) != len(rates):
+            raise NativeTriangleSHPError("native rainfall rates and accepted volumes must align with saved-time intervals")
+        active_area = math.fsum(areas)
+        excluded_area = 0.0 if evidence is None else float(evidence.security_inside_area_m2)
+        durations = [math.fsum((float(end), -float(start))) for start, end in zip(result.time_s, result.time_s[1:])]
+        accepted_interval_volumes = [rate * duration * active_area for rate, duration in zip(rates, durations)]
+        excluded_interval_volumes = [rate * duration * excluded_area for rate, duration in zip(rates, durations)]
+        for index, (actual, expected) in enumerate(zip(accepted_native, accepted_interval_volumes)):
+            if not math.isclose(actual, expected, rel_tol=1e-10, abs_tol=1e-12):
+                raise NativeTriangleSHPError(f"accepted rainfall interval {index} is not rate times active area and duration")
+        if evidence is not None:
+            accounting = getattr(result, "security_rainfall_accounting", None)
+            if accounting is None:
+                raise NativeTriangleSHPError("security-enabled rainfall result is missing excluded unmodeled rainfall accounting")
+            reported = tuple(float(value) for value in accounting.security_excluded_unmodeled_rainfall_volume_m3_by_interval)
+            if len(reported) != len(excluded_interval_volumes) or any(
+                not math.isclose(actual, expected, rel_tol=1e-10, abs_tol=1e-12)
+                for actual, expected in zip(reported, excluded_interval_volumes)
+            ):
+                raise NativeTriangleSHPError("excluded unmodeled rainfall does not match security area, rate, and interval duration")
+            if accounting.excluded_rain_is_accepted_budget_loss or accounting.automatic_flow_transfer_from_excluded_area:
+                raise NativeTriangleSHPError("excluded rainfall may not be recorded as accepted loss or automatic flow transfer")
+        accepted_total = math.fsum(accepted_interval_volumes)
+        excluded_total = math.fsum(excluded_interval_volumes)
+        rainfall_total_volume = float(result.rainfall_total_volume_m3)
+        rainfall_depth = float(result.rainfall_total_depth_m)
+        if (not math.isclose(rainfall_total_volume, accepted_total, rel_tol=1e-10, abs_tol=1e-12)
+                or not math.isclose(rainfall_depth * active_area, accepted_total, rel_tol=1e-10, abs_tol=1e-12)):
+            raise NativeTriangleSHPError("native rainfall total depth/volume differs from active-area integration")
+        if not math.isclose(accepted_total, math.fsum(accepted_native), rel_tol=1e-10, abs_tol=1e-12):
+            raise NativeTriangleSHPError("native rainfall accepted volume differs from per-interval mass ledger")
+        rainfall_input_unit = result.rainfall_input_unit
+        rainfall_stage_count = int(result.rainfall_stage_evaluation_count)
+        rainfall_nonzero_stage_count = int(result.rainfall_nonzero_source_stage_evaluation_count)
+        rainfall_nonzero_effect = bool(result.rainfall_nonzero_effect_applied)
+    summary = NativeTriangleSHPSourcesSummary(
+        result_kind=context.request.result_kind, sources_applied=str(result.sources_applied),
+        manning_enabled=bool(result.manning_enabled), manning_applied=bool(result.manning_applied),
+        nonzero_manning_effect_applied=bool(getattr(result, "nonzero_manning_effect_applied", False)),
+        manning_source_unit=manning_unit, manning_physical_unit=manning_physical_unit,
+        manning_interpretation_policy=manning_policy, manning_interpretation_rationale=manning_rationale,
+        manning_face_count=len(manning_ids), manning_face_id_sha256=manning_id_hash,
+        manning_n_min=manning_min, manning_n_max=manning_max,
+        source_cfl_fraction=getattr(result, "source_cfl_fraction", None),
+        manning_nonzero_face_stage_evaluation_count=int(getattr(result, "manning_nonzero_face_stage_evaluation_count", 0)),
+        manning_maximum_gamma_per_s=float(getattr(result, "maximum_manning_gamma_per_s", 0.0)),
+        manning_maximum_source_magnitude_m2_s2=float(getattr(result, "maximum_manning_source_magnitude_m2_s2", 0.0)),
+        manning_source_cfl_limited_step_count=int(getattr(result, "manning_source_cfl_limited_step_count", 0)),
+        manning_source_cfl_rejected_step_count=int(getattr(result, "manning_source_cfl_rejected_step_count", 0)),
+        rainfall_enabled=bool(result.rainfall_enabled), rainfall_applied=bool(result.rainfall_applied),
+        rainfall_nonzero_effect_applied=rainfall_nonzero_effect, rainfall_input_unit=rainfall_input_unit,
+        rainfall_stage_evaluation_count=rainfall_stage_count,
+        rainfall_nonzero_source_stage_evaluation_count=rainfall_nonzero_stage_count,
+        rainfall_rate_m_s_by_interval=rates,
+        rainfall_accepted_active_volume_m3_by_interval=accepted_interval_volumes,
+        rainfall_accepted_active_volume_m3=accepted_total,
+        rainfall_total_depth_m=rainfall_depth, rainfall_total_volume_m3=rainfall_total_volume,
+        rainfall_excluded_unmodeled_volume_m3_by_interval=excluded_interval_volumes,
+        rainfall_excluded_unmodeled_volume_m3=excluded_total,
+    )
+    return budget_rows, maximum_synchronous, selected_maximum_synchronous, summary
+
+
+def _manifest_for_source_package(
+    context: _NativeSourceSHPContext,
+    built: Mapping[str, Any],
+    package_directory: Path,
+) -> NativeSourceTriangleSHPManifest:
+    result = context.result
+    evidence = result.security_exclusion
+    graph_items = [item.model_dump(mode="json") for item in context.source_graph]
+    graph_sha = _canonical_sha256(graph_items)
+    frame_budgets, max_synchronous, selected_maximum, sources = _source_budget_and_summary(context, built)
+    common = _manifest_base(context, built)
+    engine_modes = {
+        "manning": "triangular_manning_experimental",
+        "rainfall": "triangular_rainfall_experimental",
+        "manning_and_rainfall": "triangular_manning_and_rainfall_experimental",
+    }
+    input_graph_sha = _canonical_sha256({
+        "source_graph_sha256": graph_sha,
+        "topology_fingerprint": common["topology_fingerprint"],
+        "terrain_fingerprint": common["terrain_fingerprint"],
+        "case_id": result.case_id,
+        "result_kind": context.request.result_kind,
+        "native_format": result.format,
+        "native_product_type": result.product_type,
+        "solver_version": result.solver_version,
+    })
+    result_set_id = "native-source-tri-shp-" + _canonical_sha256({
+        "input_graph_sha256": input_graph_sha,
+        "native_result_sha256": context.source_hashes["native_result"],
+        "result_kind": context.request.result_kind,
+        "selector": built["selector"], "scope_hash": built["scope_hash"],
+        "target_crs": built["target_crs"].to_string(),
+    })[:24]
+    source_digest = context.source_hashes
+    payload = {
+        **common,
+        "format": _SOURCE_SHP_FORMAT,
+        "schema_version": "2.0",
+        "package_type": "native_triangular_source_result_shapefile",
+        "result_set_id": result_set_id,
+        "product_type": "experimental_native_triangular_p4_2_source_result",
+        "validation_basis": "P4_2_NATIVE_SOURCE_READER_AND_SOURCE_GRAPH",
+        "engine_mode": engine_modes[context.request.result_kind],
+        "input_graph_sha256": input_graph_sha,
+        "result_kind": context.request.result_kind,
+        "native_format": result.format,
+        "native_product_type": result.product_type,
+        "solver_version": result.solver_version,
+        "sources_applied": result.sources_applied,
+        "manning_enabled": bool(result.manning_enabled), "manning_applied": bool(result.manning_applied),
+        "rainfall_enabled": bool(result.rainfall_enabled), "rainfall_applied": bool(result.rainfall_applied),
+        "nonzero_manning_effect_applied": bool(getattr(result, "nonzero_manning_effect_applied", False)),
+        "rainfall_nonzero_effect_applied": bool(getattr(result, "rainfall_nonzero_effect_applied", False)),
+        "source_graph_sha256": graph_sha, "source_graph": graph_items,
+        "source_summary": sources.model_dump(mode="json"),
+        "frame_budgets": [item.model_dump(mode="json") for item in frame_budgets],
+        "maximum_synchronous_water_volume_m3": max_synchronous,
+        "selected_window_maximum_synchronous_water_volume_m3": selected_maximum,
+        "security_exclusion_evidence": None if evidence is None else evidence.model_dump(mode="json"),
+        # The v1-compatible hash/path fields continue to identify the source
+        # result graph, while the role-indexed source_graph is authoritative.
+        "run_config_sha256": source_digest["top_level_run_config"],
+        "run_config_path": str(context.run_config_path),
+        "request_sha256": source_digest["request"],
+        "native_result_sha256": source_digest["native_result"],
+        "business_package_sha256": source_digest["p3_business"],
+        "mesh_sha256": source_digest["p2_mesh"],
+        "request_path": str(context.request_path),
+        "native_result_path": str(context.native_result_path),
+        "business_package_path": str(context.capability.business_path),
+        "mesh_path": str(context.capability.mesh_path),
+        "native_identity_limit": "LOCAL_SOURCE_GRAPH only; no platform_run_id, attempt_id, script_id or local_run_id is inferred.",
+        "limitations": [
+            "Only an existing strict P4-2 Manning/rainfall/combined native result is supported; this adapter never calls a runner.",
+            "SHP features are one-to-one with native active face_id values; no remeshing, subdivision, merging or interpolation occurs.",
+            "Rainfall active-area acceptance and excluded-area unmodeled rainfall remain separately identified; excluded rain is not transferred or recorded as budget loss.",
+            "Risk, population and loss aggregates are unsupported by this adapter and are not inferred as zero.",
+        ],
+        "files": [item.model_dump(mode="json") for item in _file_records(package_directory)],
+    }
+    return NativeSourceTriangleSHPManifest.model_validate(payload)
 
 
 def validate_native_triangle_shp_package(
@@ -1060,6 +1762,141 @@ def validate_native_triangle_shp_package(
         feature_count=len(built["features"]),
         checks=["P4-1 native reader/source graph", "triangle geometry and exact face_id set", "DBF fields/units/values", "PRJ/CPG and component hashes"],
     )
+
+
+def validate_native_source_triangle_shp_package(
+    request_path: str | Path, package_directory: str | Path | None = None,
+) -> NativeTriangleSHPValidationReport:
+    """Re-read the matching strict source-result reader and complete local source graph."""
+    context = _read_native_source_context(request_path)
+    built = _build_features(context)
+    if package_directory is None:
+        directory = _output_path(context.request_path, context.request.output_directory)
+    else:
+        candidate = Path(os.path.abspath(package_directory))
+        if _is_reparse_component(candidate):
+            raise NativeTriangleSHPError(f"SHP package directory must not traverse a symlink or reparse point: {candidate}")
+        directory = candidate.resolve()
+    if _is_reparse_component(directory) or not directory.is_dir():
+        raise NativeTriangleSHPError(f"native source SHP package directory is missing or aliased: {directory}")
+    actual = _walk_package(directory)
+    expected_keys = {"faces.shp", "faces.shx", "faces.dbf", "faces.prj", "faces.cpg", "manifest.json"}
+    if set(actual) != expected_keys:
+        raise NativeTriangleSHPError(
+            f"source SHP package file set differs from the contract; "
+            f"missing={sorted(expected_keys-set(actual))}, extra={sorted(set(actual)-expected_keys)}"
+        )
+    manifest_raw = _regular_bytes(actual["manifest.json"], "native source SHP manifest")
+    try:
+        manifest = NativeSourceTriangleSHPManifest.model_validate(_strict_json(manifest_raw, "native source SHP manifest"))
+    except ValidationError as exc:
+        raise NativeTriangleSHPError(f"native source SHP manifest schema validation failed: {exc}") from exc
+    for record in manifest.files:
+        raw = _regular_bytes(actual[record.key], f"source SHP package file {record.key}")
+        if len(raw) != record.byte_count or _sha256_bytes(raw) != record.sha256:
+            raise NativeTriangleSHPError(f"source SHP component byte count/SHA-256 mismatch: {record.key}")
+        if record.media_type != _file_media_type(record.key):
+            raise NativeTriangleSHPError(f"source SHP component media type mismatch: {record.key}")
+    expected_manifest = _manifest_for_source_package(context, built, directory)
+    if manifest.model_dump(mode="json") != expected_manifest.model_dump(mode="json"):
+        raise NativeTriangleSHPError("source SHP manifest differs from freshly validated native source graph and selector")
+    if actual["faces.cpg"].read_text(encoding="ascii").strip().upper() != "UTF-8":
+        raise NativeTriangleSHPError("faces.cpg must declare UTF-8 encoding")
+    try:
+        from pyproj import CRS
+        actual_crs = CRS.from_wkt(actual["faces.prj"].read_text(encoding="utf-8"))
+        expected_crs = CRS.from_wkt(built["target_wkt"])
+    except Exception as exc:
+        raise NativeTriangleSHPError(f"faces.prj is missing or unreadable: {exc}") from exc
+    if not actual_crs.equals(expected_crs, ignore_axis_order=True):
+        raise NativeTriangleSHPError("faces.prj CRS differs from the requested native/EPSG:4490 CRS")
+    _validate_layer(directory, context, built)
+    _assert_sources_unchanged(context)
+    return NativeTriangleSHPValidationReport(
+        valid=True, complete=True, result_set_id=expected_manifest.result_set_id,
+        feature_count=len(built["features"]),
+        checks=[
+            "P4-2 matching native Manning/source reader and complete source graph",
+            "triangle geometry and exact active face_id set", "native source budget and saved-time alignment",
+            "DBF fields/units/values", "PRJ/CPG and component hashes",
+        ],
+    )
+
+
+def export_native_source_triangle_shp(request_path: str | Path) -> NativeTriangleSHPValidationReport:
+    """Export an existing source-enabled native result; never calls a runner."""
+    context = _read_native_source_context(request_path)
+    destination = _output_path(context.request_path, context.request.output_directory)
+    if _is_reparse_component(destination) or destination.exists():
+        raise NativeTriangleSHPError(f"refusing to overwrite an existing or aliased source SHP package directory: {destination}")
+    if not destination.parent.is_dir():
+        raise NativeTriangleSHPError(f"source SHP output parent directory must already exist: {destination.parent}")
+    built = _build_features(context)
+    parent_chain = _capture_parent_chain(destination.parent)
+    stage = Path(tempfile.mkdtemp(prefix=f".{destination.name}.stage-", dir=destination.parent))
+    manifest_bytes = b""
+    stage_identity = _file_identity(stage, directory=True)
+    manifest_identity: tuple[int, int] | None = None
+    try:
+        _write_layer(stage, context, built)
+        manifest = _manifest_for_source_package(context, built, stage)
+        manifest_bytes = _json_bytes(manifest.model_dump(mode="json"))
+        (stage / "manifest.json").write_bytes(manifest_bytes)
+        manifest_identity = _file_identity(stage / "manifest.json", directory=False)
+        validate_native_source_triangle_shp_package(request_path, stage)
+        _assert_sources_unchanged(context)
+        if destination.exists() or destination.is_symlink():
+            raise NativeTriangleSHPError(f"source SHP output directory appeared during export; refusing to replace it: {destination}")
+        os.rename(stage, destination)
+        return validate_native_source_triangle_shp_package(request_path, destination)
+    except Exception as exc:
+        published = False
+        if manifest_identity is not None and destination.exists() and not _is_reparse_component(destination):
+            try:
+                published = _file_identity(destination, directory=True) == stage_identity
+            except NativeTriangleSHPError:
+                published = False
+        if published:
+            rollback = _retire_failed_manifest(destination, manifest_bytes, stage_identity, manifest_identity, parent_chain)
+            if rollback:
+                raise NativeTriangleSHPError(
+                    f"source SHP export failed: {exc}; rollback preserved concurrent/replaced content: {'; '.join(rollback)}"
+                ) from exc
+            raise NativeTriangleSHPError(
+                f"source SHP export failed: {exc}; the owned success marker was safely retired from {destination}"
+            ) from exc
+        elif stage.exists() or stage.is_symlink():
+            if stage.is_symlink() or _is_reparse_component(stage):
+                location = f"failed source staging path is now a symlink/reparse point; no cleanup was attempted: {stage}"
+            elif not _parent_chain_matches(parent_chain):
+                location = f"failed source staging parent chain changed; stage was preserved at {stage}"
+            else:
+                try:
+                    current_stage_identity = _file_identity(stage, directory=True)
+                except NativeTriangleSHPError as identity_error:
+                    location = f"failed source staging path could not be safely identified and was preserved at {stage}: {identity_error}"
+                else:
+                    if current_stage_identity == stage_identity:
+                        marker_notes: list[str] = []
+                        if manifest_identity is not None:
+                            marker_notes = _retire_failed_manifest(
+                                stage, manifest_bytes, stage_identity, manifest_identity, parent_chain,
+                            )
+                        if marker_notes:
+                            location = f"source stage preserved at {stage}; rollback preserved concurrent marker/content: {'; '.join(marker_notes)}"
+                        elif manifest_identity is not None:
+                            location = f"source stage preserved at {stage}; its owned success marker was safely retired"
+                        else:
+                            location = f"failed source stage preserved for inspection at {stage}"
+                    else:
+                        location = f"source staging path now names a replaced directory; no cleanup was attempted: {stage}"
+            raise NativeTriangleSHPError(f"source SHP export failed: {exc}; {location}") from exc
+        else:
+            if destination.exists():
+                location = f"source output root with an unowned/replaced identity remains at {destination}"
+            else:
+                location = f"source output root disappeared or moved from {destination}; its location is unverified"
+            raise NativeTriangleSHPError(f"source SHP export failed: {exc}; {location}") from exc
 
 
 def export_native_triangle_shp(request_path: str | Path) -> NativeTriangleSHPValidationReport:
@@ -1149,11 +1986,32 @@ def package_schema() -> dict[str, Any]:
     }
 
 
+def source_package_schema() -> dict[str, Any]:
+    """Return the independent version-2 source-result request and manifest schema set."""
+    return {
+        "format": "native-triangle-shp-schema-set-v2",
+        "request_schema": NativeSourceTriangleSHPExportRequest.model_json_schema(),
+        "manifest_schema": NativeSourceTriangleSHPManifest.model_json_schema(),
+        "validation_report_schema": NativeTriangleSHPValidationReport.model_json_schema(),
+    }
+
+
+def _request_format(request_path: str | Path) -> str:
+    candidate = Path(os.path.abspath(request_path))
+    if _is_reparse_component(candidate):
+        raise NativeTriangleSHPError(f"request path must not traverse a symlink or reparse point: {candidate}")
+    data = _strict_yaml(_regular_bytes(candidate.resolve(), "SHP export request"), "SHP export request")
+    if not isinstance(data, dict) or not isinstance(data.get("format"), str):
+        raise NativeTriangleSHPError("SHP export request must declare a versioned format")
+    return data["format"]
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hydrodynamics-triangle-shp", description="Export or validate one feature per face from an existing validated native triangular P4 result.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("schema", help="print versioned request, manifest, and validation schemas")
-    export = commands.add_parser("export", help="export an existing closed_wall sources=none P4 result")
+    commands.add_parser("schema-v2", help="print source-result v2 request, manifest, and validation schemas")
+    export = commands.add_parser("export", help="export an existing validated native triangular result")
     export.add_argument("--request", required=True)
     validate = commands.add_parser("validate", help="independently validate an SHP package against its original P2/P3-A and P4 source graph")
     validate.add_argument("--request", required=True)
@@ -1167,10 +2025,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "schema":
             print(json.dumps(package_schema(), ensure_ascii=False, indent=2, allow_nan=False))
             return 0
+        if args.command == "schema-v2":
+            print(json.dumps(source_package_schema(), ensure_ascii=False, indent=2, allow_nan=False))
+            return 0
         if args.command == "export":
-            report = export_native_triangle_shp(args.request)
+            if _request_format(args.request) == _SOURCE_SHP_REQUEST_FORMAT:
+                report = export_native_source_triangle_shp(args.request)
+            else:
+                report = export_native_triangle_shp(args.request)
         else:
-            report = validate_native_triangle_shp_package(args.request, args.package_directory)
+            if _request_format(args.request) == _SOURCE_SHP_REQUEST_FORMAT:
+                report = validate_native_source_triangle_shp_package(args.request, args.package_directory)
+            else:
+                report = validate_native_triangle_shp_package(args.request, args.package_directory)
         print(json.dumps(report.model_dump(mode="json"), ensure_ascii=False, indent=2, allow_nan=False))
         return 0
     except (NativeTriangleSHPError, ValueError, OSError, ValidationError, RuntimeError, ImportError) as exc:
@@ -1180,3 +2047,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+__all__ = [
+    "NativeTriangleSHPError", "NativeTriangleSHPExportRequest", "NativeTriangleSHPManifest",
+    "NativeTriangleSHPValidationReport", "NativeSourceTriangleSHPExportRequest",
+    "NativeSourceTriangleSHPManifest", "NativeTriangleSHPSourcesSummary",
+    "NativeTriangleSHPFrameBudget", "NativeTriangleSHPSourceArtifact",
+    "export_native_triangle_shp", "export_native_source_triangle_shp", "main", "package_schema",
+    "source_package_schema", "validate_native_triangle_shp_package",
+    "validate_native_source_triangle_shp_package",
+]

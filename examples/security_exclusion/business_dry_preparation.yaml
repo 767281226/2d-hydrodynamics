@@ -1,0 +1,12 @@
+mesh_file: prepared_mesh.nc
+output_file: business_dry.json
+roughness:
+  type: constant
+  manning_n: 0.035
+  source: synthetic dry-state example value
+initial_condition:
+  type: constant
+  quantity: depth
+  value_m: 0.0
+  source: zero-depth synthetic source-flag case
+boundary_bindings: []

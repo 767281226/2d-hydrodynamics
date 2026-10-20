@@ -1,0 +1,7 @@
+format: triangular-source-run-v1
+schema_version: '1.0'
+case_id: security-exclusion-synthetic-dynamic-v1
+sources: manning_and_rainfall
+base_run_config_file: run_dynamic.yaml
+source_config_file: combined_source_preparation.yaml
+result_file: combined.nc

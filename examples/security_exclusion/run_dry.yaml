@@ -1,0 +1,16 @@
+format: triangular-solver-run-v1
+schema_version: '1.0'
+case_id: security-exclusion-synthetic-v1
+business_file: business_dry.json
+result_file: base_none_dry.nc
+time_origin: null
+output_times_s: [0.0, 0.05, 0.1]
+boundary_policy: closed_wall
+initial_momentum: zero
+sources: none
+gravity_m_s2: 9.81
+cfl_number: 0.25
+minimum_time_step_s: 1.0e-6
+maximum_time_step_s: 0.05
+maximum_step_retries: 8
+maximum_face_count: 64

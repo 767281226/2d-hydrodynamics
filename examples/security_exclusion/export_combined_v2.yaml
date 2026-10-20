@@ -1,0 +1,14 @@
+format: native-triangle-result-shp-export-request-v2
+schema_version: '2.0'
+result_kind: manning_and_rainfall
+run_config_file: combined_run.yaml
+output_directory: combined_native_shp_v2
+selector:
+  aggregation: MAX_OVER_WINDOW
+  frame_index: null
+  time_s: null
+  window_start_s: 0.0
+  window_end_s: 0.1
+scope_selection: MAXIMUM_WET_SURFACE
+wet_depth_threshold_m: 0.0
+target_crs: EPSG:4490

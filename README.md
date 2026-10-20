@@ -71,3 +71,7 @@ All new SHP features must be actual native calculation faces. The retained struc
 ## Security-area exclusion
 
 安全区从实际三角计算域排除，新边界使用既有 closed_wall；P2/P3/native/SHP共同绑定来源与活动面。项目默认case_001已启用map/securityArea约束，当前structured/hourly会在模型执行前明确拒绝；通用未配置安全区的structured仍输出非SHP产品。见[输入与范围](docs/security_exclusion.md)、[English](docs/en/security_exclusion.md)及[小型合成例子](examples/security_exclusion/README.md)。Manning与rainfall运行可使用同一排除守卫；原生SHP当前仅支持none结果。所有验证限合成小案例及真实安全矢量只读几何兼容，不构成工程认证。
+
+## 原生源项三角 SHP v2
+
+`hydrodynamics-triangle-shp`支持独立v2请求，读取已完成的Manning、rainfall或组合源项原生结果，保留实际计算面、source身份/预算及安全区活动域。v1 none合同与默认schema保留。见[说明](docs/zh-CN/native_source_triangle_shp.md)、[English](docs/native_source_triangle_shp.md)与[合成案例](examples/security_exclusion/README.md)。导出器只读，不执行solver，结果仍为实验性离线GIS产物。
