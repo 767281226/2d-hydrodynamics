@@ -1,0 +1,8 @@
+format: triangular-manning-run-v1
+schema_version: "1.0"
+case_id: synthetic-complete-terrain-closed-wall
+sources: manning
+base_run_config_file: ../triangular_solver/closed_wall_run.yaml
+source_config_file: manning_only_source_preparation.yaml
+result_file: manning_result.nc
+overwrite_existing_result: false

@@ -25,7 +25,9 @@ from .mesh_preparation import (
     MeshPreparationError,
     _validate_projected_metric_crs,
     read_ugrid_preparation,
+    read_ugrid_security_exclusion,
 )
+from .security_exclusion import SecurityExclusionError, SecurityExclusionEvidence, security_evidence_sha256
 from .triangular_mesh import FaceTerrainField, TriangularMesh, TriangularMeshError
 
 
@@ -507,6 +509,7 @@ class TriangularBusinessPackage:
     initial_condition: TriangularInitialConditionField
     boundary_bindings: Sequence[TriangularBoundaryBinding]
     preparation_only: bool = True
+    security_exclusion: SecurityExclusionEvidence | None = None
 
     def __post_init__(self) -> None:
         if self.preparation_only is not True:
@@ -514,6 +517,11 @@ class TriangularBusinessPackage:
         self.terrain.validate_for(self.mesh)
         self.roughness.validate_for(self.mesh)
         self.initial_condition.validate_for(self.mesh, self.terrain)
+        if self.security_exclusion is not None:
+            if (self.security_exclusion.mesh_id != self.mesh.mesh_id
+                    or self.security_exclusion.topology_fingerprint != topology_fingerprint(self.mesh)
+                    or self.security_exclusion.mesh_face_count != self.mesh.n_face):
+                raise TriangularBusinessError("security-exclusion evidence does not match the active P2 mesh/topology")
         bindings = tuple(self.boundary_bindings)
         names: set[str] = set()
         assigned_edges: set[int] = set()
@@ -758,17 +766,23 @@ def write_triangular_business_package(
         raise TriangularBusinessError("business output_file must not overwrite the mesh/terrain UGRID artifact")
     try:
         linked_mesh, linked_terrain = read_ugrid_preparation(mesh_path)
+        linked_security = read_ugrid_security_exclusion(mesh_path)
     except (MeshPreparationError, TriangularMeshError) as exc:
         raise TriangularBusinessError(f"linked mesh preparation artifact is invalid: {exc}") from exc
     if topology_fingerprint(package.mesh) != topology_fingerprint(linked_mesh):
         raise TriangularBusinessError("business package mesh topology does not match linked mesh artifact")
     if terrain_fingerprint(package.mesh, package.terrain) != terrain_fingerprint(linked_mesh, linked_terrain):
         raise TriangularBusinessError("business package terrain contents/provenance do not match linked mesh artifact")
+    if (package.security_exclusion is None) != (linked_security is None):
+        raise TriangularBusinessError("business package security-exclusion evidence must exactly match its linked P2 UGRID")
+    if package.security_exclusion is not None and linked_security is not None:
+        if package.security_exclusion.model_dump(mode="json") != linked_security.model_dump(mode="json"):
+            raise TriangularBusinessError("business package security-exclusion evidence differs from linked P2 UGRID")
     relative_mesh = Path(os.path.relpath(mesh_path, target.parent)).as_posix()
     rough_values, rough_valid = _field_values_payload(package.roughness.manning_n, package.roughness.valid_mask)
     initial_values, initial_valid = _field_values_payload(package.initial_condition.values_m, package.initial_condition.valid_mask)
     payload = {
-        "format": "triangular-business-preparation-v2",
+        "format": "triangular-business-preparation-v3" if package.security_exclusion is not None else "triangular-business-preparation-v2",
         "product_type": "triangular_business_input_preparation",
         "preparation_only": True,
         "simulation_result": False,
@@ -826,6 +840,8 @@ def write_triangular_business_package(
             for binding in package.boundary_bindings
         ],
     }
+    if package.security_exclusion is not None:
+        payload["security_exclusion"] = package.security_exclusion.model_dump(mode="json")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         target.write_text(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
@@ -843,10 +859,11 @@ def prepare_triangular_business(config_path: str | Path) -> TriangularBusinessRe
     if output_path in {config_path, mesh_path}:
         raise TriangularBusinessError("output_file must not overwrite the config or referenced mesh artifact")
     mesh, terrain = read_ugrid_preparation(mesh_path)
+    security = read_ugrid_security_exclusion(mesh_path)
     roughness = _build_roughness(mesh, config.roughness)
     initial = _build_initial_condition(mesh, terrain, config.initial_condition)
     boundaries = tuple(_build_boundary_binding(mesh, terrain, item) for item in config.boundary_bindings)
-    package = TriangularBusinessPackage(mesh, terrain, roughness, initial, boundaries)
+    package = TriangularBusinessPackage(mesh, terrain, roughness, initial, boundaries, True, security)
     artifact = write_triangular_business_package(output_path, package, mesh_artifact=mesh_path)
     report = {
         "preparation_only": True,
@@ -859,6 +876,13 @@ def prepare_triangular_business(config_path: str | Path) -> TriangularBusinessRe
         "boundary_bindings": len(boundaries),
         "boundary_edges_bound": sum(len(binding.edge_ids) for binding in boundaries),
         "artifact": str(artifact),
+        "security_exclusion": None if security is None else {
+            "enabled": True, "source_geometry_sha256": security.source_union_geometry_sha256,
+            "domain_geometry_sha256": security.domain_geometry_sha256,
+            "active_area_m2": security.active_domain_area_m2,
+            "security_inside_area_m2": security.security_inside_area_m2,
+            "active_face_count": security.mesh_face_count,
+        },
     }
     return TriangularBusinessResult(package, artifact, report)
 
@@ -876,16 +900,22 @@ def read_triangular_business_package(path: str | Path) -> TriangularBusinessPack
         raise TriangularBusinessError("triangular business package root must be an object")
     if data.get("format") == "triangular-business-preparation-v1":
         raise TriangularBusinessError("legacy v1 business package has no terrain_fingerprint; regenerate it with the current preparation command")
-    expected_root_keys = {
+    expected_root_keys_v2 = {
         "format", "product_type", "preparation_only", "simulation_result", "mesh_artifact",
         "mesh_id", "topology_fingerprint", "terrain_fingerprint", "coordinate_system", "face_id", "terrain",
         "roughness", "initial_condition", "boundary_bindings",
     }
-    if set(data) != expected_root_keys:
+    expected_root_keys_v3 = expected_root_keys_v2 | {"security_exclusion"}
+    if data.get("format") == "triangular-business-preparation-v2" and set(data) == expected_root_keys_v2:
+        security_data = None
+    elif data.get("format") == "triangular-business-preparation-v3" and set(data) == expected_root_keys_v3:
+        security_data = data["security_exclusion"]
+    else:
+        expected_root_keys = expected_root_keys_v3 if data.get("format") == "triangular-business-preparation-v3" else expected_root_keys_v2
         missing = expected_root_keys - set(data)
         extra = set(data) - expected_root_keys
         raise TriangularBusinessError(f"business package keys mismatch; missing={sorted(missing)}, extra={sorted(extra)}")
-    if data["format"] != "triangular-business-preparation-v2" or data["product_type"] != "triangular_business_input_preparation":
+    if data["format"] not in {"triangular-business-preparation-v2", "triangular-business-preparation-v3"} or data["product_type"] != "triangular_business_input_preparation":
         raise TriangularBusinessError("unsupported triangular business package format/product_type")
     if data["preparation_only"] is not True or data["simulation_result"] is not False:
         raise TriangularBusinessError("business package must be preparation_only and not a simulation result")
@@ -895,8 +925,18 @@ def read_triangular_business_package(path: str | Path) -> TriangularBusinessPack
     mesh_path = (source.parent / mesh_ref).resolve()
     try:
         mesh, terrain = read_ugrid_preparation(mesh_path)
+        security = read_ugrid_security_exclusion(mesh_path)
     except (MeshPreparationError, TriangularMeshError) as exc:
         raise TriangularBusinessError(f"linked mesh preparation artifact is invalid: {exc}") from exc
+    if (security_data is None) != (security is None):
+        raise TriangularBusinessError("P3-A security-exclusion metadata must match the linked P2 UGRID")
+    if security is not None:
+        try:
+            package_security = SecurityExclusionEvidence.model_validate(security_data)
+        except ValidationError as exc:
+            raise TriangularBusinessError(f"invalid P3-A security-exclusion evidence: {exc}") from exc
+        if package_security.model_dump(mode="json") != security.model_dump(mode="json"):
+            raise TriangularBusinessError("P3-A security-exclusion evidence differs from linked P2 UGRID")
     fingerprint = topology_fingerprint(mesh)
     if data["mesh_id"] != mesh.mesh_id or data["topology_fingerprint"] != fingerprint:
         raise TriangularBusinessError("business package mesh_id/topology_fingerprint does not match linked mesh")
@@ -959,7 +999,7 @@ def read_triangular_business_package(path: str | Path) -> TriangularBusinessPack
         )
         binding.validate_for(mesh, terrain)
         bindings.append(binding)
-    return TriangularBusinessPackage(mesh, terrain, roughness, initial, tuple(bindings))
+    return TriangularBusinessPackage(mesh, terrain, roughness, initial, tuple(bindings), True, security)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

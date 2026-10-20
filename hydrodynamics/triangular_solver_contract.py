@@ -26,6 +26,7 @@ from .triangular_business import (
     terrain_fingerprint,
     topology_fingerprint,
 )
+from .security_exclusion import SecurityExclusionEvidence, security_evidence_sha256
 from .triangular_mesh import TriangularMesh, TriangularMeshError
 
 
@@ -350,6 +351,7 @@ class TriangularResultContract(_StrictContractModel):
     terrain_fingerprint: Text
     mesh_sha256: Text
     business_package_sha256: Text
+    security_exclusion: SecurityExclusionEvidence | None = None
     gravity_m_s2: Number = Field(gt=0.0, le=20.0)
     cfl_number: Number = Field(gt=0.0, le=0.5)
     minimum_time_step_s: Number = Field(ge=1e-9, le=1.0)
@@ -708,6 +710,18 @@ def validate_triangular_run_request(path: str | Path, *, allow_existing_result: 
     reference_depth = max(initial_depths, default=0.0)
     volume_scale = max(initial_volume, total_area * reference_depth, 1.0)
     correction_budget = config.volume_correction_budget_fraction * volume_scale
+    security = business.security_exclusion
+    security_summary = None if security is None else {
+        "enabled": True,
+        "evidence_sha256": security_evidence_sha256(security),
+        "source_union_geometry_sha256": security.source_union_geometry_sha256,
+        "active_face_id_sha256": security.active_face_id_sha256,
+        "original_domain_area_m2": security.original_domain_area_m2,
+        "security_inside_area_m2": security.security_inside_area_m2,
+        "active_domain_area_m2": security.active_domain_area_m2,
+        "active_mesh_area_m2": security.active_mesh_area_m2,
+        "security_boundary_edge_count": security.security_boundary_edge_count,
+    }
     report = {
         "status": "ready_for_experimental_closed_wall_run",
         "contract_only": False,
@@ -720,6 +734,7 @@ def validate_triangular_run_request(path: str | Path, *, allow_existing_result: 
         "mesh_id": mesh.mesh_id,
         "topology_fingerprint": topology_fingerprint(mesh),
         "terrain_fingerprint": terrain_fingerprint(mesh, terrain),
+        "security_exclusion": security_summary,
         "coordinate_system": mesh.coordinate_system,
         "face_count": mesh.n_face,
         "boundary_policy": config.boundary_policy,
@@ -797,6 +812,12 @@ def validate_triangular_result_for_run(
     if (not math.isclose(contract.mesh_geometry_tolerance_m, mesh.geometry_tolerance_m, rel_tol=0.0, abs_tol=0.0)
             or not math.isclose(contract.minimum_face_area_m2, mesh.minimum_face_area_m2, rel_tol=0.0, abs_tol=0.0)):
         raise TriangularSolverContractError("result mesh geometry tolerances do not match linked P2 artifact")
+    expected_security = capability.business.security_exclusion
+    if (contract.security_exclusion is None) != (expected_security is None):
+        raise TriangularSolverContractError("result security-exclusion evidence presence does not match linked P2/P3 inputs")
+    if contract.security_exclusion is not None and expected_security is not None:
+        if security_evidence_sha256(contract.security_exclusion) != security_evidence_sha256(expected_security):
+            raise TriangularSolverContractError("result security-exclusion evidence does not match freshly revalidated P2/P3 inputs")
 
     initial = capability.business.initial_condition
     if initial.quantity.value == "depth":

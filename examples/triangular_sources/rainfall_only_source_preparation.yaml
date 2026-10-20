@@ -1,0 +1,18 @@
+format: triangular-source-preparation-v1
+schema_version: "1.0"
+case_id: synthetic-complete-terrain-closed-wall
+run_config_file: ../triangular_solver/closed_wall_run.yaml
+output_file: rainfall_only_source_prepared.json
+source_cfl_fraction: 0.5
+manning:
+  enabled: false
+rainfall:
+  enabled: true
+  unit: mm/h
+  intervals:
+    - start_time_s: 0.0
+      end_time_s: 1.0
+      intensity: 36.0
+    - start_time_s: 1.0
+      end_time_s: 10.0
+      intensity: 0.0

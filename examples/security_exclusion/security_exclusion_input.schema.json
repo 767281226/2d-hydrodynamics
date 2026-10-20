@@ -1,0 +1,70 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "security-area-exclusion-v1",
+      "title": "Format",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "source_file": {
+      "description": "Relative path to the source Polygon/MultiPolygon SHP or GeoJSON; DBF attributes are not used",
+      "title": "Source File",
+      "type": "string"
+    },
+    "source_crs": {
+      "description": "Explicit source CRS; must agree with SHP PRJ when the source is a Shapefile",
+      "title": "Source Crs",
+      "type": "string"
+    },
+    "constraint": {
+      "const": "excluded_closed_wall",
+      "title": "Constraint",
+      "type": "string"
+    },
+    "domain_geometry_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Required for imported P2 meshes: source Polygon/MultiPolygon geometry D",
+      "title": "Domain Geometry File"
+    },
+    "domain_crs": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Explicit CRS of domain_geometry_file; no CRS is inferred",
+      "title": "Domain Crs"
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "enabled",
+    "source_file",
+    "source_crs",
+    "constraint"
+  ],
+  "title": "SecurityExclusionInput",
+  "type": "object"
+}

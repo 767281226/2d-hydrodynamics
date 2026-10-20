@@ -1,0 +1,8 @@
+{
+  "format": "synthetic-dem-json-v1",
+  "coordinate_system": "EPSG:32650",
+  "transform": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+  "vertical_unit": "m",
+  "vertical_datum": "SYNTHETIC_LOCAL",
+  "elevation": [[0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]]
+}

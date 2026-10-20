@@ -34,6 +34,10 @@ hydrodynamics-rehearsal = "hydrodynamics.rehearsal_contract:main"
 
 hydrodynamics-triangle-shp = "hydrodynamics.triangular_shp_export:main"
 
+hydrodynamics-triangular-source-prepare = "hydrodynamics.triangular_sources:main"
+hydrodynamics-triangular-manning-run = "hydrodynamics.triangular_manning:main"
+hydrodynamics-triangular-source-run = "hydrodynamics.triangular_source:main"
+
 [tool.setuptools.packages.find]
 include = ["hydrodynamics*"]
 

@@ -1,0 +1,155 @@
+{
+  "format": "triangular-source-benchmark-references-v1",
+  "status": "frozen_before_P4-2B_source_implementation",
+  "scope": "independent source-contract and reference values only; no solver output is included",
+  "units": {
+    "length": "m",
+    "time": "s",
+    "water_depth": "m",
+    "momentum_per_width": "m2/s",
+    "manning_n_source_legacy": "1",
+    "manning_n_physical_si": "s/m^(1/3)",
+    "rainfall_input_units": ["mm/h", "m/s"],
+    "rainfall_rate": "m/s",
+    "rainfall_volume": "m3",
+    "gravity": "m/s2"
+  },
+  "source_configuration": {
+    "default_source_state": "disabled",
+    "p4_1_run_sources": "none",
+    "source_cfl_fraction_default": 0.5,
+    "source_cfl_fraction_range": "(0,1]",
+    "source_cfl_fraction_unit": "1",
+    "legacy_roughness_policy": "legacy_unit1_as_si_manning",
+    "legacy_roughness_numeric_conversion": false,
+    "rainfall_mm_per_hour_to_m_per_second": "intensity_mm_per_hour / 3600000",
+    "rainfall_boundary_convention": "left-closed/right-open; the final endpoint is terminal",
+    "rainfall_source_equation": "S_h=R, S_q=(0,0)",
+    "manning_source_equation": "gamma=g*n^2*sqrt((hu)^2+(hv)^2)/h^(7/3); S_h=0; S_q=-gamma*(hu,hv)",
+    "reference_gravity_m_s2": 9.81,
+    "explicit_source_step_rule": "dt <= source_cfl_fraction/gamma at each Euler stage where gamma > 0; combine with the wave CFL by minimum"
+  },
+  "source_references": [
+    {
+      "title": "Clawpack Manning friction term",
+      "url": "https://www.clawpack.org/list/manning.html",
+      "supports": "momentum source -gamma*q and gamma=g*n^2*|q|/h^(7/3), with the full two-component discharge magnitude"
+    },
+    {
+      "title": "USACE HEC-RAS 2D User's Manual: Manning roughness units",
+      "url": "https://www.hec.usace.army.mil/confluence/rasdocs/r2dum/latest/development-of-a-2d-or-combined-1d-2d-model/creating-hydraulic-property-tables-for-2d-flow-areas",
+      "supports": "physical SI Manning n unit s/m^(1/3); this project does not adopt the manual's composite/subgrid roughness algorithm"
+    },
+    {
+      "title": "FullSWOF: A free software package for the simulation of shallow water flows",
+      "url": "https://arxiv.org/pdf/1401.4125",
+      "supports": "equation (1) has rainfall in the mass balance and no rainfall term in momentum; infiltration is excluded here"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "manning_constant_depth_decay",
+      "reference_kind": "analytic_scalar_ode_with_fixed_vector_direction",
+      "h_m": 1.0,
+      "gravity_m_s2": 9.81,
+      "manning_n": 0.1,
+      "manning_n_unit": "s/m^(1/3)",
+      "initial_q_m2_s": [0.6, 0.8],
+      "initial_q_magnitude_m2_s": 1.0,
+      "duration_s": 10.0,
+      "decay_coefficient_per_s": 0.09810000000000002,
+      "exact_q_m2_s_at_duration": [0.3028773346794547, 0.403836446239273],
+      "exact_q_magnitude_m2_s_at_duration": 0.5047955577990912,
+      "comparison_time_steps_s": [1.0, 0.5, 0.25],
+      "independent_ssprk2_max_component_errors_m2_s": [0.0005211093944118, 0.0001259045767656, 0.0000309191687871],
+      "candidate_max_component_error_tolerances_m2_s": [0.002, 0.0005, 0.000125],
+      "candidate_error_strictly_decreases": true,
+      "candidate_depth_error_tolerance_m": 1e-12,
+      "invariants": ["q direction does not reverse", "q magnitude does not increase", "h remains unchanged"]
+    },
+    {
+      "case_id": "manning_vector_norm_and_depth_exponent_probes",
+      "reference_kind": "direct_independent_instantaneous_formula_evaluation",
+      "probes": [
+        {
+          "h_m": 2.0,
+          "manning_n": 0.1,
+          "q_m2_s": [0.6, 0.8],
+          "q_euclidean_magnitude_m2_s": 1.0,
+          "gamma_per_s": 0.01946550539976005,
+          "momentum_source_m2_s2": [-0.01167930323985603, -0.01557240431980804]
+        },
+        {
+          "h_m": 0.75,
+          "manning_n": 0.2,
+          "q_m2_s": [-0.3, 0.4],
+          "q_euclidean_magnitude_m2_s": 0.5,
+          "gamma_per_s": 0.38390407480481537,
+          "momentum_source_m2_s2": [0.1151712224414446, -0.15356162992192615]
+        }
+      ],
+      "candidate_component_error_tolerance": "1e-12*max(1,abs(reference))",
+      "candidate_unit": "m2/s2"
+    },
+    {
+      "case_id": "uniform_rainfall_accumulation",
+      "reference_kind": "exact_constant_rate_integral",
+      "domain_area_m2": 100.0,
+      "duration_s": 100.0,
+      "input_intensity_mm_h": 36.0,
+      "converted_intensity_m_s": 0.00001,
+      "initial_depths_m": [0.0, 0.2],
+      "reference_depth_increments_m": [0.001, 0.001],
+      "reference_final_depths_m": [0.001, 0.201],
+      "reference_volume_increment_m3": 0.1,
+      "momentum_increment_m2_s": [0.0, 0.0],
+      "candidate_depth_error_tolerance_m": 1e-10,
+      "candidate_volume_error_tolerance_m3": 1e-12,
+      "mass_correction_allowed": false
+    },
+    {
+      "case_id": "rainfall_stop_and_jump",
+      "reference_kind": "exact_piecewise_constant_time_integral",
+      "domain_area_m2": 100.0,
+      "output_times_s": [0.0, 30.0, 90.0, 120.0],
+      "intervals_left_closed_right_open_mm_h": [
+        {"start_time_s": 0.0, "end_time_s": 30.0, "intensity_mm_h": 10.0, "depth_m": 0.00008333333333333333, "volume_m3": 0.008333333333333333},
+        {"start_time_s": 30.0, "end_time_s": 90.0, "intensity_mm_h": 0.0, "depth_m": 0.0, "volume_m3": 0.0},
+        {"start_time_s": 90.0, "end_time_s": 120.0, "intensity_mm_h": 20.0, "depth_m": 0.00016666666666666666, "volume_m3": 0.016666666666666666}
+      ],
+      "total_depth_m": 0.00025,
+      "total_volume_m3": 0.025,
+      "candidate_depth_error_tolerance_m": 1e-10,
+      "candidate_volume_error_tolerance_m3": 1e-12,
+      "retry_may_duplicate_rain": false
+    },
+    {
+      "case_id": "combined_uniform_rain_and_manning_ode",
+      "reference_kind": "independent_analytic_time_varying_depth_ode",
+      "h0_m": 1.0,
+      "rainfall_rate_m_s": 0.01,
+      "manning_n": 0.1,
+      "manning_n_unit": "s/m^(1/3)",
+      "gravity_m_s2": 9.81,
+      "initial_q_m2_s": [0.6, 0.8],
+      "duration_s": 10.0,
+      "exact_final_depth_m": 1.1,
+      "integral_J": 0.878021936355093,
+      "exact_q_scaling_factor": 0.5324751434697416,
+      "exact_q_m2_s": [0.31948508608184495, 0.4259801147757933],
+      "comparison_time_steps_s": [1.0, 0.5, 0.25],
+      "independent_ssprk2_max_component_errors_m2_s": [0.0004434988612721, 0.0001082558051106, 0.0000267034724574],
+      "candidate_max_component_error_tolerances_m2_s": [0.002, 0.0005, 0.000125],
+      "candidate_error_strictly_decreases": true,
+      "candidate_depth_error_tolerance_m": 1e-12
+    }
+  ],
+  "compatibility": {
+    "p4_1_existing_run_config_unchanged": true,
+    "p4_1_existing_result_format_unchanged": true,
+    "p4_1_execution_sources_value": "none",
+    "prepared_source_artifact_is_simulation_result": false,
+    "prepared_source_artifact_reports_sources_applied": "none",
+    "initial_volume_correction_budget_expands_with_rain": false
+  }
+}

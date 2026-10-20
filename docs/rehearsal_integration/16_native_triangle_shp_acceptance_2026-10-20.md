@@ -31,3 +31,17 @@ wheel SHA256=5104189012953e3fa25e1a75b771a1d15fba71ef967ea59ae0edbd78ae4fb349，
 最小发布候选不含地图、DEM、历史100001、数据库模块/SQL、分析脚本或生成NC/SHP；只提交白名单业务代码、schema、说明、纯合成输入及永久独立回归。14仍在实施，本次发布不表示安全区已接入。
 
 暂存格式检查前规范候选4个Python文件的末尾空行，内容仅rstrip(CR/LF)+单LF；生产文件AST与前一个已测wheel完全相同，冻结独立probe无变化。最终wheel重新构建及新目录安装smoke再次exit0，38资源字节和24模块来源一致，最终SHA256=036e59e8760118377527916ca44490cb58797d3402c63b98ea71a1de2fa69ac9；前述510418...为格式清理前的中间wheel，不用作最终发布摘要。没有因仅EOF格式再重复求解器大集合。
+
+## 实际提交与远端发布
+
+本地白名单提交5f309d645c7d9bbb0132b5e86fa9c5bdf99f2f4a，父79f329d，tree36792c2b9298a290d401c37580f2f5da233d282a，共36文件。独立index暂存后的实际Git对象逐项核对，Python AST同候选、永久独立probe逐字节一致；index仅协调本批条目，未包含用户其他暂存（为空）、地图删除或真实数据。随后正常push确切提交到main，exit0，无强推。原工作区保留DB及其他未提交增量。14仍进行，不冒称安全区已经启用。
+
+## 发布后补充反例：stage根替换清理所有权
+
+新增一个独立事务反例，使用最终已安装wheel（禁用editable，断言模块来自installed-final），实际1 failed in1.22s，exit1，无skip。在_write_layer真实完成写出后，将测试自身原stage改名保留，再同路径创建外来stage及independent_foreign_file.txt，随后故意抛正常写失败。except分支对stage无身份核对的shutil.rmtree递归删除了新外来目录。此前已通过的两个post-publish所有权反例不覆盖这个pre-publish位置，几何/数值/SHP面集合结论不变；不能据此冒称新事务边界已通过。新增test_shp_stage_ownership_independent.py SHA256=076c3d3505f8df68af3f7b40c501bdafce3d7512bf75bc2b51855a93c050a499。当前14会修改同一SHP模块的安全区校验，已将此必要最小清理修复交回同一实施窗口；不得递归删除无本次身份的目录/并发内容，不改既有冻结probe/断言，不要求新物理。
+
+## 大投影坐标小数面精度补充反例
+
+独立安装包真实2面/0.05s native计算及reader成功后，SHP导出在GIS几何面积复核处实际1 failed in1.17s，exit1无skip。节点量级EPSG:4548 x474150.1/y4299600.1，采用小数顶点；直接对绝对坐标x*y做shoelace产生消差，_build_features以projected geometry area differs拒绝合法native面。此前整数坐标正式样例及北向0的非等面积独立夹具未覆盖此边界。新增test_shp_projected_precision_independent.py SHA256=163a767c2cfc38d058ef3c4a06fbbaa7902c4c053815303705f89acb47f22554；必须用平移到局部参考点的稳定几何面积/方向计算修复，保留native面积比对与原门槛，不改求解器或放宽assert。交回正在修改同模块的14实施窗口一并关闭。
+
+上述stage、post-publish错误传播和大投影坐标精度后续阻断已随14关闭：见17最终68独立、368候选及wheel证据。新安全区数据只接受实际active native面；SHP仍仅支持none/closed_wall结果，源项SHP明确拒绝。

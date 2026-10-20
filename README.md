@@ -67,3 +67,7 @@ python -m hydrodynamics --id run01
 ## Native triangular result SHP
 
 All new SHP features must be actual native calculation faces. The retained structured workflow writes NC and web products and marks SHP as not applicable. Rectangle SHP writers now reject calls before creating output. See [usage and limitations](docs/native_triangle_shp.md), [中文说明](docs/zh-CN/native_triangle_shp.md), and the [small synthetic example](examples/native_triangle_shp/README.md). This first adapter supports existing closed-wall sources=none P4 results, FRAME or saved-time MAX_OVER_WINDOW, full or wet face sets, native projected CRS or EPSG:4490. It remains experimental and cannot approve engineering publication.
+
+## Security-area exclusion
+
+安全区从实际三角计算域排除，新边界使用既有 closed_wall；P2/P3/native/SHP共同绑定来源与活动面。项目默认case_001已启用map/securityArea约束，当前structured/hourly会在模型执行前明确拒绝；通用未配置安全区的structured仍输出非SHP产品。见[输入与范围](docs/security_exclusion.md)、[English](docs/en/security_exclusion.md)及[小型合成例子](examples/security_exclusion/README.md)。Manning与rainfall运行可使用同一排除守卫；原生SHP当前仅支持none结果。所有验证限合成小案例及真实安全矢量只读几何兼容，不构成工程认证。

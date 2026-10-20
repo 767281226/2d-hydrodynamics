@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 import yaml
 
 from .config import Number, Text
+from .security_exclusion import SecurityExclusionInput
 
 
 class WorkflowError(ValueError):
@@ -72,6 +73,7 @@ class WorkflowConfig(_WorkflowModel):
     record_xihe_component_changes: StrictBool = True
     socio_overlay_shp: Text | None = None
     script_id: Text | None = Field(default=None, description="脚本运行ID；省略时生成北京时间YYYYMMDD加Unix纳秒时间戳")
+    security_exclusion: SecurityExclusionInput | None = Field(default=None, description="Optional strict excluded-area input; structured/hourly workflow rejects enabled security constraints before model execution")
 
     @field_validator("script_id")
     @classmethod

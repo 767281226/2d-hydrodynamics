@@ -1,0 +1,7 @@
+format: triangular-source-run-v1
+schema_version: '1.0'
+case_id: security-exclusion-synthetic-v1
+sources: rainfall
+base_run_config_file: run.yaml
+source_config_file: source_preparation.yaml
+result_file: rainfall.nc

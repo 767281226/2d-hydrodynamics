@@ -202,6 +202,11 @@ def run_workflow(workflow_file: str | Path, *, run_id: str | None = None, output
         print('[shp] not applicable: native triangular result required', flush=True)
 
     def preflight():
+        if spec.security_exclusion is not None and spec.security_exclusion.enabled:
+            raise WorkflowError(
+                "UNSUPPORTED_STRUCTURED_SECURITY_EXCLUSION: the structured/hourly workflow cannot apply "
+                "the excluded-area closed-wall constraint; model execution was not started"
+            )
         for dependency in ('netCDF4','pyproj'):
             if importlib.util.find_spec(dependency) is None:
                 raise WorkflowError(f'missing {dependency}; install with python -m pip install -e ".[workflow]"')

@@ -66,6 +66,18 @@ def _open_dataset(path: Path):
     return netCDF4.Dataset(str(path), "r")
 
 
+def _reject_native_triangular_artifact(path: Path) -> None:
+    """Structured web encoders must not flatten native triangular face data."""
+    with _open_dataset(path) as dataset:
+        product_type = str(getattr(dataset, "product_type", ""))
+        if product_type.startswith("experimental_triangular_") or "mesh2d" in dataset.variables or "face_nodes" in dataset.variables:
+            security_note = " with security exclusion" if getattr(dataset, "security_exclusion_json", None) is not None else ""
+            raise Nc2WebError(
+                "UNSUPPORTED_NATIVE_TRIANGULAR_RESULT: structured nc2web/stepjson encoders cannot represent native "
+                f"triangular{security_note} face sets"
+            )
+
+
 def _finite_diff(values: np.ndarray) -> float:
     if values.size < 2:
         raise Nc2WebError("coordinate vector must contain at least 2 samples to infer spacing")
@@ -170,6 +182,7 @@ def convert_netcdf_to_web(
 
     src = Path(source)
     out = Path(output_dir)
+    _reject_native_triangular_artifact(src)
     out.mkdir(parents=True, exist_ok=True)
     target = _normalize_epsg(target_epsg) or TARGET_WEB_EPSG
     if target != TARGET_WEB_EPSG:
@@ -346,6 +359,7 @@ def convert_netcdf_to_step_json(
 
     src = Path(source)
     out = Path(output_dir)
+    _reject_native_triangular_artifact(src)
     out.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
     with _open_dataset(src) as ds:
@@ -486,6 +500,7 @@ def parse_netcdf_for_web(source: str | Path, output_dir: str | Path) -> dict[str
     """Run both web parsers into sibling folders under output_dir."""
 
     root = Path(output_dir)
+    _reject_native_triangular_artifact(Path(source))
     root.mkdir(parents=True, exist_ok=True)
     web = convert_netcdf_to_web(source, root / "nc2web")
     steps = convert_netcdf_to_step_json(source, root / "stepjson")

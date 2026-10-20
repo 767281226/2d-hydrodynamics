@@ -13,7 +13,6 @@ import json
 import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
-import shutil
 import stat
 import tempfile
 from typing import Any, Literal, Mapping, Sequence
@@ -25,6 +24,7 @@ from .config import Number, Text
 from .triangular_business import terrain_fingerprint, topology_fingerprint
 from .triangular_solver_contract import TriangularRunCapability, TriangularSolverRunConfig, validate_triangular_run_request
 from .triangular_solver_netcdf import TriangularResultContract, read_triangular_result
+from .security_exclusion import security_evidence_sha256
 
 
 class NativeTriangleSHPError(ValueError):
@@ -144,6 +144,10 @@ class NativeTriangleSHPManifest(_StrictModel):
     native_face_count: StrictInt = Field(ge=1)
     feature_count: StrictInt = Field(ge=0)
     native_face_id_sha256: Text
+    security_exclusion_sha256: Text | None = None
+    security_active_face_id_sha256: Text | None = None
+    security_active_domain_area_m2: Number | None = Field(default=None, ge=0.0)
+    security_excluded_area_m2: Number | None = Field(default=None, ge=0.0)
     exported_face_id_sha256: Text
     run_config_sha256: Text
     business_package_sha256: Text
@@ -169,9 +173,11 @@ class NativeTriangleSHPManifest(_StrictModel):
 
     @field_validator("topology_fingerprint", "terrain_fingerprint", "scope_hash", "native_face_id_sha256",
                      "input_graph_sha256", "exported_face_id_sha256", "run_config_sha256", "business_package_sha256", "mesh_sha256",
-                     "native_result_sha256", "request_sha256")
+                     "native_result_sha256", "request_sha256", "security_exclusion_sha256", "security_active_face_id_sha256")
     @classmethod
-    def digest_fields_are_sha256(cls, value: str) -> str:
+    def digest_fields_are_sha256(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
             raise ValueError("identity digests must be lowercase SHA-256 values")
         return value
@@ -185,6 +191,16 @@ class NativeTriangleSHPManifest(_StrictModel):
             raise ValueError("selected_frame_indices must be unique")
         if any(index >= len(self.frame_times_s) for index in self.selected_frame_indices):
             raise ValueError("selected_frame_indices must lie on the native time axis")
+        security_fields = (
+            self.security_exclusion_sha256, self.security_active_face_id_sha256,
+            self.security_active_domain_area_m2, self.security_excluded_area_m2,
+        )
+        if all(value is None for value in security_fields):
+            pass
+        elif any(value is None for value in security_fields):
+            raise ValueError("security manifest identity, active face set and area values must appear together")
+        elif self.security_active_face_id_sha256 != self.native_face_id_sha256:
+            raise ValueError("security active face_id digest must match the full native P4 face set")
         return self
 
 
@@ -442,9 +458,17 @@ def _selected_frames(context: _SHPContext) -> tuple[tuple[int, ...], dict[str, A
 
 
 def _signed_polygon_area(points: Sequence[tuple[float, float]]) -> float:
-    return 0.5 * math.fsum(points[index][0] * points[(index + 1) % len(points)][1]
-                           - points[(index + 1) % len(points)][0] * points[index][1]
-                           for index in range(len(points)))
+    if len(points) < 3:
+        return 0.0
+    # Translate to a local origin before shoelace products. Absolute projected
+    # coordinates can be millions of metres while a valid face is only metres
+    # wide; subtracting the large x*y products loses the face area to rounding.
+    origin_x, origin_y = points[0]
+    return 0.5 * math.fsum(
+        (points[index][0] - origin_x) * (points[(index + 1) % len(points)][1] - origin_y)
+        - (points[(index + 1) % len(points)][0] - origin_x) * (points[index][1] - origin_y)
+        for index in range(len(points))
+    )
 
 
 def _dbf_number(value: float, name: str) -> float:
@@ -838,12 +862,15 @@ def _manifest_base(context: _SHPContext, built: Mapping[str, Any]) -> dict[str, 
     result = context.result
     mesh = context.capability.business.mesh
     terrain = context.capability.business.terrain
+    security = result.security_exclusion
+    security_digest = None if security is None else security_evidence_sha256(security)
     input_graph_sha = _canonical_sha256({
         "run_config_sha256": context.source_hashes["run_config"],
         "business_package_sha256": context.source_hashes["business_package"],
         "mesh_sha256": context.source_hashes["mesh"],
         "topology_fingerprint": topology_fingerprint(mesh),
         "terrain_fingerprint": terrain_fingerprint(mesh, terrain),
+        "security_exclusion_sha256": security_digest,
         "case_id": result.case_id,
         "engine_mode": "triangular_closed_experimental",
     })
@@ -871,6 +898,10 @@ def _manifest_base(context: _SHPContext, built: Mapping[str, Any]) -> dict[str, 
         "selected_frame_indices": list(built["selector_indices"]),
         "native_face_count": len(result.face_id), "feature_count": len(built["features"]),
         "native_face_id_sha256": built["native_face_id_sha256"],
+        "security_exclusion_sha256": security_digest,
+        "security_active_face_id_sha256": None if security is None else security.active_face_id_sha256,
+        "security_active_domain_area_m2": None if security is None else security.active_domain_area_m2,
+        "security_excluded_area_m2": None if security is None else security.security_inside_area_m2,
         "exported_face_id_sha256": built["exported_face_id_sha256"],
         "run_config_sha256": context.source_hashes["run_config"],
         "business_package_sha256": context.source_hashes["business_package"],
@@ -1019,7 +1050,8 @@ def validate_native_triangle_shp_package(
         actual_crs = CRS.from_wkt(actual["faces.prj"].read_text(encoding="utf-8"))
     except Exception as exc:
         raise NativeTriangleSHPError(f"faces.prj is missing or unreadable: {exc}") from exc
-    if not actual_crs.equals(built["target_crs"], ignore_axis_order=True):
+    expected_serialized_crs = CRS.from_wkt(built["target_wkt"])
+    if not actual_crs.equals(expected_serialized_crs, ignore_axis_order=True):
         raise NativeTriangleSHPError("faces.prj CRS differs from requested native/EPSG:4490 CRS")
     _validate_layer(directory, context, built)
     _assert_sources_unchanged(context)
@@ -1068,17 +1100,44 @@ def export_native_triangle_shp(request_path: str | Path) -> NativeTriangleSHPVal
                 raise NativeTriangleSHPError(
                     f"SHP export failed: {exc}; rollback preserved concurrent/replaced content: {'; '.join(rollback)}"
                 ) from exc
-        elif stage.exists() and not stage.is_symlink():
-            shutil.rmtree(stage, ignore_errors=True)
-        elif not stage.exists():
+            raise NativeTriangleSHPError(
+                f"SHP export failed: {exc}; the owned success marker was safely retired from {destination}"
+            ) from exc
+        elif stage.exists() or stage.is_symlink():
+            if stage.is_symlink() or _is_reparse_component(stage):
+                location = f"failed staging path is now a symlink/reparse point; no cleanup was attempted: {stage}"
+            elif not _parent_chain_matches(parent_chain):
+                location = f"failed staging parent chain changed; no cleanup was attempted and the stage was preserved at {stage}"
+            else:
+                try:
+                    current_stage_identity = _file_identity(stage, directory=True)
+                except NativeTriangleSHPError as identity_error:
+                    location = f"failed staging path could not be safely identified and was preserved at {stage}: {identity_error}"
+                else:
+                    if current_stage_identity == stage_identity:
+                        marker_notes: list[str] = []
+                        if manifest_identity is not None:
+                            marker_notes = _retire_failed_manifest(
+                                stage, manifest_bytes, stage_identity, manifest_identity, parent_chain,
+                            )
+                        if marker_notes:
+                            location = (
+                                f"failed staging directory was preserved at {stage}; "
+                                f"rollback preserved concurrent marker/content: {'; '.join(marker_notes)}"
+                            )
+                        elif manifest_identity is not None:
+                            location = f"failed staging directory was preserved at {stage}; its owned success marker was safely retired"
+                        else:
+                            location = f"failed staging directory was preserved for inspection at {stage}"
+                    else:
+                        location = f"staging path now names a replaced directory; no cleanup was attempted and its contents were preserved at {stage}"
+            raise NativeTriangleSHPError(f"SHP export failed: {exc}; {location}") from exc
+        else:
             if destination.exists():
                 location = f"published output root with an unowned/replaced identity remains at {destination}"
             else:
                 location = f"published output root disappeared or moved from {destination}; its current location is unverified"
             raise NativeTriangleSHPError(f"SHP export failed: {exc}; {location}") from exc
-        if isinstance(exc, NativeTriangleSHPError):
-            raise
-        raise NativeTriangleSHPError(f"native triangle SHP export failed: {exc}") from exc
 
 
 def package_schema() -> dict[str, Any]:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path, PureWindowsPath
@@ -17,6 +18,21 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StrictBool, 
 import yaml
 
 from .dem_contract import DEMDataset, DEMMetadata, GeoTIFFDEMReader
+from .security_exclusion import (
+    SecurityExclusionError,
+    SecurityExclusionEvidence,
+    SecurityExclusionInput,
+    assess_security_domain,
+    build_security_evidence,
+    check_mesh_against_security,
+    domain_from_gmsh_config,
+    gmsh_config_for_active_domain,
+    load_domain_geojson,
+    load_security_area_geometry,
+    read_security_exclusion_evidence,
+    revalidate_security_exclusion_evidence,
+    security_evidence_sha256,
+)
 from .triangular_mesh import FaceTerrainField, TriangularMesh, TriangularMeshError
 
 
@@ -123,6 +139,7 @@ class MeshPreparationConfig(_StrictModel):
     coordinate_system: str = Field(min_length=1, description="Projected CRS identifier; coordinates use metres")
     mesh: MeshSourceConfig = Field(discriminator="type")
     terrain: TerrainSourceConfig
+    security_exclusion: SecurityExclusionInput | None = Field(default=None, description="Optional explicit excluded-area closed-wall constraint; null keeps generic P2 preparation unchanged")
     output_file: str = Field(min_length=1, description="UGRID NetCDF preparation artifact path")
     minimum_face_quality: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum accepted normalized triangle quality, unitless")
     maximum_faces: StrictInt = Field(default=500_000, ge=1, le=10_000_000, description="Maximum imported/generated face count")
@@ -161,6 +178,11 @@ class MeshPreparationConfig(_StrictModel):
 
     @model_validator(mode="after")
     def validate_geometry_scale(self) -> "MeshPreparationConfig":
+        if self.security_exclusion is not None and self.security_exclusion.enabled:
+            if isinstance(self.mesh, MeshImportConfig) and self.security_exclusion.domain_geometry_file is None:
+                raise ValueError("an imported mesh with security exclusion requires original-domain geometry D and its explicit CRS")
+            if isinstance(self.mesh, GmshMeshConfig) and self.security_exclusion.domain_geometry_file is not None:
+                raise ValueError("Gmsh security exclusion derives D from mesh.outer_boundary/holes; domain_geometry_file is reserved for imported meshes")
         if isinstance(self.mesh, GmshMeshConfig):
             if self.mesh.minimum_size_m <= self.geometry_tolerance_m:
                 raise ValueError("mesh.minimum_size_m must be greater than geometry_tolerance_m")
@@ -176,6 +198,7 @@ class MeshPreparationResult:
     artifact_path: Path
     quality_report: Mapping[str, Any]
     preparation_only: bool = True
+    security_exclusion: SecurityExclusionEvidence | None = None
 
 
 def load_mesh_preparation_config(path: str | Path) -> MeshPreparationConfig:
@@ -545,7 +568,7 @@ def _load_terrain(
     return dataset
 
 
-def _load_mesh(config: MeshPreparationConfig, base_dir: Path) -> TriangularMesh:
+def _load_mesh(config: MeshPreparationConfig, base_dir: Path, *, mesh_override: GmshMeshConfig | None = None) -> TriangularMesh:
     if isinstance(config.mesh, MeshImportConfig):
         return load_mesh_json(
             (base_dir / config.mesh.file).resolve(), coordinate_system=config.coordinate_system,
@@ -553,8 +576,9 @@ def _load_mesh(config: MeshPreparationConfig, base_dir: Path) -> TriangularMesh:
             minimum_face_area_m2=config.minimum_face_area_m2,
         )
     from .mesh_generation import generate_gmsh_mesh
+    source = mesh_override if mesh_override is not None else config.mesh
     return generate_gmsh_mesh(
-        config.mesh, coordinate_system=config.coordinate_system,
+        source, coordinate_system=config.coordinate_system,
         geometry_tolerance_m=config.geometry_tolerance_m,
         minimum_face_area_m2=config.minimum_face_area_m2,
     )
@@ -564,7 +588,51 @@ def prepare_mesh(config_path: str | Path) -> MeshPreparationResult:
     """Run the standalone P0-P2 mesh and terrain preparation workflow."""
     source = Path(config_path).resolve()
     config = load_mesh_preparation_config(source)
-    mesh = _load_mesh(config, source.parent)
+    security_evidence = None
+    security_assessment = None
+    security = config.security_exclusion
+    mesh_override = None
+    domain_source_path = source
+    domain_source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    domain_source_kind = "P2_GMSH_CONFIG"
+    domain_source_crs = config.coordinate_system
+    if security is not None and security.enabled:
+        geometry = load_security_area_geometry(security, source, config.coordinate_system)
+        if isinstance(config.mesh, GmshMeshConfig):
+            domain = domain_from_gmsh_config(config.mesh)
+            security_assessment = assess_security_domain(domain, geometry)
+            mesh_override = gmsh_config_for_active_domain(
+                config.mesh, security_assessment, tolerance_m=config.geometry_tolerance_m,
+            )
+        else:
+            domain_path, domain_crs = config.security_exclusion.domain_geometry_file, config.security_exclusion.domain_crs
+            if domain_path is None or domain_crs is None:
+                raise MeshPreparationError("an imported mesh with security exclusion requires original-domain GeoJSON D and explicit domain_crs")
+            domain, domain_source_path, domain_source_sha256 = load_domain_geojson(
+                (source.parent / domain_path).resolve(), domain_crs, config.coordinate_system,
+            )
+            domain_source_kind = "DOMAIN_GEOJSON"
+            domain_source_crs = domain_crs
+            security_assessment = assess_security_domain(domain, geometry)
+    elif config.security_exclusion is not None and not config.security_exclusion.enabled:
+        security = None
+    mesh = _load_mesh(config, source.parent, mesh_override=mesh_override)
+    if security is not None and security.enabled:
+        try:
+            checked = check_mesh_against_security(
+                mesh, security_assessment, tolerance_m=config.geometry_tolerance_m,
+            )
+        except SecurityExclusionError as exc:
+            raise MeshPreparationError(str(exc)) from exc
+        mesh = checked.mesh
+        try:
+            security_evidence = build_security_evidence(
+                load_security_area_geometry(security, source, config.coordinate_system), security_assessment, checked,
+                domain_source_kind=domain_source_kind, domain_source_path=domain_source_path,
+                domain_source_sha256=domain_source_sha256, domain_source_crs=domain_source_crs,
+            )
+        except SecurityExclusionError as exc:
+            raise MeshPreparationError(str(exc)) from exc
     if mesh.n_face > config.maximum_faces:
         raise MeshPreparationError(f"mesh face count {mesh.n_face} exceeds maximum_faces={config.maximum_faces}")
     report = mesh.quality_report(minimum_quality=config.minimum_face_quality)
@@ -587,10 +655,26 @@ def prepare_mesh(config_path: str | Path) -> MeshPreparationResult:
     if isinstance(config.mesh, MeshImportConfig):
         protected_inputs.add((source.parent / config.mesh.file).resolve())
     protected_inputs.add((source.parent / config.terrain.file).resolve())
+    if config.security_exclusion is not None and config.security_exclusion.enabled:
+        security_source = (source.parent / config.security_exclusion.source_file).resolve()
+        protected_inputs.add(security_source)
+        if security_source.suffix.lower() == ".shp":
+            protected_inputs.update(
+                security_source.with_suffix(suffix).resolve()
+                for suffix in (".shx", ".prj", ".dbf")
+                if security_source.with_suffix(suffix).exists()
+            )
+        if config.security_exclusion.domain_geometry_file is not None:
+            protected_inputs.add((source.parent / config.security_exclusion.domain_geometry_file).resolve())
     if output in protected_inputs:
         raise MeshPreparationError("output_file must not refer to the configuration, mesh input, or DEM input file")
-    write_ugrid_preparation(output, mesh, terrain, minimum_quality_threshold=config.minimum_face_quality)
-    return MeshPreparationResult(mesh, terrain, output, report)
+    write_ugrid_preparation(output, mesh, terrain, minimum_quality_threshold=config.minimum_face_quality,
+                            security_exclusion=security_evidence)
+    return MeshPreparationResult(
+        mesh, terrain, output, report,
+        preparation_only=True,
+        security_exclusion=security_evidence,
+    )
 
 
 def write_ugrid_preparation(
@@ -599,10 +683,16 @@ def write_ugrid_preparation(
     terrain: FaceTerrainField,
     *,
     minimum_quality_threshold: float = 0.0,
+    security_exclusion: SecurityExclusionEvidence | None = None,
 ) -> Path:
     """Write a UGRID mesh and static face terrain field, tagged as preparation."""
     _validate_projected_metric_crs(mesh.coordinate_system)
     terrain.validate_for(mesh)
+    if security_exclusion is not None:
+        try:
+            revalidate_security_exclusion_evidence(security_exclusion, mesh)
+        except SecurityExclusionError as exc:
+            raise MeshPreparationError(f"security exclusion does not match the P2 mesh before write: {exc}") from exc
     if isinstance(minimum_quality_threshold, bool) or not isinstance(minimum_quality_threshold, (int, float)) or not math.isfinite(minimum_quality_threshold) or not 0.0 <= minimum_quality_threshold <= 1.0:
         raise MeshPreparationError("minimum_quality_threshold must be between 0 and 1")
     try:
@@ -636,6 +726,12 @@ def write_ugrid_preparation(
             root.vertical_datum = terrain.vertical_datum or ""
             root.vertical_datum_source = terrain.vertical_datum_source or ""
             root.source_vertical_datum = terrain.source_vertical_datum or ""
+            if security_exclusion is not None:
+                root.security_exclusion_json = json.dumps(
+                    security_exclusion.model_dump(mode="json"), ensure_ascii=False,
+                    sort_keys=True, separators=(",", ":"), allow_nan=False,
+                )
+                root.security_exclusion_sha256 = security_evidence_sha256(security_exclusion)
             root.boundary_groups_json = json.dumps(edge_boundary, separators=(",", ":"), sort_keys=True)
             root.constraint_groups_json = json.dumps(edge_constraint, separators=(",", ":"), sort_keys=True)
             root.createDimension("node", mesh.n_node)
@@ -739,6 +835,14 @@ def write_ugrid_preparation(
             raise
         raise MeshPreparationError(f"Could not write UGRID preparation artifact '{target}': {exc}") from exc
     return target
+
+
+def read_ugrid_security_exclusion(path: str | Path) -> SecurityExclusionEvidence | None:
+    """Read and authenticate optional security evidence embedded in a P2 UGRID file."""
+    try:
+        return read_security_exclusion_evidence(path)
+    except SecurityExclusionError as exc:
+        raise MeshPreparationError(f"UGRID security-exclusion evidence is invalid: {exc}") from exc
 
 
 def read_ugrid_preparation(path: str | Path) -> tuple[TriangularMesh, FaceTerrainField]:
@@ -946,6 +1050,9 @@ def read_ugrid_preparation(path: str | Path) -> tuple[TriangularMesh, FaceTerrai
                 source_vertical_unit, source_vertical_datum,
             )
             terrain.validate_for(mesh)
+            security_evidence = read_ugrid_security_exclusion(source)
+            if security_evidence is not None:
+                revalidate_security_exclusion_evidence(security_evidence, mesh)
             return mesh, terrain
     except MeshPreparationError:
         raise
@@ -961,7 +1068,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = prepare_mesh(args.config)
     except (MeshPreparationError, TriangularMeshError) as exc:
         parser.error(str(exc))
-    print(json.dumps({"preparation_only": True, "artifact": str(result.artifact_path), "quality_report": result.quality_report}, indent=2))
+    payload: dict[str, Any] = {
+        "preparation_only": True, "artifact": str(result.artifact_path), "quality_report": result.quality_report,
+        "security_exclusion": None if result.security_exclusion is None else {
+            "enabled": True,
+            "source_geometry_sha256": result.security_exclusion.source_union_geometry_sha256,
+            "domain_geometry_sha256": result.security_exclusion.domain_geometry_sha256,
+            "original_domain_area_m2": result.security_exclusion.original_domain_area_m2,
+            "security_union_area_m2": result.security_exclusion.security_union_area_m2,
+            "security_inside_area_m2": result.security_exclusion.security_inside_area_m2,
+            "security_outside_area_m2": result.security_exclusion.security_outside_area_m2,
+            "active_domain_area_m2": result.security_exclusion.active_domain_area_m2,
+            "active_mesh_area_m2": result.security_exclusion.active_mesh_area_m2,
+            "coverage_residual_m2": result.security_exclusion.coverage_residual_m2,
+            "active_face_count": result.security_exclusion.mesh_face_count,
+            "security_boundary_edge_count": result.security_exclusion.security_boundary_edge_count,
+        },
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
     return 0
 
 

@@ -1,0 +1,23 @@
+coordinate_system: EPSG:32650
+mesh:
+  type: json
+  file: mesh.json
+terrain:
+  type: json
+  file: dem.json
+  minimum_valid_coverage: 0.0
+  vertical_datum: SYNTHETIC_LOCAL
+security_exclusion:
+  format: security-area-exclusion-v1
+  schema_version: '1.0'
+  enabled: true
+  source_file: security_area.geojson
+  source_crs: EPSG:32650
+  constraint: excluded_closed_wall
+  domain_geometry_file: domain.geojson
+  domain_crs: EPSG:32650
+output_file: prepared_mesh.nc
+minimum_face_quality: 0.0
+geometry_tolerance_m: 1.0e-8
+minimum_face_area_m2: 1.0e-12
+maximum_faces: 64

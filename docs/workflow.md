@@ -119,3 +119,7 @@ python examples/prepare_workflow_grid.py --source-nc work/results/dongdian_qingb
 ## SHP policy update
 
 Structured hourly runs retain NC/web outputs and explicitly report `shp.status=not_applicable`, `reason=native_triangular_result_required`. They produce no SHP; a successful run remains discoverable by `--show-latest`. Historical rectangle bundles are labelled legacy. Use `hydrodynamics-triangle-shp` with an existing strict native P4 result for SHP. See [native triangle SHP](native_triangle_shp.md). The report contract is version 1.1; its optional database stage remains skipped in this distribution.
+
+## 安全区输入
+
+`security_exclusion`采用[版本化安全区合同](security_exclusion.md)。项目case_001默认启用实际map/securityArea来源。当前structured/hourly不能表达精确排除，启用时在数值执行前报告`UNSUPPORTED_STRUCTURED_SECURITY_EXCLUSION`；请使用支持排除证据的原生三角准备/运行链路。未配置安全区的通用structured仍兼容，但不生成SHP。

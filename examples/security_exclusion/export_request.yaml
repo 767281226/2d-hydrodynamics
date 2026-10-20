@@ -1,0 +1,13 @@
+format: native-triangle-result-shp-export-request-v1
+schema_version: '1.0'
+run_config_file: run.yaml
+output_directory: result_shp
+selector:
+  aggregation: FRAME
+  frame_index: 2
+  time_s: 0.1
+  window_start_s: null
+  window_end_s: null
+scope_selection: FULL_DOMAIN
+wet_depth_threshold_m: 0.0
+target_crs: NATIVE

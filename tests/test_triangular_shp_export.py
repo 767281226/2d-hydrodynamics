@@ -304,6 +304,78 @@ def test_post_publish_replaced_root_is_preserved_and_reported(tmp_path, monkeypa
     assert (detached / "manifest.json").read_bytes() == replaced_bytes["manifest"]
 
 
+def test_prepublication_failure_does_not_delete_a_replaced_stage_root(tmp_path, monkeypatch):
+    import hydrodynamics.triangular_shp_export as shp_module
+
+    case = _build_native_case(tmp_path / "stage-root-race")
+    moved = case["root"] / "moved-original-stage"
+    original_writer = shp_module._write_layer
+    observed: dict[str, Path] = {}
+
+    def write_then_replace_stage(stage, context, built):
+        original_writer(stage, context, built)
+        stage = Path(stage)
+        shp_module.os.rename(stage, moved)
+        stage.mkdir()
+        (stage / "independent_foreign_file.txt").write_bytes(b"preserve this unrelated concurrent stage root")
+        observed["stage"] = stage
+        raise NativeTriangleSHPError("test write failure after concurrent stage-root replacement")
+
+    monkeypatch.setattr(shp_module, "_write_layer", write_then_replace_stage)
+    with pytest.raises(NativeTriangleSHPError, match="replaced directory"):
+        export_native_triangle_shp(case["request"])
+
+    assert not case["package"].exists()
+    assert (moved / "faces.shp").is_file()
+    assert (observed["stage"] / "independent_foreign_file.txt").read_bytes() == b"preserve this unrelated concurrent stage root"
+
+
+def test_owned_failed_stage_retires_marker_but_preserves_concurrent_file(tmp_path, monkeypatch):
+    import hydrodynamics.triangular_shp_export as shp_module
+
+    case = _build_native_case(tmp_path / "stage-owned-file-race")
+    observed: dict[str, Path] = {}
+
+    def add_foreign_file_then_fail(request_path, package_directory=None):
+        stage = Path(package_directory)
+        observed["stage"] = stage
+        (stage / "concurrent.keep").write_bytes(b"preserve this concurrent file")
+        raise NativeTriangleSHPError("synthetic stage validation failure")
+
+    monkeypatch.setattr(shp_module, "validate_native_triangle_shp_package", add_foreign_file_then_fail)
+    with pytest.raises(NativeTriangleSHPError, match="success marker was safely retired"):
+        export_native_triangle_shp(case["request"])
+
+    stage = observed["stage"]
+    assert not case["package"].exists()
+    assert not (stage / "manifest.json").exists()
+    assert (stage / "concurrent.keep").read_bytes() == b"preserve this concurrent file"
+    assert (stage / "faces.shp").is_file()
+
+
+def test_request_drift_during_stage_validation_leaves_no_success_marker(tmp_path, monkeypatch):
+    import hydrodynamics.triangular_shp_export as shp_module
+
+    case = _build_native_case(tmp_path / "stage-request-drift")
+    original_validator = shp_module.validate_native_triangle_shp_package
+    observed: dict[str, Path] = {}
+
+    def drift_request_then_validate(request_path, package_directory=None):
+        stage = Path(package_directory)
+        observed["stage"] = stage
+        case["request"].write_bytes(case["request"].read_bytes() + b"\n# changed during stage validation\n")
+        return original_validator(request_path, package_directory)
+
+    monkeypatch.setattr(shp_module, "validate_native_triangle_shp_package", drift_request_then_validate)
+    with pytest.raises(NativeTriangleSHPError):
+        export_native_triangle_shp(case["request"])
+
+    stage = observed["stage"]
+    assert not case["package"].exists()
+    assert stage.is_dir()
+    assert not (stage / "manifest.json").exists()
+
+
 def test_manifest_schema_and_example_request_are_packaged_in_wheel(tmp_path):
     from setuptools.build_meta import build_wheel
     import hydrodynamics.triangular_shp_export as shp_module

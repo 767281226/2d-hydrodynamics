@@ -532,6 +532,10 @@ def _make_result_data(
         "terrain_fingerprint": terrain_fingerprint(mesh, business.terrain),
         "mesh_sha256": stats["mesh_sha256"],
         "business_package_sha256": stats["business_sha256"],
+        "security_exclusion": (
+            None if business.security_exclusion is None
+            else business.security_exclusion.model_dump(mode="json")
+        ),
         "gravity_m_s2": config.gravity_m_s2,
         "cfl_number": config.cfl_number,
         "minimum_time_step_s": config.minimum_time_step_s,
@@ -1019,6 +1023,7 @@ def run_triangular_solver(run_config_path: str | Path) -> dict[str, Any]:
         "production_approved": False,
         "case_id": result.case_id,
         "result_file": str(output_path),
+        "security_exclusion": capability.report["security_exclusion"],
         "accepted_step_count": result.accepted_step_count,
         "accepted_cfl_step_count": result.accepted_cfl_step_count,
         "rejected_step_count": result.rejected_step_count,
