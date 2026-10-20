@@ -25,6 +25,7 @@ shp = ["pyshp>=2.3,<3.0", "pyproj>=3.6,<4.0", "netCDF4>=1.6,<2.0"]
 gmsh = ["gmsh>=4.11,<5.0"]
 
 [project.scripts]
+hydrodynamics-native-batch = "hydrodynamics.native_batch_launcher:main"
 hydrodynamics-triangular-run = "hydrodynamics.triangular_solver:main"
 hydrodynamics-rehearsal-package = "hydrodynamics.rehearsal_package:main"
 hydrodynamics-run = "hydrodynamics.workflow:main"

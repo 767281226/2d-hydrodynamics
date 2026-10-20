@@ -1,26 +1,39 @@
 @echo off
 setlocal EnableExtensions
 chcp 65001 >nul
-cd /d "%~dp0"
-set "PYTHONPATH=%CD%"
+pushd "%~dp0" >nul
+if errorlevel 1 goto pushd_failed
 
-where python >nul 2>nul
-if errorlevel 1 (
-    echo [错误] 未找到 Python 3.11+。
-    exit /b 1
-)
-python -c "import sys; assert sys.version_info >= (3,11); import numpy, netCDF4, pyproj, pydantic, yaml" 2>nul
-if errorlevel 1 (
-    echo [错误] 请先安装依赖: python -m pip install -e ".[workflow]"
-    exit /b 1
-)
+set "PROJECT_ROOT=%CD%"
+set "PYTHON=%PROJECT_ROOT%\.venv\Scripts\python.exe"
+if not exist "%PYTHON%" goto missing_venv
 
-echo 开始 structured 流程: NC、调闸记录、nc2web、stepjson、viewer、结果检查、配置的审计入库
-echo structured 结果不生成矩形 SHP；原生三角 P4 结果请使用 hydrodynamics-triangle-shp。
-python -m hydrodynamics --workflow "%~dp0examples/case_001/workflow.yaml" %*
-if errorlevel 1 (
-    echo [失败] 流程未全部完成，请查看上方错误及 run_report.json。
-    exit /b 1
-)
-echo [完成] 所有配置的任务及输出检查均已通过。
-exit /b 0
+"%PYTHON%" -X utf8 -c "import sys; assert sys.version_info >= (3,11); import pydantic, yaml, numpy, netCDF4, pyproj, shapely, shapefile" >nul 2>nul
+if errorlevel 1 goto missing_dependencies
+
+echo [native-batch] Using project virtual environment: %PYTHON%
+echo [native-batch] Default mode is SYNTHETIC_ONLY; --engineering is preflight-only.
+"%PYTHON%" -X utf8 -m hydrodynamics.native_batch_launcher %*
+set "EXIT_CODE=%ERRORLEVEL%"
+goto finish
+
+:missing_venv
+echo [error] Project virtual environment not found: %PYTHON%
+echo Create it with: python -m venv .venv
+set "EXIT_CODE=2"
+goto finish
+
+:missing_dependencies
+echo [error] Project virtual environment is missing native-triangle dependencies.
+echo Install with: "%PYTHON%" -m pip install -e ".[triangular,shp]"
+echo This batch file does not download or install packages.
+set "EXIT_CODE=2"
+goto finish
+
+:pushd_failed
+echo [error] Could not enter the directory containing this batch file.
+endlocal & exit /b 1
+
+:finish
+popd >nul
+endlocal & exit /b %EXIT_CODE%

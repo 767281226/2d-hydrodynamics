@@ -728,11 +728,12 @@ def read_security_exclusion_evidence(path: str | Path) -> SecurityExclusionEvide
     """Read the optional P2 UGRID security evidence attribute without reading DEM pixels."""
     try:
         import netCDF4
+        from .netcdf_path_io import open_netcdf_dataset
     except ImportError as exc:
         raise SecurityExclusionError("reading P2 security evidence requires netCDF4") from exc
     source = Path(path)
     try:
-        with netCDF4.Dataset(source, "r") as dataset:
+        with open_netcdf_dataset(netCDF4, source, "r") as dataset:
             raw = getattr(dataset, "security_exclusion_json", None)
             digest = getattr(dataset, "security_exclusion_sha256", None)
     except OSError as exc:

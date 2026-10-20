@@ -1,0 +1,9 @@
+format: native-batch-launch-config-v1
+schema_version: '1.0'
+mode: synthetic_demo
+data_origin: SYNTHETIC_ONLY
+case_id: security-exclusion-synthetic-dynamic-v1
+source_case_directory: ../security_exclusion
+maximum_face_count: 64
+maximum_saved_frame_count: 8
+maximum_duration_s: 1.0

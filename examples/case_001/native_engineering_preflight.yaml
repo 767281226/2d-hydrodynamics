@@ -1,0 +1,52 @@
+format: native-engineering-preflight-v1
+schema_version: '1.0'
+mode: engineering_preflight
+case_id: case_001
+data_origin: ENGINEERING_PRECHECK
+original_domain_geometry_file: null
+original_domain_crs: null
+mesh_coordinate_system: null
+dem_source_file: null
+dem_source_crs: null
+dem_vertical_unit: null
+dem_vertical_datum: null
+dem_nodata_mask_file: null
+dem_coverage_evidence_file: null
+initial_condition:
+  source_file: null
+  quantity: null
+  unit: null
+  vertical_datum: null
+roughness:
+  source_file: null
+  source_unit: null
+  physical_unit: null
+  interpretation_policy: null
+  rationale: null
+rainfall:
+  source_file: null
+  input_unit: null
+  intervals_file: null
+boundary:
+  direction: inflow_and_outflow
+  inflow_file: null
+  outflow_file: null
+  group_mapping_file: null
+  provenance_file: null
+  time_origin: null
+  time_unit: s
+  discharge_unit: m3/s
+  vertical_datum: null
+native_preparation_config_file: null
+native_mesh_artifact_file: null
+p3_business_artifact_file: null
+native_run_config_file: null
+native_source_config_file: null
+native_capability_validation_file: null
+security_exclusion:
+  format: security-area-exclusion-v1
+  schema_version: '1.0'
+  enabled: true
+  source_file: ../../map/securityArea/dd_securityArea_shape.shp
+  source_crs: EPSG:4490
+  constraint: excluded_closed_wall

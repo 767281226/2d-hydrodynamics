@@ -93,6 +93,7 @@ def _write_file(
     validation_config_path: str | Path | None = None,
 ) -> None:
     netCDF4 = _netcdf4()
+    from .netcdf_path_io import open_netcdf_dataset
     capability = validate_triangular_run_request(run_config_path, allow_existing_result=True)
     validator = result_validator or validate_triangular_result_for_run
     result = validator(result, validation_config_path or run_config_path)
@@ -100,7 +101,7 @@ def _write_file(
     terrain = capability.business.terrain
     cfg = capability.config
     metadata = dict((metadata_builder or _metadata)(result))
-    with netCDF4.Dataset(path, "w", format="NETCDF4") as root:
+    with open_netcdf_dataset(netCDF4, path, "w", format="NETCDF4") as root:
         root.setncattr("format", _RESULT_FORMAT)
         root.setncattr("result_schema_version", _RESULT_VERSION)
         root.setncattr("product_type", _RESULT_PRODUCT)
@@ -272,6 +273,7 @@ def _read_result_contract(
     if enforce_configured_result_path and source != capability.result_path:
         raise TriangularResultNetCDFError("result path does not equal the run config's result_file")
     netCDF4 = _netcdf4()
+    from .netcdf_path_io import open_netcdf_dataset
     required = {
         "mesh2d", "crs", "node_x", "node_y", "face_nodes", "edge_nodes", "edge_faces", "face_edges",
         "face_id", "face_area", "edge_length", "face_x", "face_y", "bed_elevation", "time",
@@ -281,7 +283,7 @@ def _read_result_contract(
         "subminimum_alignment_step", "subminimum_alignment_cfl_limit",
     }
     try:
-        with netCDF4.Dataset(source, "r") as root:
+        with open_netcdf_dataset(netCDF4, source, "r") as root:
             root.set_auto_mask(True)
             for attr, expected in (("format", expected_format), ("result_schema_version", _RESULT_VERSION), ("product_type", expected_product_type)):
                 if getattr(root, attr, None) != expected:

@@ -698,6 +698,7 @@ def write_ugrid_preparation(
     try:
         import netCDF4
         import numpy as np
+        from .netcdf_path_io import open_netcdf_dataset
     except ImportError as exc:  # pragma: no cover - optional dependency environment
         raise MeshPreparationError("UGRID NetCDF output requires optional dependency 'netCDF4'; install the triangular extra (pip install '.[triangular]')") from exc
     target = Path(path)
@@ -708,7 +709,7 @@ def write_ugrid_preparation(
     for name, indices in mesh.constraint_groups.items():
         edge_constraint[name] = [mesh.edge_nodes[index] for index in indices]
     try:
-        with netCDF4.Dataset(target, "w", format="NETCDF4") as root:
+        with open_netcdf_dataset(netCDF4, target, "w", format="NETCDF4") as root:
             root.Conventions = "CF-1.10 UGRID-1.0"
             root.title = "Triangular mesh preparation artifact"
             root.product_type = "mesh_and_terrain_preparation"
@@ -849,11 +850,12 @@ def read_ugrid_preparation(path: str | Path) -> tuple[TriangularMesh, FaceTerrai
     """Read this module's UGRID preparation artifact and validate all arrays."""
     try:
         import netCDF4
+        from .netcdf_path_io import open_netcdf_dataset
     except ImportError as exc:  # pragma: no cover
         raise MeshPreparationError("UGRID NetCDF input requires optional dependency 'netCDF4'; install the triangular extra") from exc
     source = Path(path)
     try:
-        with netCDF4.Dataset(source, "r") as root:
+        with open_netcdf_dataset(netCDF4, source, "r") as root:
             if getattr(root, "product_type", None) != "mesh_and_terrain_preparation" or int(getattr(root, "preparation_only", 0)) != 1 or int(getattr(root, "simulation_result", 1)) != 0:
                 raise MeshPreparationError("NetCDF file is not a triangular mesh preparation artifact")
             if "time" in root.dimensions or "time" in root.variables:

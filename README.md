@@ -75,3 +75,8 @@ All new SHP features must be actual native calculation faces. The retained struc
 ## 原生源项三角 SHP v2
 
 `hydrodynamics-triangle-shp`支持独立v2请求，读取已完成的Manning、rainfall或组合源项原生结果，保留实际计算面、source身份/预算及安全区活动域。v1 none合同与默认schema保留。见[说明](docs/zh-CN/native_source_triangle_shp.md)、[English](docs/native_source_triangle_shp.md)与[合成案例](examples/security_exclusion/README.md)。导出器只读，不执行solver，结果仍为实验性离线GIS产物。
+
+
+## Native synthetic batch
+
+`run_qingbei_nc.bat` now defaults to the four-face `SYNTHETIC_ONLY` native Manning/rainfall/security example. Run it from any caller directory; outputs go to a new `work/results/<script_id>` directory. `--id`/`--script-id` and `--out-dir` are supported. `--engineering` only reports missing engineering inputs and unsupported open-boundary execution; it never starts an engineering solver. See [the launcher guide](docs/native_batch_launcher.md) and [中文说明](docs/zh-CN/native_batch_launcher.md). The script requires the project `.venv` with `.[triangular,shp]`; it does not install dependencies automatically.

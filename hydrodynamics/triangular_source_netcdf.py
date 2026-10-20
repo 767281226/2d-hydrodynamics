@@ -140,10 +140,11 @@ def read_triangular_source_result(
     if enforce_configured_result_path and source_path != capability.result_path:
         raise TriangularResultNetCDFError("source result path does not match configured result_file")
     netCDF4 = _netcdf4()
+    from .netcdf_path_io import open_netcdf_dataset
     expected_manning = capability.config.sources == "manning_and_rainfall"
     expected_variables = _RAINFALL_VARIABLES | (_MANNING_VARIABLES if expected_manning else frozenset())
     try:
-        with netCDF4.Dataset(source_path, "r") as root:
+        with open_netcdf_dataset(netCDF4, source_path, "r") as root:
             root.set_auto_mask(True)
             for name, expected in (
                 ("format", SOURCE_RESULT_FORMAT), ("result_schema_version", "1.0"),
@@ -256,6 +257,7 @@ def write_triangular_source_result_atomic(
     temporary = Path(temp_name)
     os.close(fd)
     netCDF4 = _netcdf4()
+    from .netcdf_path_io import open_netcdf_dataset
     try:
         _write_file(
             temporary,
@@ -265,7 +267,7 @@ def write_triangular_source_result_atomic(
             result_validator=lambda item, _base: validate_triangular_source_result_for_run(item, run_path),
             validation_config_path=run_path,
         )
-        with netCDF4.Dataset(temporary, "r+") as root:
+        with open_netcdf_dataset(netCDF4, temporary, "r+") as root:
             root.setncattr("format", SOURCE_RESULT_FORMAT)
             root.setncattr("product_type", SOURCE_RESULT_PRODUCT)
             root.setncattr("manning_enabled", np.int8(contract.manning_enabled))

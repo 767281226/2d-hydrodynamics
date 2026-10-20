@@ -1,0 +1,1076 @@
+{
+  "format": "native-batch-launcher-schema-set-v1",
+  "synthetic_launch_config_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "format": {
+        "const": "native-batch-launch-config-v1",
+        "title": "Format",
+        "type": "string"
+      },
+      "schema_version": {
+        "const": "1.0",
+        "title": "Schema Version",
+        "type": "string"
+      },
+      "mode": {
+        "const": "synthetic_demo",
+        "title": "Mode",
+        "type": "string"
+      },
+      "data_origin": {
+        "const": "SYNTHETIC_ONLY",
+        "title": "Data Origin",
+        "type": "string"
+      },
+      "case_id": {
+        "const": "security-exclusion-synthetic-dynamic-v1",
+        "title": "Case Id",
+        "type": "string"
+      },
+      "source_case_directory": {
+        "description": "Project-relative profile directory; this launcher currently accepts examples/security_exclusion",
+        "title": "Source Case Directory",
+        "type": "string"
+      },
+      "maximum_face_count": {
+        "default": 64,
+        "description": "Maximum active triangular faces, count",
+        "maximum": 64,
+        "minimum": 1,
+        "title": "Maximum Face Count",
+        "type": "integer"
+      },
+      "maximum_saved_frame_count": {
+        "default": 8,
+        "description": "Maximum native saved frames, count",
+        "maximum": 8,
+        "minimum": 2,
+        "title": "Maximum Saved Frame Count",
+        "type": "integer"
+      },
+      "maximum_duration_s": {
+        "default": 1.0,
+        "description": "Maximum synthetic run duration, seconds",
+        "exclusiveMinimum": 0.0,
+        "maximum": 1.0,
+        "title": "Maximum Duration S",
+        "type": "number"
+      }
+    },
+    "required": [
+      "format",
+      "schema_version",
+      "mode",
+      "data_origin",
+      "case_id",
+      "source_case_directory"
+    ],
+    "title": "NativeBatchLaunchConfig",
+    "type": "object"
+  },
+  "engineering_preflight_config_schema": {
+    "$defs": {
+      "NativeEngineeringBoundary": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "inflow",
+                  "outflow",
+                  "inflow_and_outflow"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Direction"
+          },
+          "inflow_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inflow File"
+          },
+          "outflow_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outflow File"
+          },
+          "group_mapping_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Group Mapping File"
+          },
+          "provenance_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Provenance File"
+          },
+          "time_origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time Origin"
+          },
+          "time_unit": {
+            "anyOf": [
+              {
+                "const": "s",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time Unit"
+          },
+          "discharge_unit": {
+            "anyOf": [
+              {
+                "const": "m3/s",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Discharge Unit"
+          },
+          "vertical_datum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vertical Datum"
+          }
+        },
+        "title": "NativeEngineeringBoundary",
+        "type": "object"
+      },
+      "NativeEngineeringInitialCondition": {
+        "additionalProperties": false,
+        "properties": {
+          "source_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source File"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "enum": [
+                  "depth",
+                  "level"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Quantity"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "const": "m",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Unit"
+          },
+          "vertical_datum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Vertical Datum"
+          }
+        },
+        "title": "NativeEngineeringInitialCondition",
+        "type": "object"
+      },
+      "NativeEngineeringRainfall": {
+        "additionalProperties": false,
+        "properties": {
+          "source_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source File"
+          },
+          "input_unit": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mm/h",
+                  "m/s"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Input Unit"
+          },
+          "intervals_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Intervals File"
+          }
+        },
+        "title": "NativeEngineeringRainfall",
+        "type": "object"
+      },
+      "NativeEngineeringRoughness": {
+        "additionalProperties": false,
+        "properties": {
+          "source_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source File"
+          },
+          "source_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Unit"
+          },
+          "physical_unit": {
+            "anyOf": [
+              {
+                "const": "s/m^(1/3)",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Physical Unit"
+          },
+          "interpretation_policy": {
+            "anyOf": [
+              {
+                "const": "legacy_unit1_as_si_manning",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Interpretation Policy"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rationale"
+          }
+        },
+        "title": "NativeEngineeringRoughness",
+        "type": "object"
+      },
+      "SecurityExclusionInput": {
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "const": "security-area-exclusion-v1",
+            "title": "Format",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "source_file": {
+            "description": "Relative path to the source Polygon/MultiPolygon SHP or GeoJSON; DBF attributes are not used",
+            "title": "Source File",
+            "type": "string"
+          },
+          "source_crs": {
+            "description": "Explicit source CRS; must agree with SHP PRJ when the source is a Shapefile",
+            "title": "Source Crs",
+            "type": "string"
+          },
+          "constraint": {
+            "const": "excluded_closed_wall",
+            "title": "Constraint",
+            "type": "string"
+          },
+          "domain_geometry_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Required for imported P2 meshes: source Polygon/MultiPolygon geometry D",
+            "title": "Domain Geometry File"
+          },
+          "domain_crs": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Explicit CRS of domain_geometry_file; no CRS is inferred",
+            "title": "Domain Crs"
+          }
+        },
+        "required": [
+          "format",
+          "schema_version",
+          "enabled",
+          "source_file",
+          "source_crs",
+          "constraint"
+        ],
+        "title": "SecurityExclusionInput",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "description": "Twenty explicit native-engineering evidence fields; this model never authorizes execution.",
+    "properties": {
+      "format": {
+        "const": "native-engineering-preflight-v1",
+        "title": "Format",
+        "type": "string"
+      },
+      "schema_version": {
+        "const": "1.0",
+        "title": "Schema Version",
+        "type": "string"
+      },
+      "mode": {
+        "const": "engineering_preflight",
+        "title": "Mode",
+        "type": "string"
+      },
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "data_origin": {
+        "const": "ENGINEERING_PRECHECK",
+        "title": "Data Origin",
+        "type": "string"
+      },
+      "original_domain_geometry_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Original Domain Geometry File"
+      },
+      "original_domain_crs": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Original Domain Crs"
+      },
+      "mesh_coordinate_system": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Mesh Coordinate System"
+      },
+      "dem_source_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Dem Source File"
+      },
+      "dem_source_crs": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Dem Source Crs"
+      },
+      "dem_vertical_unit": {
+        "anyOf": [
+          {
+            "const": "m",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Dem Vertical Unit"
+      },
+      "dem_vertical_datum": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Dem Vertical Datum"
+      },
+      "dem_nodata_mask_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Dem Nodata Mask File"
+      },
+      "dem_coverage_evidence_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Dem Coverage Evidence File"
+      },
+      "initial_condition": {
+        "$ref": "#/$defs/NativeEngineeringInitialCondition"
+      },
+      "roughness": {
+        "$ref": "#/$defs/NativeEngineeringRoughness"
+      },
+      "rainfall": {
+        "$ref": "#/$defs/NativeEngineeringRainfall"
+      },
+      "boundary": {
+        "$ref": "#/$defs/NativeEngineeringBoundary"
+      },
+      "native_preparation_config_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Native Preparation Config File"
+      },
+      "native_mesh_artifact_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Native Mesh Artifact File"
+      },
+      "p3_business_artifact_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "P3 Business Artifact File"
+      },
+      "native_run_config_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Native Run Config File"
+      },
+      "native_source_config_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Native Source Config File"
+      },
+      "native_capability_validation_file": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Native Capability Validation File"
+      },
+      "security_exclusion": {
+        "$ref": "#/$defs/SecurityExclusionInput"
+      }
+    },
+    "required": [
+      "format",
+      "schema_version",
+      "mode",
+      "case_id",
+      "data_origin",
+      "security_exclusion"
+    ],
+    "title": "NativeEngineeringPreflightConfig",
+    "type": "object"
+  },
+  "run_report_schema": {
+    "$defs": {
+      "NativeBatchBlocker": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_action": {
+            "title": "Next Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "field",
+          "message",
+          "next_action"
+        ],
+        "title": "NativeBatchBlocker",
+        "type": "object"
+      },
+      "NativeBatchCopiedInput": {
+        "additionalProperties": false,
+        "properties": {
+          "relative_path": {
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "byte_count": {
+            "minimum": 0,
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relative_path",
+          "byte_count",
+          "sha256"
+        ],
+        "title": "NativeBatchCopiedInput",
+        "type": "object"
+      },
+      "NativeBatchInputPathCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "content_read": {
+            "const": false,
+            "default": false,
+            "title": "Content Read",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "field",
+          "path",
+          "exists"
+        ],
+        "title": "NativeBatchInputPathCheck",
+        "type": "object"
+      },
+      "NativeBatchStageReport": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "script_id": {
+            "title": "Script Id",
+            "type": "string"
+          },
+          "data_origin": {
+            "enum": [
+              "SYNTHETIC_ONLY",
+              "ENGINEERING_PRECHECK"
+            ],
+            "title": "Data Origin",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "complete",
+              "failed",
+              "blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "command": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Command",
+            "type": "array"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "finished_at": {
+            "title": "Finished At",
+            "type": "string"
+          },
+          "elapsed_seconds": {
+            "minimum": 0.0,
+            "title": "Elapsed Seconds",
+            "type": "number"
+          },
+          "exit_code": {
+            "title": "Exit Code",
+            "type": "integer"
+          },
+          "stdout_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stdout File"
+          },
+          "stderr_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stderr File"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          }
+        },
+        "required": [
+          "name",
+          "script_id",
+          "data_origin",
+          "status",
+          "command",
+          "started_at",
+          "finished_at",
+          "elapsed_seconds",
+          "exit_code"
+        ],
+        "title": "NativeBatchStageReport",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "format": {
+        "const": "native-batch-run-report-v1",
+        "title": "Format",
+        "type": "string"
+      },
+      "schema_version": {
+        "const": "1.0",
+        "title": "Schema Version",
+        "type": "string"
+      },
+      "mode": {
+        "enum": [
+          "synthetic_demo",
+          "engineering_preflight"
+        ],
+        "title": "Mode",
+        "type": "string"
+      },
+      "data_origin": {
+        "enum": [
+          "SYNTHETIC_ONLY",
+          "ENGINEERING_PRECHECK"
+        ],
+        "title": "Data Origin",
+        "type": "string"
+      },
+      "engine_mode": {
+        "enum": [
+          "triangular_source_experimental",
+          "native_triangular_engineering_preflight"
+        ],
+        "title": "Engine Mode",
+        "type": "string"
+      },
+      "grid_topology": {
+        "const": "native_triangular_mesh",
+        "title": "Grid Topology",
+        "type": "string"
+      },
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "script_id": {
+        "title": "Script Id",
+        "type": "string"
+      },
+      "status": {
+        "enum": [
+          "running",
+          "complete",
+          "failed",
+          "blocked"
+        ],
+        "title": "Status",
+        "type": "string"
+      },
+      "preflight_only": {
+        "title": "Preflight Only",
+        "type": "boolean"
+      },
+      "execution_available": {
+        "title": "Execution Available",
+        "type": "boolean"
+      },
+      "started_at": {
+        "title": "Started At",
+        "type": "string"
+      },
+      "finished_at": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Finished At"
+      },
+      "elapsed_seconds": {
+        "anyOf": [
+          {
+            "ge": 0.0,
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Elapsed Seconds"
+      },
+      "project_root": {
+        "title": "Project Root",
+        "type": "string"
+      },
+      "output_directory": {
+        "title": "Output Directory",
+        "type": "string"
+      },
+      "report_file": {
+        "title": "Report File",
+        "type": "string"
+      },
+      "python_executable": {
+        "title": "Python Executable",
+        "type": "string"
+      },
+      "module_source": {
+        "title": "Module Source",
+        "type": "string"
+      },
+      "package_version": {
+        "title": "Package Version",
+        "type": "string"
+      },
+      "launch_config_file": {
+        "title": "Launch Config File",
+        "type": "string"
+      },
+      "copied_inputs": {
+        "items": {
+          "$ref": "#/$defs/NativeBatchCopiedInput"
+        },
+        "title": "Copied Inputs",
+        "type": "array"
+      },
+      "input_path_checks": {
+        "items": {
+          "$ref": "#/$defs/NativeBatchInputPathCheck"
+        },
+        "title": "Input Path Checks",
+        "type": "array"
+      },
+      "stages": {
+        "items": {
+          "$ref": "#/$defs/NativeBatchStageReport"
+        },
+        "title": "Stages",
+        "type": "array"
+      },
+      "blockers": {
+        "items": {
+          "$ref": "#/$defs/NativeBatchBlocker"
+        },
+        "title": "Blockers",
+        "type": "array"
+      },
+      "output_files": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Output Files",
+        "type": "array"
+      },
+      "failed_stage": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Failed Stage"
+      },
+      "error": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Error"
+      }
+    },
+    "required": [
+      "format",
+      "schema_version",
+      "mode",
+      "data_origin",
+      "engine_mode",
+      "grid_topology",
+      "case_id",
+      "script_id",
+      "status",
+      "preflight_only",
+      "execution_available",
+      "started_at",
+      "project_root",
+      "output_directory",
+      "report_file",
+      "python_executable",
+      "module_source",
+      "package_version",
+      "launch_config_file"
+    ],
+    "title": "NativeBatchRunReport",
+    "type": "object"
+  }
+}
