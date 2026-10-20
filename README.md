@@ -60,6 +60,10 @@ python -m hydrodynamics --id run01
 ```
 
 流程配置为 `examples/case_001/workflow.yaml`，准备网格为本地外部输入。
-一次命令自动完成 NC、调闸记录、4 个 SHP 图层、nc2web、stepjson、viewer 和完整性检查，
+一次命令自动完成 NC、调闸记录、nc2web、stepjson、viewer 和完整性检查；structured 路径不输出 SHP，
 结果写入 `work/results/<id>/`。所有必需阶段通过才报告成功；失败返回非零退出码，错误和阶段状态
 记录在 `run_report.json`。查看脚本默认选择最新完整成功的结果。详见 [流程输入和运行说明](docs/workflow.md)。
+
+## Native triangular result SHP
+
+All new SHP features must be actual native calculation faces. The retained structured workflow writes NC and web products and marks SHP as not applicable. Rectangle SHP writers now reject calls before creating output. See [usage and limitations](docs/native_triangle_shp.md), [中文说明](docs/zh-CN/native_triangle_shp.md), and the [small synthetic example](examples/native_triangle_shp/README.md). This first adapter supports existing closed-wall sources=none P4 results, FRAME or saved-time MAX_OVER_WINDOW, full or wet face sets, native projected CRS or EPSG:4490. It remains experimental and cannot approve engineering publication.

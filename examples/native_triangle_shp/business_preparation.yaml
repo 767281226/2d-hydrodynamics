@@ -1,0 +1,13 @@
+version: 1
+mesh_file: prepared_mesh.nc
+output_file: business.json
+roughness:
+  type: constant
+  manning_n: 0.035
+  source: synthetic input provenance only
+initial_condition:
+  type: constant
+  quantity: depth
+  value_m: 0.2
+  source: synthetic still-water depth
+boundary_bindings: []

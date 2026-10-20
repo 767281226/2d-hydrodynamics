@@ -1,0 +1,203 @@
+{
+  "$defs": {
+    "AreaProgressPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "time_h": {
+          "minimum": 0,
+          "title": "Time H",
+          "type": "number"
+        },
+        "fraction": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Fraction",
+          "type": "number"
+        }
+      },
+      "required": [
+        "time_h",
+        "fraction"
+      ],
+      "title": "AreaProgressPoint",
+      "type": "object"
+    },
+    "ForcingInput": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "time_unit": {
+          "const": "s",
+          "default": "s",
+          "title": "Time Unit",
+          "type": "string"
+        },
+        "discharge_unit": {
+          "const": "m3/s",
+          "default": "m3/s",
+          "title": "Discharge Unit",
+          "type": "string"
+        },
+        "rainfall_unit": {
+          "const": "mm/step",
+          "default": "mm/step",
+          "title": "Rainfall Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "source"
+      ],
+      "title": "ForcingInput",
+      "type": "object"
+    },
+    "HourlyWorkflowSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "eta_crest_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Eta Crest M"
+        },
+        "water_surface_slope": {
+          "anyOf": [
+            {
+              "gt": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Water Surface Slope"
+        },
+        "max_spread_m_s": {
+          "anyOf": [
+            {
+              "gt": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Spread M S"
+        },
+        "area_schedule": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AreaProgressPoint"
+          },
+          "title": "Area Schedule",
+          "type": "array"
+        }
+      },
+      "title": "HourlyWorkflowSettings",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "case_config": {
+      "title": "Case Config",
+      "type": "string"
+    },
+    "prepared_grid": {
+      "title": "Prepared Grid",
+      "type": "string"
+    },
+    "forcing": {
+      "$ref": "#/$defs/ForcingInput"
+    },
+    "time_origin": {
+      "title": "Time Origin",
+      "type": "string"
+    },
+    "settings": {
+      "$ref": "#/$defs/HourlyWorkflowSettings"
+    },
+    "output_directory": {
+      "default": "../../work/results",
+      "title": "Output Directory",
+      "type": "string"
+    },
+    "result_name": {
+      "default": "result.nc",
+      "title": "Result Name",
+      "type": "string"
+    },
+    "dispatch_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dispatch File"
+    },
+    "record_xihe_component_changes": {
+      "default": true,
+      "title": "Record Xihe Component Changes",
+      "type": "boolean"
+    },
+    "socio_overlay_shp": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Socio Overlay Shp"
+    },
+    "script_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "脚本运行ID；省略时生成北京时间YYYYMMDD加Unix纳秒时间戳",
+      "title": "Script Id"
+    }
+  },
+  "required": [
+    "case_config",
+    "prepared_grid",
+    "forcing",
+    "time_origin"
+  ],
+  "title": "WorkflowConfig",
+  "type": "object"
+}

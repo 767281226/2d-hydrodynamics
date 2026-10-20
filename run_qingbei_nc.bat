@@ -15,7 +15,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo 开始完整流程: NC、调闸记录、SHP、nc2web、stepjson、viewer、结果检查
+echo 开始 structured 流程: NC、调闸记录、nc2web、stepjson、viewer、结果检查、配置的审计入库
+echo structured 结果不生成矩形 SHP；原生三角 P4 结果请使用 hydrodynamics-triangle-shp。
 python -m hydrodynamics --workflow "%~dp0examples/case_001/workflow.yaml" %*
 if errorlevel 1 (
     echo [失败] 流程未全部完成，请查看上方错误及 run_report.json。

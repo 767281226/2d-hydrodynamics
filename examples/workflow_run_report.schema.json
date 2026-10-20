@@ -1,0 +1,324 @@
+{
+  "$defs": {
+    "StructuredShpStageReport": {
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "enum": [
+            "pending",
+            "not_applicable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "const": "native_triangular_result_required",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "output_kind": {
+          "anyOf": [
+            {
+              "const": "native_triangular_result_shp",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Kind"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "StructuredShpStageReport",
+      "type": "object"
+    },
+    "WorkflowReportStages": {
+      "additionalProperties": false,
+      "properties": {
+        "preflight": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "prepare": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "model": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "gate_dispatch": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "shp": {
+          "$ref": "#/$defs/StructuredShpStageReport"
+        },
+        "nc2web": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "stepjson": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "socio_overlay": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "viewer": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "validate": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        },
+        "audit_database": {
+          "$ref": "#/$defs/WorkflowStageReport"
+        }
+      },
+      "required": [
+        "preflight",
+        "prepare",
+        "model",
+        "gate_dispatch",
+        "shp",
+        "nc2web",
+        "stepjson",
+        "socio_overlay",
+        "viewer",
+        "validate",
+        "audit_database"
+      ],
+      "title": "WorkflowReportStages",
+      "type": "object"
+    },
+    "WorkflowStageReport": {
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "complete",
+            "failed",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "WorkflowStageReport",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Run-report schema for the existing structured hourly route.",
+  "properties": {
+    "format": {
+      "const": "hydrodynamics-workflow-run-report-v1",
+      "title": "Format",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "script_id": {
+      "title": "Script Id",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "running",
+        "complete",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "started_at": {
+      "title": "Started At",
+      "type": "string"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "elapsed_seconds": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Elapsed Seconds"
+    },
+    "workflow_file": {
+      "title": "Workflow File",
+      "type": "string"
+    },
+    "workflow_spec": {
+      "additionalProperties": true,
+      "title": "Workflow Spec",
+      "type": "object"
+    },
+    "bundle_dir": {
+      "title": "Bundle Dir",
+      "type": "string"
+    },
+    "result_file": {
+      "title": "Result File",
+      "type": "string"
+    },
+    "engine_mode": {
+      "const": "hourly_inundation",
+      "title": "Engine Mode",
+      "type": "string"
+    },
+    "grid_topology": {
+      "const": "structured_grid",
+      "title": "Grid Topology",
+      "type": "string"
+    },
+    "workflow": {
+      "$ref": "#/$defs/WorkflowReportStages"
+    },
+    "failed_stage": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failed Stage"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "id",
+    "script_id",
+    "status",
+    "started_at",
+    "workflow_file",
+    "workflow_spec",
+    "bundle_dir",
+    "result_file",
+    "engine_mode",
+    "grid_topology",
+    "workflow"
+  ],
+  "title": "WorkflowRunReport",
+  "type": "object"
+}

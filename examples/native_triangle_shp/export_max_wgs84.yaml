@@ -1,0 +1,13 @@
+format: native-triangle-result-shp-export-request-v1
+schema_version: "1.0"
+run_config_file: run.yaml
+output_directory: maximum_wet_surface_4490
+selector:
+  aggregation: MAX_OVER_WINDOW
+  frame_index: null
+  time_s: null
+  window_start_s: 0.0
+  window_end_s: 1.0
+scope_selection: MAXIMUM_WET_SURFACE
+wet_depth_threshold_m: 0.001
+target_crs: EPSG:4490

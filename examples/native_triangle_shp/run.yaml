@@ -1,0 +1,24 @@
+format: triangular-solver-run-v1
+schema_version: "1.0"
+case_id: native-triangle-shp-two-face-v1
+business_file: business.json
+result_file: result.nc
+time_origin: null
+output_times_s: [0.0, 0.5, 1.0]
+boundary_policy: closed_wall
+initial_momentum: zero
+sources: none
+spatial_order: 1
+numerical_flux: HLL
+bed_balance: hydrostatic_reconstruction
+time_integrator: SSPRK2
+gravity_m_s2: 9.81
+cfl_number: 0.25
+minimum_time_step_s: 0.000001
+maximum_time_step_s: 0.1
+maximum_step_retries: 8
+dry_depth_threshold_m: 0.000001
+negative_depth_tolerance_m: 0.000000000001
+volume_correction_budget_fraction: 0.0000000001
+maximum_face_count: 64
+overwrite_existing_result: false

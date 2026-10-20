@@ -53,7 +53,11 @@ def write_grid_shapefile(
     elevation: np.ndarray | None = None,
     zone: np.ndarray | None = None,
 ) -> Path:
-    """Write one polygon per selected grid cell."""
+    """Reject deprecated structured-grid rectangle SHP output before touching the target path."""
+
+    raise VectorMaskError(
+        "structured-grid rectangle SHP export is disabled; use hydrodynamics-triangle-shp with a validated native P4 result"
+    )
 
     selected = np.asarray(mask, dtype=bool)
     ny, nx = int(selected.shape[0]), int(selected.shape[1])
@@ -197,7 +201,11 @@ def write_wet_grid_shapefile(
     crs: str = "EPSG:4548",
     output_crs: str | None = None,
 ) -> Path:
-    """Write one polygon per wet cell for third-party GIS use."""
+    """Reject deprecated structured-grid wet-cell SHP output before touching the target path."""
+
+    raise VectorMaskError(
+        "structured-grid rectangle SHP export is disabled; use hydrodynamics-triangle-shp with a validated native P4 result"
+    )
 
     return write_grid_shapefile(
         path,

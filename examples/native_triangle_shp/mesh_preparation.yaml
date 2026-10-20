@@ -1,0 +1,15 @@
+version: 1
+coordinate_system: EPSG:32650
+mesh:
+  type: json
+  file: mesh.json
+terrain:
+  type: json
+  file: dem.json
+  minimum_valid_coverage: 1.0
+  vertical_unit: m
+  vertical_datum: "Native SHP synthetic local datum"
+output_file: prepared_mesh.nc
+minimum_face_quality: 0.0
+geometry_tolerance_m: 1.0e-8
+minimum_face_area_m2: 1.0e-12

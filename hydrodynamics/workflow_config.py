@@ -57,6 +57,8 @@ class ForcingInput(_WorkflowModel):
     rainfall_unit: Literal["mm/step"] = "mm/step"
 
 
+
+
 class WorkflowConfig(_WorkflowModel):
     schema_version: Literal["1.0"] = "1.0"
     case_config: Text
@@ -69,6 +71,12 @@ class WorkflowConfig(_WorkflowModel):
     dispatch_file: Text | None = None
     record_xihe_component_changes: StrictBool = True
     socio_overlay_shp: Text | None = None
+    script_id: Text | None = Field(default=None, description="脚本运行ID；省略时生成北京时间YYYYMMDD加Unix纳秒时间戳")
+
+    @field_validator("script_id")
+    @classmethod
+    def script_identifier(cls, value):
+        return validate_run_id(value) if value is not None else None
 
     @field_validator("prepared_grid")
     @classmethod

@@ -1,0 +1,647 @@
+{
+  "format": "native-triangle-shp-schema-set-v1",
+  "manifest_schema": {
+    "$defs": {
+      "NativeTriangleSHPField": {
+        "additionalProperties": false,
+        "properties": {
+          "dbf_name": {
+            "title": "Dbf Name",
+            "type": "string"
+          },
+          "dbf_type": {
+            "enum": [
+              "C",
+              "N"
+            ],
+            "title": "Dbf Type",
+            "type": "string"
+          },
+          "meaning": {
+            "title": "Meaning",
+            "type": "string"
+          },
+          "semantic_name": {
+            "title": "Semantic Name",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "dbf_name",
+          "semantic_name",
+          "dbf_type",
+          "unit",
+          "meaning"
+        ],
+        "title": "NativeTriangleSHPField",
+        "type": "object"
+      },
+      "NativeTriangleSHPFile": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_count": {
+            "minimum": 0,
+            "title": "Byte Count",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "sha256",
+          "byte_count",
+          "media_type"
+        ],
+        "title": "NativeTriangleSHPFile",
+        "type": "object"
+      },
+      "NativeTriangleSHPSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregation": {
+            "enum": [
+              "FRAME",
+              "MAX_OVER_WINDOW"
+            ],
+            "title": "Aggregation",
+            "type": "string"
+          },
+          "frame_index": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Frame Index"
+          },
+          "time_s": {
+            "anyOf": [
+              {
+                "ge": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time S"
+          },
+          "window_end_s": {
+            "anyOf": [
+              {
+                "ge": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window End S"
+          },
+          "window_start_s": {
+            "anyOf": [
+              {
+                "ge": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Start S"
+          }
+        },
+        "required": [
+          "aggregation"
+        ],
+        "title": "NativeTriangleSHPSelector",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "area_rule": {
+        "const": "native_projected_face_area_m2",
+        "title": "Area Rule",
+        "type": "string"
+      },
+      "business_package_path": {
+        "title": "Business Package Path",
+        "type": "string"
+      },
+      "business_package_sha256": {
+        "title": "Business Package Sha256",
+        "type": "string"
+      },
+      "can_publish": {
+        "const": false,
+        "title": "Can Publish",
+        "type": "boolean"
+      },
+      "case_id": {
+        "title": "Case Id",
+        "type": "string"
+      },
+      "engine_mode": {
+        "const": "triangular_closed_experimental",
+        "title": "Engine Mode",
+        "type": "string"
+      },
+      "engineering_validated": {
+        "const": false,
+        "title": "Engineering Validated",
+        "type": "boolean"
+      },
+      "experimental": {
+        "const": true,
+        "title": "Experimental",
+        "type": "boolean"
+      },
+      "exported_face_id_sha256": {
+        "title": "Exported Face Id Sha256",
+        "type": "string"
+      },
+      "face_id_encoding": {
+        "const": "exact_decimal_text",
+        "title": "Face Id Encoding",
+        "type": "string"
+      },
+      "feature_count": {
+        "minimum": 0,
+        "title": "Feature Count",
+        "type": "integer"
+      },
+      "field_mapping": {
+        "items": {
+          "$ref": "#/$defs/NativeTriangleSHPField"
+        },
+        "minItems": 1,
+        "title": "Field Mapping",
+        "type": "array"
+      },
+      "files": {
+        "items": {
+          "$ref": "#/$defs/NativeTriangleSHPFile"
+        },
+        "minItems": 5,
+        "title": "Files",
+        "type": "array"
+      },
+      "format": {
+        "const": "native-triangular-result-shapefile-v1",
+        "title": "Format",
+        "type": "string"
+      },
+      "frame_times_s": {
+        "items": {
+          "type": "number"
+        },
+        "minItems": 2,
+        "title": "Frame Times S",
+        "type": "array"
+      },
+      "geometry_type": {
+        "const": "POLYGON_WITH_THREE_DISTINCT_VERTICES",
+        "title": "Geometry Type",
+        "type": "string"
+      },
+      "grid_topology": {
+        "const": "native_triangular_mesh",
+        "title": "Grid Topology",
+        "type": "string"
+      },
+      "input_graph_sha256": {
+        "title": "Input Graph Sha256",
+        "type": "string"
+      },
+      "layer_key": {
+        "const": "faces.shp",
+        "title": "Layer Key",
+        "type": "string"
+      },
+      "limitations": {
+        "items": {
+          "type": "string"
+        },
+        "minItems": 1,
+        "title": "Limitations",
+        "type": "array"
+      },
+      "maximum_tie_policy": {
+        "const": "EARLIEST_NATIVE_TIME",
+        "title": "Maximum Tie Policy",
+        "type": "string"
+      },
+      "mesh_id": {
+        "title": "Mesh Id",
+        "type": "string"
+      },
+      "mesh_path": {
+        "title": "Mesh Path",
+        "type": "string"
+      },
+      "mesh_sha256": {
+        "title": "Mesh Sha256",
+        "type": "string"
+      },
+      "native_face_count": {
+        "minimum": 1,
+        "title": "Native Face Count",
+        "type": "integer"
+      },
+      "native_face_id_sha256": {
+        "title": "Native Face Id Sha256",
+        "type": "string"
+      },
+      "native_identity_limit": {
+        "title": "Native Identity Limit",
+        "type": "string"
+      },
+      "native_result_path": {
+        "title": "Native Result Path",
+        "type": "string"
+      },
+      "native_result_sha256": {
+        "title": "Native Result Sha256",
+        "type": "string"
+      },
+      "package_type": {
+        "const": "native_triangular_result_shapefile",
+        "title": "Package Type",
+        "type": "string"
+      },
+      "product_type": {
+        "const": "experimental_native_triangular_p4_result",
+        "title": "Product Type",
+        "type": "string"
+      },
+      "production_approved": {
+        "const": false,
+        "title": "Production Approved",
+        "type": "boolean"
+      },
+      "request_path": {
+        "title": "Request Path",
+        "type": "string"
+      },
+      "request_sha256": {
+        "title": "Request Sha256",
+        "type": "string"
+      },
+      "result_set_id": {
+        "title": "Result Set Id",
+        "type": "string"
+      },
+      "run_config_path": {
+        "title": "Run Config Path",
+        "type": "string"
+      },
+      "run_config_sha256": {
+        "title": "Run Config Sha256",
+        "type": "string"
+      },
+      "schema_version": {
+        "const": "1.0",
+        "title": "Schema Version",
+        "type": "string"
+      },
+      "scope_area_m2": {
+        "minimum": 0.0,
+        "title": "Scope Area M2",
+        "type": "number"
+      },
+      "scope_hash": {
+        "title": "Scope Hash",
+        "type": "string"
+      },
+      "scope_id": {
+        "enum": [
+          "COMPUTATIONAL_DOMAIN",
+          "MAXIMUM_WET_SURFACE"
+        ],
+        "title": "Scope Id",
+        "type": "string"
+      },
+      "scope_selection": {
+        "enum": [
+          "FULL_DOMAIN",
+          "MAXIMUM_WET_SURFACE"
+        ],
+        "title": "Scope Selection",
+        "type": "string"
+      },
+      "selected_frame_indices": {
+        "items": {
+          "type": "integer"
+        },
+        "minItems": 1,
+        "title": "Selected Frame Indices",
+        "type": "array"
+      },
+      "selector": {
+        "$ref": "#/$defs/NativeTriangleSHPSelector"
+      },
+      "source_coordinate_system": {
+        "title": "Source Coordinate System",
+        "type": "string"
+      },
+      "target_crs": {
+        "title": "Target Crs",
+        "type": "string"
+      },
+      "terrain_fingerprint": {
+        "title": "Terrain Fingerprint",
+        "type": "string"
+      },
+      "topology_fingerprint": {
+        "title": "Topology Fingerprint",
+        "type": "string"
+      },
+      "validation_basis": {
+        "const": "P4_1_NATIVE_RESULT_READER_AND_SOURCE_GRAPH",
+        "title": "Validation Basis",
+        "type": "string"
+      },
+      "velocity_component_frame": {
+        "title": "Velocity Component Frame",
+        "type": "string"
+      },
+      "vertical_datum": {
+        "title": "Vertical Datum",
+        "type": "string"
+      },
+      "wet_depth_threshold_m": {
+        "minimum": 0.0,
+        "title": "Wet Depth Threshold M",
+        "type": "number"
+      },
+      "window_endpoints_inclusive": {
+        "const": true,
+        "title": "Window Endpoints Inclusive",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "format",
+      "schema_version",
+      "package_type",
+      "result_set_id",
+      "product_type",
+      "experimental",
+      "engineering_validated",
+      "production_approved",
+      "can_publish",
+      "validation_basis",
+      "engine_mode",
+      "grid_topology",
+      "case_id",
+      "mesh_id",
+      "topology_fingerprint",
+      "terrain_fingerprint",
+      "input_graph_sha256",
+      "source_coordinate_system",
+      "target_crs",
+      "vertical_datum",
+      "scope_selection",
+      "scope_id",
+      "scope_hash",
+      "scope_area_m2",
+      "wet_depth_threshold_m",
+      "selector",
+      "frame_times_s",
+      "selected_frame_indices",
+      "native_face_count",
+      "feature_count",
+      "native_face_id_sha256",
+      "exported_face_id_sha256",
+      "run_config_sha256",
+      "business_package_sha256",
+      "mesh_sha256",
+      "native_result_sha256",
+      "request_sha256",
+      "run_config_path",
+      "business_package_path",
+      "mesh_path",
+      "native_result_path",
+      "request_path",
+      "native_identity_limit",
+      "face_id_encoding",
+      "area_rule",
+      "window_endpoints_inclusive",
+      "maximum_tie_policy",
+      "velocity_component_frame",
+      "geometry_type",
+      "layer_key",
+      "field_mapping",
+      "files",
+      "limitations"
+    ],
+    "title": "NativeTriangleSHPManifest",
+    "type": "object"
+  },
+  "request_schema": {
+    "$defs": {
+      "NativeTriangleSHPSelector": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregation": {
+            "enum": [
+              "FRAME",
+              "MAX_OVER_WINDOW"
+            ],
+            "title": "Aggregation",
+            "type": "string"
+          },
+          "frame_index": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Frame Index"
+          },
+          "time_s": {
+            "anyOf": [
+              {
+                "ge": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time S"
+          },
+          "window_end_s": {
+            "anyOf": [
+              {
+                "ge": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window End S"
+          },
+          "window_start_s": {
+            "anyOf": [
+              {
+                "ge": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Start S"
+          }
+        },
+        "required": [
+          "aggregation"
+        ],
+        "title": "NativeTriangleSHPSelector",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "format": {
+        "const": "native-triangle-result-shp-export-request-v1",
+        "title": "Format",
+        "type": "string"
+      },
+      "output_directory": {
+        "title": "Output Directory",
+        "type": "string"
+      },
+      "run_config_file": {
+        "title": "Run Config File",
+        "type": "string"
+      },
+      "schema_version": {
+        "const": "1.0",
+        "title": "Schema Version",
+        "type": "string"
+      },
+      "scope_selection": {
+        "enum": [
+          "FULL_DOMAIN",
+          "MAXIMUM_WET_SURFACE"
+        ],
+        "title": "Scope Selection",
+        "type": "string"
+      },
+      "selector": {
+        "$ref": "#/$defs/NativeTriangleSHPSelector"
+      },
+      "target_crs": {
+        "default": "NATIVE",
+        "enum": [
+          "NATIVE",
+          "EPSG:4490"
+        ],
+        "title": "Target Crs",
+        "type": "string"
+      },
+      "wet_depth_threshold_m": {
+        "default": 0.0,
+        "minimum": 0.0,
+        "title": "Wet Depth Threshold M",
+        "type": "number"
+      }
+    },
+    "required": [
+      "format",
+      "schema_version",
+      "run_config_file",
+      "output_directory",
+      "selector",
+      "scope_selection"
+    ],
+    "title": "NativeTriangleSHPExportRequest",
+    "type": "object"
+  },
+  "validation_report_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "can_publish": {
+        "const": false,
+        "default": false,
+        "title": "Can Publish",
+        "type": "boolean"
+      },
+      "checks": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Checks",
+        "type": "array"
+      },
+      "complete": {
+        "title": "Complete",
+        "type": "boolean"
+      },
+      "feature_count": {
+        "minimum": 0,
+        "title": "Feature Count",
+        "type": "integer"
+      },
+      "result_set_id": {
+        "title": "Result Set Id",
+        "type": "string"
+      },
+      "valid": {
+        "title": "Valid",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "valid",
+      "complete",
+      "result_set_id",
+      "feature_count",
+      "checks"
+    ],
+    "title": "NativeTriangleSHPValidationReport",
+    "type": "object"
+  }
+}

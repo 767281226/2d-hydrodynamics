@@ -1,0 +1,33 @@
+# 原生三角 SHP 独立验收（2026-10-20）
+
+批次 NATIVE-TRIANGLE-SHP-20261019。用户要求所有新SHP对应实际参与水动力计算的原生三角面；structured计算保留但不输出矩形或展示拆分SHP。100001既有工程输出只读，不重算或覆盖。安全区14仍需另行完成，本批只接受已有none/closed_wall结果导出。
+
+## 首轮独立证据
+
+原5项旧writer政策+新15项几何/数值/selector+2项发布事务，22 passed in22.29s，正常exit0，无跳过。实际使用2个非等面积三角面（3/1m²），face_id=9007199254740993/9223372036854775806，bed1.25m，既有closed核心真实运行三个保存时刻0/0.025/0.05s。逐面核对真实节点、水深、水位、momentum/depth速度、原米制面积、精确ID文本；MAX窗口湿面用峰值而非末帧、并列取最早时刻；4490只转换实际3个节点，保留原计算面积。全干结果有效空层。拒绝错误/非精确selector、已有输出覆盖、准备数据冒充结果、重算摘要后的数值/相邻大ID/同面积但错顶点篡改。发布后并发修改manifest精确字节可恢复且成功marker退役；替换输出根时不删除他人marker/文件。
+
+冻结摘要记录于work/acceptance_native_shp_20261019/frozen_independent_hashes.json：原政策3e52589afe2e3b006b231b619c44127357889ccc29f2c6c30d374dd6672378b6；新主测试cc9fd383353d705ca225ffad91c13053f5e78f3c56cbcc1c7090b7e3aa7b96e7；事务4841c45a567d1a51af2d770529c1e87d4487d6500c6e6598d5f6160b95c3a1db；夹具a04ccc2a13f259ce4849f216e50b771b51434706ff931f0b27a19fb2f57ad915。
+
+正式相关回归首次108 passed/2 failed/2 deselected in180.40s，exit1。显式排除2项真实PostgreSQL集成，未连接数据库。两个失败是正式篡改夹具保持Reader打开时Path.replace受Windows WinError5阻止，未执行到校验器，不能当作已验证拒绝；其余108项含workflow/nc2web/四旧writer和既有三角solver/contract均通过。实施方修复测试读取句柄后待定向复验。首次Windows命令引号包装错误exit4未运行测试，未计作pass。
+
+## 当前状态
+
+工作区关键独立22项已通过；等待正式测试夹具及重复未用函数清理后冻结源码、定向复验，再进入隔离候选/wheel发布门禁。尚未把安全区或源项SHP标作支持，未作真实工程安全认证。
+
+## 工作区最终定向复验
+
+修正正式夹具并显式关闭读取句柄后，本窗口实际同次运行正式14+冻结独立22：36 passed in40.69s，exit0，无跳过。SHP源码SHA256=23aec207d42bc3dbbdbdc0f13ac2e38d45c963dceb4c075a2f1f4b85eb179c03，执行前后快照一致；原独立断言/数值门槛不变。先前两个Windows替换夹具失败已关闭，既有108项无新的功能变更原因不再重复。所有入口扫描确认旧四个public writer在触碰目标路径前拒绝，structured workflow SHP为not_applicable/native_triangular_result_required；原native exporter逐面写实际三节点，保留source graph、selector和身份限制。工作区功能验收通过，隔离候选/wheel发布门禁另记；14尚未实施，不能宣称用户全部要求完成。
+
+12最终完成事件已核对：turn=01a156a0-2842-7432-bb41-d2fe00684c29，cursor222。正式启动后续SECURITY-EXCLUSION-20261019，仍由既有实施窗口gpt-6-luna/max实施；12隔离候选门禁与14生产增量互不并改。
+
+## 隔离候选回归
+
+基于已推送79f329d的独立候选实际130 passed in199.08s，exit0，无跳过。所有29个已加载项目模块均来自候选，editable/live回退禁用。候选移除独立数据库工作流的配置/执行/测试段，不提交该未验收工作流；保留本批structured非SHP状态和必要G1/script身份兼容，schema重新由候选合同生成。相关正式/原样独立/既有solver及contract同次通过。原工作区文件不被候选删减覆盖。wheel隔离安装门禁随后进行。
+
+## Wheel发布门禁
+
+wheel SHA256=5104189012953e3fa25e1a75b771a1d15fba71ef967ea59ae0edbd78ae4fb349，离线构建/独立安装及实际合成CLI smoke正常exit0。38个package文件与候选/安装包逐字节一致，24个加载项目模块均来自安装目录。包内SHP schema与运行合同一致，CLI schema/export/validate实际运行；非等面积实际native结果的MAX4490湿面只选ID9007199254740993、peak0.3m/time0/原面积3m²，原source文件字节不变。can_publish/engineering_validated均false。
+
+最小发布候选不含地图、DEM、历史100001、数据库模块/SQL、分析脚本或生成NC/SHP；只提交白名单业务代码、schema、说明、纯合成输入及永久独立回归。14仍在实施，本次发布不表示安全区已接入。
+
+暂存格式检查前规范候选4个Python文件的末尾空行，内容仅rstrip(CR/LF)+单LF；生产文件AST与前一个已测wheel完全相同，冻结独立probe无变化。最终wheel重新构建及新目录安装smoke再次exit0，38资源字节和24模块来源一致，最终SHA256=036e59e8760118377527916ca44490cb58797d3402c63b98ea71a1de2fa69ac9；前述510418...为格式清理前的中间wheel，不用作最终发布摘要。没有因仅EOF格式再重复求解器大集合。

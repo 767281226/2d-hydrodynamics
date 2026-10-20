@@ -288,6 +288,10 @@ def write_active_grid_shapefile(active_mask: ActiveMask, path: str | Path, *, in
 
     """
 
+    raise VectorMaskError(
+        "structured-grid diagnostic rectangle SHP export is disabled; use hydrodynamics-triangle-shp with a validated native P4 result"
+    )
+
     if not isinstance(active_mask, ActiveMask): raise TypeError("active_mask must be an ActiveMask")
 
     if target_crs is not None and target_crs.strip().upper() != active_mask.coordinate_system.strip().upper():
@@ -355,6 +359,10 @@ def write_active_grid_shapefile(active_mask: ActiveMask, path: str | Path, *, in
 def write_active_grid_shapefile_reprojected(active_mask: ActiveMask, path: str | Path, *, target_crs: str, include_inactive: bool = False) -> Path:
 
     """Write the diagnostic grid in another CRS for GIS overlay only."""
+
+    raise VectorMaskError(
+        "structured-grid diagnostic rectangle SHP export is disabled; use hydrodynamics-triangle-shp with a validated native P4 result"
+    )
 
     if not isinstance(target_crs, str) or not target_crs.strip(): raise VectorMaskError("target_crs must be a non-empty string")
 

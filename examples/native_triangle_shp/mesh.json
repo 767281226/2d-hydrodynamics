@@ -1,0 +1,10 @@
+{
+  "format": "triangular-mesh-json-v1",
+  "mesh_id": "native-shp-two-face-v1",
+  "coordinate_system": "EPSG:32650",
+  "node_xy": [[500000.0, 4300000.0], [500002.0, 4300000.0], [500002.0, 4300001.0], [500000.0, 4300001.0]],
+  "face_nodes": [[0, 1, 2], [0, 2, 3]],
+  "face_id": [9007199254740993, 9007199254740995],
+  "boundary_groups": {"outer_boundary": [[0, 1], [1, 2], [2, 3], [3, 0]]},
+  "constraint_groups": {}
+}

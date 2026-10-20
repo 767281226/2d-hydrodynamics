@@ -17,7 +17,7 @@ python -m hydrodynamics --workflow examples/case_001/workflow.yaml --id run01 --
 
 ## 自动执行顺序
 
-`preflight → prepare → model → gate_dispatch → shp → nc2web → stepjson → socio_overlay → viewer → validate`
+`preflight → prepare → model → gate_dispatch → shp(not_applicable) → nc2web → stepjson → socio_overlay → viewer → validate`
 
 社会经济叠加未配置时标为 `skipped`；配置后出错会使流程失败。
 其余阶段为必需阶段。NC 计算完成不会被当作全流程完成；只有最终检查通过才标为 `complete`。
@@ -29,7 +29,6 @@ work/results/<id>/
   dongdian_qingbei_2023_288h.nc
   *_gate_dispatch.csv / *.json
   dispatch_input.json
-  shp/                       # 4 个图层及其 sidecars
   nc2web/                    # manifest、mesh、逐时 frame
   stepjson/                  # index、逐时 JSON
   viewer.html
@@ -38,9 +37,9 @@ work/results/<id>/
   run_report.json
 ```
 
-SHP 包含最大淹没范围和完整蓄滞洪区网格，分别输出 EPSG:4548 与 EPSG:4490。
+structured 工作流不输出 SHP，报告中明确标记不适用。原生三角结果可通过独立 SHP 导出入口生成原投影或 EPSG:4490 图层。
 全干场景也写出 0 条记录的淹没图层。最后检查 NC 字段/时间/有效范围、实际帧数、二进制完整性、
-逐步 JSON 数量、SHP sidecars/条数/CRS 和 viewer 文件。viewer 模板随 Python 包分发。
+逐步 JSON 数量、SHP 不适用状态及 viewer 文件。viewer 模板随 Python 包分发。
 查看结果可使用 `start_viewer.bat <id>`；省略 ID 时选择最新完整成功的运行，计算命令只生成文件。
 `python -m hydrodynamics --show-latest` 只打印最新结果目录，失败或只有部分输出的目录不会被选中。
 
@@ -116,3 +115,7 @@ python examples/prepare_workflow_grid.py --source-nc work/results/dongdian_qingb
 它不是实测调闸，也不代表规则已触发。真实站点条件和操作记录通过 `dispatch_file` 另行提供，
 缺少水位、潮位窗口或人工判断时仍记录无法判断。外部记录与自动记录同闸同时冲突时直接报错，
 可显式关闭自动转录来采用外部记录。详见 [gate_dispatch_log.md](gate_dispatch_log.md)。
+
+## SHP policy update
+
+Structured hourly runs retain NC/web outputs and explicitly report `shp.status=not_applicable`, `reason=native_triangular_result_required`. They produce no SHP; a successful run remains discoverable by `--show-latest`. Historical rectangle bundles are labelled legacy. Use `hydrodynamics-triangle-shp` with an existing strict native P4 result for SHP. See [native triangle SHP](native_triangle_shp.md). The report contract is version 1.1; its optional database stage remains skipped in this distribution.

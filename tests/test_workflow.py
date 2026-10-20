@@ -2,6 +2,9 @@ from pathlib import Path
 import csv
 import json
 import struct
+import os
+import re
+import uuid
 
 import numpy as np
 import pytest
@@ -11,6 +14,7 @@ import yaml
 from hydrodynamics.config import load_config
 from hydrodynamics import workflow
 from hydrodynamics.workflow_config import WorkflowConfig, WorkflowError, validate_run_id
+from hydrodynamics.workflow_report import WorkflowRunReport
 from hydrodynamics.workflow_inputs import load_prepared_workflow_grid, load_workflow_forcing
 
 
@@ -58,15 +62,33 @@ def test_complete_command_generates_all_outputs_in_one_run(job,monkeypatch):
     assert workflow.main(['--workflow',str(job['file']),'--id','full']) == 0
     bundle=job['root']/'runs/full'
     report=json.loads((bundle/'run_report.json').read_text(encoding='utf-8'))
+    WorkflowRunReport.model_validate(report)
+    report_schema=json.loads((Path(__file__).resolve().parents[1]/'examples/workflow_run_report.schema.json').read_text(encoding='utf-8'))
+    assert report_schema==WorkflowRunReport.model_json_schema()
     assert report['status']=='complete'
-    assert all(v['status']=='complete' for k,v in report['workflow'].items() if k!='socio_overlay')
+    assert report['schema_version']=='1.1'
+    assert report['engine_mode']=='hourly_inundation'
+    assert report['grid_topology']=='structured_grid'
+    assert all(v['status']=='complete' for k,v in report['workflow'].items() if k not in ('socio_overlay', 'audit_database', 'shp'))
+    assert report['workflow']['shp']=={
+        'status':'not_applicable', 'started_at':report['workflow']['shp']['started_at'],
+        'finished_at':report['workflow']['shp']['finished_at'],
+        'reason':'native_triangular_result_required', 'output_kind':'native_triangular_result_shp'}
+    assert report['workflow']['audit_database']['status']=='skipped'
     assert report['workflow']['socio_overlay']['status']=='skipped'
     assert len(list((bundle/'nc2web').glob('frame_*.bin')))==3
     assert len(list((bundle/'stepjson').glob('step_*.json')))==3
-    assert len(list((bundle/'shp').glob('*.shp')))==4
+    assert not list(bundle.rglob('*.shp'))
+    run_metadata=json.loads((bundle/'run.json').read_text(encoding='utf-8'))
+    assert run_metadata['engine_mode']=='hourly_inundation' and run_metadata['grid_topology']=='structured_grid'
+    assert run_metadata['shp_status']=='not_applicable'
     assert (bundle/'viewer.html').is_file() and (bundle/'run.json').is_file()
     assert report['workflow']['gate_dispatch']['reported_operations']==1
     journal=json.loads((bundle/'result_gate_dispatch.json').read_text(encoding='utf-8'))
+    assert journal['operation_source_category_counts']['model_prescribed_change']==1
+    assert journal['asserted_external_action_count']==0
+    assert journal['reported_operation_count']==1  # Legacy count remains the number of supplied journal rows.
+    assert report['script_id'] == journal['result_context']['script_id'] == 'full'
     event=next(r for r in journal['records'] if r['record_type']=='operation')
     assert event['discharge_after_m3s']==.2 and event['rule_status']=='indeterminate'
     assert event['operation_source'].startswith('model_prescribed_forcing:')
@@ -75,17 +97,33 @@ def test_complete_command_generates_all_outputs_in_one_run(job,monkeypatch):
     assert workflow.main(['--show-latest','--out-dir',str(job['root']/'runs')])==0
 
 
-def test_dry_run_exports_empty_wet_layers_and_full_grid(job):
+
+
+
+
+@pytest.mark.parametrize('patch', [
+    {'script_id': ''}, {'script_id': True}, {'script_id': '../bad'},
+    {'audit_database': {'config_file': ''}},
+    {'audit_database': {'config_file': 'db.yaml', 'data_origin': 'real_verified'}},
+    {'audit_database': {'config_file': 'db.yaml', 'password': 'never-store'}},
+])
+def test_workflow_database_and_script_contract(job, patch):
+    with pytest.raises(ValidationError):
+        WorkflowConfig.model_validate({**job['spec'], **patch})
+
+
+
+
+def test_dry_run_remains_structured_and_marks_shp_not_applicable(job):
     pytest.importorskip('netCDF4');pytest.importorskip('pyproj')
     job['write_forcing']([[0,0,0,0,0,0],[3600,0,0,0,0,0],[7200,0,0,0,0,0]])
     bundle=workflow.run_workflow(job['file'],run_id='dry')
     report=json.loads((bundle/'run_report.json').read_text(encoding='utf-8'))
     assert report['status']=='complete'
-    for name in ('inundation_max_50m','inundation_max_50m_epsg4490'):
-        path=bundle/'shp'/f'{name}.shp'
-        assert path.stat().st_size==100
-        assert path.with_suffix('.shx').stat().st_size==100
-        assert struct.unpack('<I',path.with_suffix('.dbf').read_bytes()[4:8])[0]==0
+    assert report['workflow']['shp']['status']=='not_applicable'
+    assert report['workflow']['shp']['reason']=='native_triangular_result_required'
+    assert not list(bundle.rglob('*.shp'))
+    assert all(count==0 for count in json.loads((bundle/'stepjson/index.json').read_text())['wet_counts'])
     assert all(count==0 for count in json.loads((bundle/'stepjson/index.json').read_text())['wet_counts'])
 
 
@@ -216,6 +254,30 @@ def test_latest_ignores_partial_and_corrupt_run_reports(job):
     corrupt.mkdir()
     (corrupt/'run_report.json').write_text('invalid json')
     assert workflow.find_latest_completed_bundle(job['root']/'runs') is None
+
+
+def test_latest_classifies_old_structured_rectangle_bundle_as_legacy(job):
+    bundle=job['root']/'runs/legacy'
+    (bundle/'shp').mkdir(parents=True)
+    for index in range(4):
+        for suffix in ('.shp','.shx','.dbf','.prj','.cpg'):
+            (bundle/'shp'/f'layer-{index}{suffix}').write_bytes(b'legacy')
+    workflow_stage={name:{'status':'complete'} for name in ('preflight','prepare','model','gate_dispatch','shp','nc2web','stepjson','socio_overlay','viewer','validate','audit_database')}
+    workflow_stage['prepare']={'status':'complete','case_config_snapshot':{'domain':{'type':'structured'}}}
+    workflow_stage['shp']={'status':'complete','layers':[{'path':f'shp/layer-{index}.shp'} for index in range(4)]}
+    report={'schema_version':'1.0','id':'legacy','script_id':'legacy','status':'complete',
+            'result_file':str(bundle/'result.nc'),'workflow':workflow_stage}
+    for rel in ('result.nc','viewer.html','nc2web/manifest.json','nc2web/mesh.bin','stepjson/index.json'):
+        path=bundle/rel;path.parent.mkdir(parents=True,exist_ok=True)
+        if rel.endswith('manifest.json'):
+            path.write_text(json.dumps({'status':'pass','frames':[]}),encoding='utf-8')
+        elif rel.endswith('index.json'):
+            path.write_text(json.dumps({'status':'pass','files':[]}),encoding='utf-8')
+        else:
+            path.write_bytes(b'legacy')
+    (bundle/'run_report.json').write_text(json.dumps(report),encoding='utf-8')
+    assert workflow.classify_completed_bundle(report,bundle)=='legacy_structured_rectangular_shp'
+    assert workflow.find_latest_completed_bundle(bundle.parent)==bundle.resolve()
 
 
 def test_prepared_coordinates_within_declared_tolerance_can_export(job):
