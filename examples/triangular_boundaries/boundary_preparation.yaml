@@ -1,0 +1,15 @@
+format: triangular-boundary-preparation-v1
+schema_version: "1.0"
+case_id: synthetic-annulus-boundary-example
+business_file: ../triangular_mesh/business_preparation.json
+output_file: boundary_preparation.json
+output_times_s: [0.0, 3600.0, 7200.0]
+time_origin: null
+unbound_exterior_policy: closed_wall
+boundary_bindings:
+  - group_name: outer_boundary
+    direction: inflow
+    allocation_policy: uniform_per_unit_length
+    temporal_policy: piecewise_constant
+  - group_name: hole_0
+overwrite_existing_output: false

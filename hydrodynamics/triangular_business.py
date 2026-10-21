@@ -8,7 +8,7 @@ data; it never constructs solver arrays or allocates boundary fluxes.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import math
@@ -27,7 +27,11 @@ from .mesh_preparation import (
     read_ugrid_preparation,
     read_ugrid_security_exclusion,
 )
-from .security_exclusion import SecurityExclusionError, SecurityExclusionEvidence, security_evidence_sha256
+from .security_exclusion import (
+    SecurityExclusionError,
+    SecurityExclusionEvidence,
+    security_evidence_sha256,
+)
 from .triangular_mesh import FaceTerrainField, TriangularMesh, TriangularMeshError
 
 
@@ -501,6 +505,42 @@ class TriangularBoundaryBinding:
         return self
 
 
+def _security_exclusion_closed_wall_edge_ids(
+    mesh: TriangularMesh,
+    evidence: SecurityExclusionEvidence | None,
+) -> tuple[int, ...]:
+    if evidence is None:
+        return ()
+    if (evidence.mesh_id != mesh.mesh_id
+            or evidence.topology_fingerprint != topology_fingerprint(mesh)
+            or evidence.mesh_face_count != mesh.n_face):
+        raise TriangularBusinessError("security-exclusion evidence does not match the active P2 mesh/topology")
+    group_name = evidence.security_boundary_group_name
+    if group_name != "security_exclusion_boundary":
+        raise TriangularBusinessError("P2 security evidence uses an unsupported closed-wall boundary identity")
+    edge_ids = tuple(mesh.boundary_groups.get(group_name, ()))
+    if (len(edge_ids) != evidence.security_boundary_edge_count
+            or len(set(edge_ids)) != len(edge_ids)):
+        raise TriangularBusinessError("P2 security closed-wall boundary edge count/identity differs from its evidence")
+    if evidence.security_boundary_edge_count == 0 and not edge_ids:
+        pairs: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    else:
+        pairs = []
+        for edge_id in edge_ids:
+            if not 0 <= edge_id < mesh.n_edge or mesh.edge_faces[edge_id][1] != -1:
+                raise TriangularBusinessError("P2 security closed-wall group contains a non-exterior edge")
+            pairs.append(tuple(sorted(
+                tuple(float(value) for value in mesh.node_xy[node]) for node in mesh.edge_nodes[edge_id]
+            )))
+        pairs.sort()
+    digest = hashlib.sha256(
+        json.dumps(pairs, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    ).hexdigest()
+    if digest != evidence.security_boundary_edge_sha256:
+        raise TriangularBusinessError("P2 security closed-wall edge coordinates differ from authenticated evidence")
+    return tuple(sorted(edge_ids))
+
+
 @dataclass(frozen=True)
 class TriangularBusinessPackage:
     mesh: TriangularMesh
@@ -510,6 +550,7 @@ class TriangularBusinessPackage:
     boundary_bindings: Sequence[TriangularBoundaryBinding]
     preparation_only: bool = True
     security_exclusion: SecurityExclusionEvidence | None = None
+    _security_exclusion_boundary_edge_ids: tuple[int, ...] = field(default=(), init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.preparation_only is not True:
@@ -517,11 +558,7 @@ class TriangularBusinessPackage:
         self.terrain.validate_for(self.mesh)
         self.roughness.validate_for(self.mesh)
         self.initial_condition.validate_for(self.mesh, self.terrain)
-        if self.security_exclusion is not None:
-            if (self.security_exclusion.mesh_id != self.mesh.mesh_id
-                    or self.security_exclusion.topology_fingerprint != topology_fingerprint(self.mesh)
-                    or self.security_exclusion.mesh_face_count != self.mesh.n_face):
-                raise TriangularBusinessError("security-exclusion evidence does not match the active P2 mesh/topology")
+        protected_edges = _security_exclusion_closed_wall_edge_ids(self.mesh, self.security_exclusion)
         bindings = tuple(self.boundary_bindings)
         names: set[str] = set()
         assigned_edges: set[int] = set()
@@ -530,11 +567,22 @@ class TriangularBusinessPackage:
             if binding.group_name in names:
                 raise TriangularBusinessError(f"boundary group '{binding.group_name}' is bound more than once")
             names.add(binding.group_name)
+            security_overlap = sorted(set(binding.edge_ids).intersection(protected_edges))
+            if security_overlap:
+                raise TriangularBusinessError(
+                    f"boundary group '{binding.group_name}' targets security-exclusion closed-wall P2 edge IDs {security_overlap}"
+                )
             overlap = assigned_edges.intersection(binding.edge_ids)
             if overlap:
                 raise TriangularBusinessError(f"exterior mesh edge IDs are bound more than once: {sorted(overlap)}")
             assigned_edges.update(binding.edge_ids)
         object.__setattr__(self, "boundary_bindings", bindings)
+        object.__setattr__(self, "_security_exclusion_boundary_edge_ids", protected_edges)
+
+    @property
+    def security_exclusion_boundary_edge_ids(self) -> tuple[int, ...]:
+        """P2 edge IDs rederived from authenticated security geometry, independent of group aliases."""
+        return self._security_exclusion_boundary_edge_ids
 
 
 @dataclass(frozen=True)

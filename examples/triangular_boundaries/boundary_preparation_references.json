@@ -1,0 +1,104 @@
+{
+  "format": "triangular-boundary-preparation-reference-v1",
+  "status": "pending_main_review",
+  "scope": "independent geometry and requested-volume references; not solver flux validation",
+  "sign_convention": {
+    "positive_normal": "outward",
+    "direction_sign": {
+      "inflow": -1,
+      "outflow": 1
+    },
+    "discharge_unit": "m3/s",
+    "unit_width_discharge_unit": "m2/s"
+  },
+  "references": [
+    {
+      "id": "weighted_edge_allocation",
+      "input": {
+        "edge_lengths_m": [1.0, 3.0],
+        "total_group_discharge_m3_s": 0.01
+      },
+      "expected": {
+        "length_weights": [0.25, 0.75],
+        "unsigned_edge_discharge_m3_s": [0.0025, 0.0075],
+        "unsigned_normal_discharge_m2_s": [0.0025, 0.0025],
+        "inflow_signed_edge_discharge_m3_s": [-0.0025, -0.0075],
+        "outflow_signed_edge_discharge_m3_s": [0.0025, 0.0075]
+      },
+      "independent_derivation": "Q_e = Q * L_e / sum(L); q_n,e = sign * Q_e / L_e = sign * Q / sum(L)",
+      "tolerance": {
+        "edge_discharge_sum_abs_m3_s": "1e-12 * max(1, abs(Q))",
+        "unit_normal_norm_abs": 1e-12
+      }
+    },
+    {
+      "id": "piecewise_constant_requested_volume",
+      "input": {
+        "output_times_s": [0.0, 10.0, 20.0, 30.0],
+        "inflow_samples_m3_s": [0.01, 0.0, 0.02, 0.02],
+        "outflow_samples_m3_s": [0.005, 0.005, 0.005, 0.005],
+        "temporal_policy": "left_closed_right_open_final_endpoint_terminal"
+      },
+      "expected": {
+        "inflow_interval_volume_m3": [0.1, 0.0, 0.2],
+        "inflow_total_volume_m3": 0.3,
+        "outflow_interval_volume_m3": [0.05, 0.05, 0.05],
+        "outflow_total_volume_m3": 0.15,
+        "net_inflow_volume_m3": 0.15,
+        "terminal_inflow_sample_m3_s": 0.02,
+        "terminal_sample_extra_integrated_volume_m3": 0.0
+      },
+      "independent_derivation": "Each left interval value is multiplied by the 10 s interval duration; the terminal sample does not span a further interval.",
+      "tolerance": {
+        "interval_and_cumulative_volume_abs_m3": 1e-12
+      }
+    },
+    {
+      "id": "rigid_transform_and_identity_reordering",
+      "input": {
+        "geometry_operation": "rotate 90 degrees, reverse face order, reorder node identities and reverse endpoint pair declarations",
+        "request_total_group_discharge_m3_s": 0.01
+      },
+      "expected": {
+        "lengths_weights_edge_shares_and_integrated_group_discharge": "invariant",
+        "outward_normals": "rotate by the same 90-degree rigid transform",
+        "edge_identity": "must still bind actual P2 exterior edge IDs and nodes"
+      },
+      "tolerance": {
+        "unit_normal_norm_abs": 1e-12,
+        "field_equivalence_relative_or_absolute": "1e-10 * max(1, abs(reference))"
+      }
+    },
+    {
+      "id": "flat_bed_static_absolute_water_level",
+      "input": {
+        "bed_elevation_m": 0.0,
+        "absolute_water_level_m": 1.0,
+        "vertical_datum": "same explicit synthetic datum on terrain and request"
+      },
+      "expected_analytic_state": {
+        "water_depth_m": 1.0,
+        "normal_discharge_m2_s": 0.0,
+        "net_exchange_volume_m3": 0.0
+      },
+      "scope_note": "Analytic hydrostatic expectation only. The P4-3A artifact records stage and datum; it does not derive an exterior state or test an applied flux."
+    }
+  ],
+  "source_references": [
+    {
+      "title": "HEC-RAS 2D User's Manual: External Boundary Conditions",
+      "url": "https://www.hec.usace.army.mil/confluence/rasdocs/r2dum/latest/boundary-and-initial-conditions-for-2d-flow-areas/external-boundary-conditions",
+      "use": "Published flow/stage boundary behavior, dry stage behavior, and prohibition on overlapping different boundary types on one face."
+    },
+    {
+      "title": "Deltares D-Flow FM Technical Reference Manual, section 6.4",
+      "url": "https://content.oss.deltares.nl/delft3dfm2d3d/D-Flow_FM_Technical_Reference_Manual.pdf",
+      "use": "Discharge integral and distinction between water level, normal velocity, and supplementary tangential velocity."
+    },
+    {
+      "title": "Antonopoulos and Dougalis, Notes on Galerkin-finite element methods for the Shallow Water equations with characteristic boundary conditions",
+      "url": "https://arxiv.org/abs/1507.08209",
+      "use": "One-dimensional characteristic-speed and regime-dependent incoming-information context only."
+    }
+  ]
+}
