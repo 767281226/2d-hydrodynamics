@@ -1,0 +1,89 @@
+{
+  "format": "t004-k0-independent-root-regressions-v1",
+  "scope": "six accepted scalar reference tuples only; no dynamic execution/domain or full D0 claim",
+  "provenance": {
+    "examples/triangular_boundaries/t004_d0_reference_candidates_r2.json": "6345509081fe06d675c9ed09eafa04278c3528e4effb05c848a289752b2efd38",
+    "examples/triangular_boundaries/t004_d0_policy_reference_r3.json": "3d0a731c9a5f1f9b58a51d0e82fab90aaab70ef571ecde76c5064e4cfccc75cb",
+    "examples/triangular_boundaries/t004_d0_policy_reference_r4.json": "a67c4ac4c369053e6344acd629e4069b5f95451e99545d4c5d9dbf9973420d74"
+  },
+  "cases": [
+    {
+      "case_id": "R0-west-uniform-throughflow-inflow",
+      "owner_depth_m": "1.0",
+      "owner_normal_velocity_m_s": "-0.2",
+      "q_n_m2_s": "-0.2",
+      "direction": "inflow",
+      "reference_c_g_interval_m_s": [
+        "3.13209195267316505392732620676441430348695495131593992590161917470141117438844047562361918733372941369394676147",
+        "3.13209195267316505392732620676441430348695495131593992590161917470141117438844047562361918733372941369394676148"
+      ],
+      "reference_representation_allowance_m_s": "1/1125899906842624",
+      "allowance_basis": "two binary64 ULPs for decimal-reference representation only; never runtime Q tolerance"
+    },
+    {
+      "case_id": "R0-east-uniform-throughflow-outflow",
+      "owner_depth_m": "1.0",
+      "owner_normal_velocity_m_s": "0.2",
+      "q_n_m2_s": "0.2",
+      "direction": "outflow",
+      "reference_c_g_interval_m_s": [
+        "3.13209195267316505392732620676441430348695495131593992590161917470141117438844047562361918733372941369394676147",
+        "3.13209195267316505392732620676441430348695495131593992590161917470141117438844047562361918733372941369394676148"
+      ],
+      "reference_representation_allowance_m_s": "1/1125899906842624",
+      "allowance_basis": "two binary64 ULPs for decimal-reference representation only; never runtime Q tolerance"
+    },
+    {
+      "case_id": "R1-west-rarefaction-inflow",
+      "owner_depth_m": "1.0",
+      "owner_normal_velocity_m_s": "-1.2",
+      "q_n_m2_s": "-0.4309380072155767",
+      "direction": "inflow",
+      "reference_c_g_interval_m_s": [
+        "2.8171427297912320014214055017608616166668608255381164286507777346140161913883690938338500070814717616168974899",
+        "2.8171427297912320014214055017608616166668608255381164286507777346140161913883729801096997995815531854752357501"
+      ],
+      "reference_representation_allowance_m_s": "1/1125899906842624",
+      "allowance_basis": "two binary64 ULPs for decimal-reference representation only; never runtime Q tolerance"
+    },
+    {
+      "case_id": "R3-face-10000003-west-q--0.4",
+      "owner_depth_m": "0.804648507067057900000000000000000000000000000000",
+      "owner_normal_velocity_m_s": "-0.555820622449617589710926771943819245313865428486",
+      "q_n_m2_s": "-0.400000000000000000000000000000000000000000000000",
+      "direction": "inflow",
+      "reference_c_g_interval_m_s": [
+        "2.784777565704502398042088060637523294076776320284227743703273296346667726",
+        "2.784777565704502521459058581647852310174390156669420209428789793432046635"
+      ],
+      "reference_representation_allowance_m_s": "120739015116387646412192191541790572881730215455961627596495160029324149852362661/500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "allowance_basis": "independently accepted R4 input quantization/inverse-condition upper bound; never runtime Q tolerance"
+    },
+    {
+      "case_id": "R3-face-10000042-east-q-0.5",
+      "owner_depth_m": "0.837888329383750000000000000000000000000000000000",
+      "owner_normal_velocity_m_s": "0.675733362143146789525895663262589183555725838031",
+      "q_n_m2_s": "0.500000000000000000000000000000000000000000000000",
+      "direction": "outflow",
+      "reference_c_g_interval_m_s": [
+        "2.915644496552403374730002562285920986756150180892417214845786139272130396",
+        "2.915644496552403524772949994024066465370763494022963344339125967799140257"
+      ],
+      "reference_representation_allowance_m_s": "578400367712681742471368434111801899579894419595528007727619734316249057565211443/1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "allowance_basis": "independently accepted R4 input quantization/inverse-condition upper bound; never runtime Q tolerance"
+    },
+    {
+      "case_id": "R3-face-10000045-east-q-1.0",
+      "owner_depth_m": "0.989045063734197900000000000000000000000000000000",
+      "owner_normal_velocity_m_s": "1.166544766310714380785178393967395671660883089001",
+      "q_n_m2_s": "1.000000000000000000000000000000000000000000000000",
+      "direction": "outflow",
+      "reference_c_g_interval_m_s": [
+        "3.222342694062538401907627493656066035870857798877031369604792581290303379",
+        "3.222342694062538531420113375068848754496113601125168615830329120935820944"
+      ],
+      "reference_representation_allowance_m_s": "454076156237601050228412563017634030184917366358489134941275026468960720897471189/1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "allowance_basis": "independently accepted R4 input quantization/inverse-condition upper bound; never runtime Q tolerance"
+    }
+  ]
+}
