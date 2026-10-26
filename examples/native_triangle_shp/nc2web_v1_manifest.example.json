@@ -1,0 +1,90 @@
+{
+  "artifact_type": "derived_display_compatibility",
+  "blockers": [],
+  "dx": 1.0004001614288427,
+  "dy": 1.0004001623019576,
+  "epsg": "EPSG:4548",
+  "extrema": {
+    "water_depth": {
+      "max": 0.20000000298023224,
+      "min": 0.20000000298023224
+    },
+    "water_level": {
+      "max": 0.20000000298023224,
+      "min": 0.20000000298023224
+    }
+  },
+  "format": "nc2web",
+  "frames": [
+    {
+      "extrema": {
+        "water_depth": {
+          "max": 0.20000000298023224,
+          "min": 0.20000000298023224
+        },
+        "water_level": {
+          "max": 0.20000000298023224,
+          "min": 0.20000000298023224
+        }
+      },
+      "file": "frame_000.bin",
+      "index": 0,
+      "time": 0.0
+    },
+    {
+      "extrema": {
+        "water_depth": {
+          "max": 0.20000000298023224,
+          "min": 0.20000000298023224
+        },
+        "water_level": {
+          "max": 0.20000000298023224,
+          "min": 0.20000000298023224
+        }
+      },
+      "file": "frame_001.bin",
+      "index": 1,
+      "time": 0.5
+    },
+    {
+      "extrema": {
+        "water_depth": {
+          "max": 0.20000000298023224,
+          "min": 0.20000000298023224
+        },
+        "water_level": {
+          "max": 0.20000000298023224,
+          "min": 0.20000000298023224
+        }
+      },
+      "file": "frame_002.bin",
+      "index": 2,
+      "time": 1.0
+    }
+  ],
+  "mesh": "mesh.bin",
+  "node_count": 6,
+  "nx": 2,
+  "ny": 1,
+  "origin": [
+    499999.99999999895,
+    4301720.688163057
+  ],
+  "source": "D:\\devTools\\project\\2d-hydrodynamics\\examples\\native_triangle_shp\\m1qa-253df2ada9a0-cbbab928\\native-triangle-shp-two-face-v1.nc",
+  "status": "pass",
+  "times": [
+    0.0,
+    0.5,
+    1.0
+  ],
+  "triangle_count": 4,
+  "variables": [
+    "water_depth",
+    "water_level",
+    "velocity_x",
+    "velocity_y"
+  ],
+  "version": "1.0",
+  "warnings": [],
+  "xy_scale": 0.001
+}

@@ -1,61 +1,29 @@
-﻿@echo off
+@echo off
 setlocal EnableExtensions
-chcp 65001 >nul
-cd /d "%~dp0"
+set "PROJECT_ROOT=%~dp0"
+if "%PROJECT_ROOT:~-1%"=="\" set "PROJECT_ROOT=%PROJECT_ROOT:~0,-1%"
+set "PYTHON=%PROJECT_ROOT%\.venv\Scripts\python.exe"
+if not exist "%PYTHON%" goto missing_python
+cd /d "%PROJECT_ROOT%"
+if errorlevel 1 goto bad_root
+if "%~1"=="" goto latest
+goto explicit
 
-set "PORT=8788"
-set "URL=http://127.0.0.1:%PORT%/viewer.html?v=10"
-set "VIEWDIR=%~1"
+:latest
+"%PYTHON%" -X utf8 -m hydrodynamics.viewer_server --project-root "%PROJECT_ROOT%"
+goto finish
 
-echo ============================================
-echo  东淀清北 淹没渲染服务
-echo  地址 %URL%
-echo  关闭本窗口即停止服务
-echo ============================================
-echo.
+:explicit
+"%PYTHON%" -X utf8 -m hydrodynamics.viewer_server --project-root "%PROJECT_ROOT%" "%~1"
+goto finish
 
-where python >nul 2>nul
-if errorlevel 1 (
-    echo [错误] 未找到 python，请先安装 Python 3.11+ 并加入 PATH。
-    goto :fail
-)
-
-if "%VIEWDIR%"=="" (
-    for /f "delims=" %%I in ('python -m hydrodynamics --show-latest 2^>nul') do set "VIEWDIR=%%I"
-)
-if "%VIEWDIR%"=="" set "VIEWDIR=work\results\dongdian_qingbei_2023_288h"
-
-if exist "%VIEWDIR%\viewer.html" goto :ready
-if not "%~1"=="" if exist "work\results\%~1\viewer.html" (
-    set "VIEWDIR=work\results\%~1"
-    goto :ready
-)
-
-echo [错误] 未找到 viewer.html
-echo         默认目录: work\results\dongdian_qingbei_2023_288h
-echo         也可传入结果目录或 id，例如:
-echo         start_viewer.bat run01
-echo         start_viewer.bat D:\out\run01
-goto :fail
-
-:ready
-for %%I in ("%VIEWDIR%") do set "VIEWDIR=%%~fI"
-if not exist "%VIEWDIR%\nc2web\manifest.json" (
-    echo [警告] 未找到 nc2web\manifest.json ，页面可能无法加载帧。
-)
-
-echo 服务目录: %VIEWDIR%
-echo 浏览器将打开: %URL%
-echo.
-
-start "" "%URL%"
-cd /d "%VIEWDIR%"
-python -m http.server %PORT% --bind 127.0.0.1
-if errorlevel 1 goto :fail
-exit /b 0
-
-:fail
-echo.
-echo [失败] 渲染服务未启动。
-pause
+:missing_python
+echo [ERROR] Project .venv Python is missing: "%PYTHON%"
 exit /b 1
+
+:bad_root
+echo [ERROR] Cannot enter project directory: "%PROJECT_ROOT%"
+exit /b 1
+
+:finish
+exit /b %errorlevel%

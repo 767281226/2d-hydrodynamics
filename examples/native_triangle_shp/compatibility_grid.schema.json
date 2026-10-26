@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hydrodynamics-legacy-grid-compatibility-v1",
+  "title": "Derived structured compatibility grid metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schema_version", "run_id", "grid_id_digest", "native_result_sha256", "id_rule", "nx", "ny", "origin_lower_left_m", "dx", "dy", "coordinate_system", "active_coverage_fraction", "source_covered_area_m2", "display_wet_area_semantics", "cell_shapes_normalized", "mapping", "variables", "display_is_derived", "native_triangles_remain_authoritative", "project_full_run_domain_selection", "nc2web_frame_files"],
+  "properties": {
+    "format": {"const": "hydrodynamics-legacy-grid-compatibility-v1"},
+    "schema_version": {"const": "1.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "grid_id_digest": {"$ref": "#/$defs/sha256"},
+    "native_result_sha256": {"$ref": "#/$defs/sha256"},
+    "id_rule": {"const": "1-based row-major: row*nx+col+1"},
+    "nx": {"type": "integer", "minimum": 1},
+    "ny": {"type": "integer", "minimum": 1},
+    "origin_lower_left_m": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}},
+    "dx": {"type": "number", "exclusiveMinimum": 0},
+    "dy": {"type": "number", "exclusiveMinimum": 0},
+    "coordinate_system": {"type": "string", "minLength": 1},
+    "active_coverage_fraction": {"type": "array", "items": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}}},
+    "source_covered_area_m2": {"type": "array", "items": {"type": "array", "items": {"type": "number", "minimum": 0}}},
+    "display_wet_area_semantics": {"type": "string", "minLength": 1},
+    "cell_shapes_normalized": {"type": "array", "items": {"type": "array"}},
+    "mapping": {"type": "object"},
+    "variables": {"type": "object", "additionalProperties": {"type": "object", "required": ["availability", "mapping"]}},
+    "nc2web_frame_files": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["file", "bytes", "sha256"], "properties": {"file": {"type": "string", "pattern": "^frame_[0-9]{3}\\.bin$"}, "bytes": {"type": "integer", "minimum": 1}, "sha256": {"$ref": "#/$defs/sha256"}}}},
+    "display_is_derived": {"const": true},
+    "native_triangles_remain_authoritative": {"const": true},
+    "project_full_run_domain_selection": {"type": "object", "additionalProperties": false, "required": ["choice", "source_geometry", "area_m2", "area_policy", "m1_sample_relation"], "properties": {"choice": {"const": "EXISTING_DOMAIN_MINUS_VALIDATED_SECURITY_EXCLUSION"}, "source_geometry": {"type": "string"}, "area_m2": {"type": "null"}, "area_policy": {"type": "string"}, "m1_sample_relation": {"type": "string"}}}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

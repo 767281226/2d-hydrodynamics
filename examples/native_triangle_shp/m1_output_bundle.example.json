@@ -1,0 +1,150 @@
+{
+  "case_id": "native-triangle-shp-two-face-v1",
+  "compatibility": {
+    "file": "native-triangle-shp-two-face-v1.nc",
+    "grid_id_digest": "f9b6e93b0805c158f1b0657e4d110b87760233fb92e02e1f01d8105db5460a2a",
+    "mapping_file": "compatibility_grid.json",
+    "nc2web_v1": "nc2web/manifest.json",
+    "profile": "legacy-structured-grid-v1-derived-from-native-triangles",
+    "run_id": "m1qa-253df2ada9a0-cbbab928",
+    "sha256": "b484974a97a2c970dabd50214a6c2f4a98593afd68640065b1323b75133b3720",
+    "stepjson_v1": "stepjson/index.json"
+  },
+  "completeness": "M1 small-data format/reader/viewer acceptance only; not a full DEM or production result",
+  "data_origin": "SYNTHETIC_SMALL_NATIVE_FIXTURE",
+  "database_status": "DISABLED_NOT_REQUESTED",
+  "domain_selection": {
+    "area_m2": null,
+    "calculation": "M2 computes area from validated D minus validated S, not a hard-coded number or bbox",
+    "choice": "EXISTING_DOMAIN_MINUS_VALIDATED_SECURITY_EXCLUSION",
+    "m1_sample_relation": "This QA fixture does not represent Qingbei D-S",
+    "source_geometry": "actual original D and S source geometries; revalidate from their files in M2"
+  },
+  "format": "m1-output-bundle-v1",
+  "legacy_optional_artifacts": {
+    "database_receipt": {
+      "status": "DISABLED_NOT_REQUESTED"
+    },
+    "dispatch_input.json": {
+      "baseline_schema": "UNKNOWN_PENDING_OLD_SUCCESS_BUNDLE",
+      "status": "NOT_REQUESTED_FOR_CLOSED_WALL_QA_FIXTURE"
+    },
+    "gate_dispatch.csv": {
+      "baseline_schema": "UNKNOWN_PENDING_OLD_SUCCESS_BUNDLE",
+      "status": "NOT_REQUESTED_FOR_CLOSED_WALL_QA_FIXTURE"
+    },
+    "gate_dispatch.json": {
+      "baseline_schema": "UNKNOWN_PENDING_OLD_SUCCESS_BUNDLE",
+      "status": "NOT_REQUESTED_FOR_CLOSED_WALL_QA_FIXTURE"
+    },
+    "social_economy_overlay": {
+      "status": "NOT_READ_NOT_REQUESTED"
+    }
+  },
+  "live_solver_ran": false,
+  "native_result": {
+    "dry_depth_threshold_m": 1e-06,
+    "face_count": 2,
+    "file": "result_native.nc",
+    "grid_topology": "native_triangular_mesh",
+    "node_count": 4,
+    "saved_frame_count": 3,
+    "sha256": "77afe9bab56b977da0d76c2b8ce66bb9b43d95e6275faa36b546be8ff29a33a8",
+    "source_kind": "sources_none_closed_wall",
+    "source_path": "D:\\devTools\\project\\2d-hydrodynamics\\examples\\native_triangle_shp\\result.nc"
+  },
+  "native_web": {
+    "manifest": "native_web/manifest.json",
+    "sha256": "00d50f07a15beb2dc4ad9594d22e7eee1366d435ec9a941496a4093a9dbd0c37"
+  },
+  "production_approved": false,
+  "qa_fixture": true,
+  "run_id": "m1qa-253df2ada9a0-cbbab928",
+  "schema_version": "1.0",
+  "security_exclusion": null,
+  "selected_full_run_domain": "EXISTING_DOMAIN_MINUS_VALIDATED_SECURITY_EXCLUSION",
+  "shp_packages": [
+    {
+      "artifact": "shp/full_domain",
+      "components": [
+        "faces.cpg",
+        "faces.dbf",
+        "faces.prj",
+        "faces.shp",
+        "faces.shx",
+        "manifest.json"
+      ],
+      "feature_count": 2,
+      "manifest_sha256": "9156a533849e3af643e4078e620c5697a9871d2d5b81993b79058bd2a46eab51",
+      "scope": "FULL_DOMAIN",
+      "status": "PASS_SMALL_NATIVE_TRIANGLE_FIXTURE",
+      "target_crs": "NATIVE"
+    },
+    {
+      "artifact": "shp/full_domain_4490",
+      "components": [
+        "faces.cpg",
+        "faces.dbf",
+        "faces.prj",
+        "faces.shp",
+        "faces.shx",
+        "manifest.json"
+      ],
+      "feature_count": 2,
+      "manifest_sha256": "76c0cf38be36f2ffa76b81642199e4e642ac4a4496ad83e8712240360265e622",
+      "scope": "FULL_DOMAIN",
+      "status": "PASS_SMALL_NATIVE_TRIANGLE_FIXTURE",
+      "target_crs": "EPSG:4490"
+    },
+    {
+      "artifact": "shp/maximum_wet_surface",
+      "components": [
+        "faces.cpg",
+        "faces.dbf",
+        "faces.prj",
+        "faces.shp",
+        "faces.shx",
+        "manifest.json"
+      ],
+      "feature_count": 2,
+      "manifest_sha256": "00ff3520cde3eb788e20a324386783522da6a2ef7c654a5dc781e277c94708d7",
+      "scope": "MAXIMUM_WET_SURFACE",
+      "status": "PASS_SMALL_NATIVE_TRIANGLE_FIXTURE",
+      "target_crs": "NATIVE"
+    },
+    {
+      "artifact": "shp/maximum_wet_surface_4490",
+      "components": [
+        "faces.cpg",
+        "faces.dbf",
+        "faces.prj",
+        "faces.shp",
+        "faces.shx",
+        "manifest.json"
+      ],
+      "feature_count": 2,
+      "manifest_sha256": "09f7e4effcf2706065f3d6acfdd56430476fdb2875fb99fba22f20b11da477da",
+      "scope": "MAXIMUM_WET_SURFACE",
+      "status": "PASS_SMALL_NATIVE_TRIANGLE_FIXTURE",
+      "target_crs": "EPSG:4490"
+    }
+  ],
+  "simulation_result": true,
+  "social_economy_status": "NOT_READ_NOT_REQUESTED",
+  "source_graph_file": "provenance/source_graph.json",
+  "source_graph_sha256": "eca6f218637c9438d98f50816907cb96074f3be45d4ba0645f04d40de4c95604",
+  "status": "QA_FIXTURE_READY_NOT_PRODUCTION",
+  "time_origin": null,
+  "time_s": [
+    0.0,
+    0.5,
+    1.0
+  ],
+  "viewer": {
+    "default_profile": "native_web",
+    "profiles": {
+      "compatibility_grid": "nc2web/manifest.json",
+      "native_web": "native_web/manifest.json"
+    }
+  }
+}

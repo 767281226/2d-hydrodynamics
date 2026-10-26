@@ -1,0 +1,27 @@
+{
+  "cell_id_rule": "1-based row-major: id = row * nx + col + 1",
+  "epsg": "EPSG:4548",
+  "files": [
+    "step_000.json",
+    "step_001.json",
+    "step_002.json"
+  ],
+  "nx": 2,
+  "ny": 1,
+  "output_dir": "D:\\devTools\\project\\2d-hydrodynamics\\examples\\native_triangle_shp\\m1qa-253df2ada9a0-cbbab928\\stepjson",
+  "record_format": "grid_id_depth_speed_direction joined by underscore",
+  "source": "D:\\devTools\\project\\2d-hydrodynamics\\examples\\native_triangle_shp\\m1qa-253df2ada9a0-cbbab928\\native-triangle-shp-two-face-v1.nc",
+  "status": "pass",
+  "still_direction_deg": 180.0,
+  "times": [
+    0.0,
+    0.5,
+    1.0
+  ],
+  "warnings": [],
+  "wet_counts": [
+    0,
+    0,
+    0
+  ]
+}

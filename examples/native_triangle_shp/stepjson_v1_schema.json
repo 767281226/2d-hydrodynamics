@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hydrodynamics-stepjson-v1",
+  "title": "Legacy stepjson v1 index and frame records",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "epsg", "source", "output_dir", "nx", "ny", "times", "files", "cell_id_rule", "record_format", "still_direction_deg", "warnings", "wet_counts"],
+  "properties": {
+    "status": {"enum": ["pass", "warn"]},
+    "epsg": {"const": "EPSG:4548"},
+    "source": {"type": "string"},
+    "output_dir": {"type": "string"},
+    "nx": {"type": "integer", "minimum": 1},
+    "ny": {"type": "integer", "minimum": 1},
+    "times": {"type": "array", "items": {"type": ["number", "null"]}},
+    "files": {"type": "array", "items": {"type": "string", "pattern": "^step_[0-9]{3}\\.json$"}},
+    "cell_id_rule": {"const": "1-based row-major: id = row * nx + col + 1"},
+    "record_format": {"const": "grid_id_depth_speed_direction joined by underscore"},
+    "still_direction_deg": {"type": "number", "minimum": 0, "maximum": 360},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "wet_counts": {"type": "array", "items": {"type": "integer", "minimum": 0}}
+  },
+  "$defs": {"frame": {"type": "object", "additionalProperties": false, "required": ["all"], "properties": {"all": {"type": "array", "items": {"type": "string", "pattern": "^[0-9]+_-?[0-9]+(?:\\.[0-9]+)?_-?[0-9]+(?:\\.[0-9]+)?_-?[0-9]+(?:\\.[0-9]+)?$"}}}}}
+}

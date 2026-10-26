@@ -1,0 +1,1053 @@
+{
+  "active_coverage_fraction": [
+    [
+      1.0,
+      0.5,
+      0.5,
+      0.9999999999999999
+    ],
+    [
+      1.0,
+      0.5,
+      0.5,
+      1.0
+    ]
+  ],
+  "cell_shapes_normalized": [
+    [
+      [
+        "101",
+        [
+          [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.75,
+              1.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        ]
+      ],
+      [
+        "102",
+        [
+          [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0
+            ],
+            [
+              0.75,
+              1.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        ]
+      ]
+    ],
+    [
+      [
+        "101",
+        [
+          [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0
+            ],
+            [
+              0.5,
+              1.0
+            ],
+            [
+              0.5,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        ]
+      ]
+    ],
+    [
+      [
+        "201",
+        [
+          [
+            [
+              0.5,
+              0.0
+            ],
+            [
+              1.0,
+              0.6666666666666666
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              0.5,
+              0.0
+            ]
+          ]
+        ]
+      ],
+      [
+        "202",
+        [
+          [
+            [
+              0.5,
+              0.0
+            ],
+            [
+              0.5,
+              1.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              1.0,
+              0.6666666666666666
+            ],
+            [
+              0.5,
+              0.0
+            ]
+          ]
+        ]
+      ]
+    ],
+    [
+      [
+        "201",
+        [
+          [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.6666666666666666
+            ],
+            [
+              0.25,
+              1.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ]
+          ]
+        ]
+      ],
+      [
+        "202",
+        [
+          [
+            [
+              0.0,
+              0.6666666666666666
+            ],
+            [
+              0.0,
+              1.0
+            ],
+            [
+              0.25,
+              1.0
+            ],
+            [
+              0.0,
+              0.6666666666666666
+            ]
+          ]
+        ]
+      ]
+    ],
+    [
+      [
+        "101",
+        [
+          [
+            [
+              1.0,
+              0.33333333333333326
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              0.75,
+              0.0
+            ],
+            [
+              1.0,
+              0.33333333333333326
+            ]
+          ]
+        ]
+      ],
+      [
+        "102",
+        [
+          [
+            [
+              0.75,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              1.0,
+              0.33333333333333326
+            ],
+            [
+              0.75,
+              0.0
+            ]
+          ]
+        ]
+      ]
+    ],
+    [
+      [
+        "101",
+        [
+          [
+            [
+              0.5,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.33333333333333326
+            ],
+            [
+              0.5,
+              1.0
+            ],
+            [
+              0.5,
+              0.0
+            ]
+          ]
+        ]
+      ],
+      [
+        "102",
+        [
+          [
+            [
+              0.0,
+              0.33333333333333326
+            ],
+            [
+              0.0,
+              1.0
+            ],
+            [
+              0.5,
+              1.0
+            ],
+            [
+              0.0,
+              0.33333333333333326
+            ]
+          ]
+        ]
+      ]
+    ],
+    [
+      [
+        "202",
+        [
+          [
+            [
+              1.0,
+              1.0
+            ],
+            [
+              1.0,
+              0.0
+            ],
+            [
+              0.5,
+              0.0
+            ],
+            [
+              0.5,
+              1.0
+            ],
+            [
+              1.0,
+              1.0
+            ]
+          ]
+        ]
+      ]
+    ],
+    [
+      [
+        "201",
+        [
+          [
+            [
+              1.0,
+              0.0
+            ],
+            [
+              0.25,
+              0.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              1.0,
+              0.0
+            ]
+          ]
+        ]
+      ],
+      [
+        "202",
+        [
+          [
+            [
+              0.25,
+              0.0
+            ],
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0
+            ],
+            [
+              1.0,
+              1.0
+            ],
+            [
+              0.25,
+              0.0
+            ]
+          ]
+        ]
+      ]
+    ]
+  ],
+  "coordinate_system": "EPSG:32650",
+  "display_is_derived": true,
+  "dx": 1.0,
+  "dy": 1.0,
+  "format": "hydrodynamics-legacy-grid-compatibility-v1",
+  "grid_id_digest": "3bf46756821bc305673812821548a949af9428e5e16c6b5c0e866f06da7e1a21",
+  "id_rule": "1-based row-major: row*nx+col+1",
+  "mapping": {
+    "format": "hydrodynamics-legacy-grid-compatibility-v1",
+    "native_result_sha256": "60527630ae2ba890bede53190f359c32ca17478062941cdecf30d418a8561cc4",
+    "cell_size_m": 1.0,
+    "origin_lower_left_m": [
+      0.0,
+      0.0
+    ],
+    "shape_ny_nx": [
+      2,
+      4
+    ],
+    "id_rule": "1-based row-major: row*nx+col+1",
+    "coverage_area_m2": 6.0,
+    "native_active_area_m2": 6.0,
+    "face_overlap_rule": "exact planar native triangle ∩ display cell area in source projected CRS",
+    "source_covered_area_m2": [
+      [
+        1.0,
+        0.5,
+        0.5,
+        0.9999999999999999
+      ],
+      [
+        1.0,
+        0.5,
+        0.5,
+        1.0
+      ]
+    ],
+    "wet_area_semantics": "native wet_area uses the native face dry threshold; compatibility display wet-covered area sums source_covered_area_m2 where mapped display depth is strictly positive",
+    "display_area_semantics": "dx*dy is the source-CRS display-cell area and is not substituted for source overlap area after reprojection",
+    "partial_cell_rule": "store covered-area mean and active_coverage_fraction; never pad uncovered area with zero",
+    "field_rule": "area-average h and per-width momentum over covered area; recover u/v as mean(momentum)/mean(h) for wet cells",
+    "cell_contributions": [
+      [
+        [
+          "101",
+          0.625
+        ],
+        [
+          "102",
+          0.375
+        ]
+      ],
+      [
+        [
+          "101",
+          0.5
+        ]
+      ],
+      [
+        [
+          "201",
+          0.16666666666666666
+        ],
+        [
+          "202",
+          0.33333333333333337
+        ]
+      ],
+      [
+        [
+          "201",
+          0.9583333333333333
+        ],
+        [
+          "202",
+          0.04166666666666667
+        ]
+      ],
+      [
+        [
+          "101",
+          0.04166666666666666
+        ],
+        [
+          "102",
+          0.9583333333333334
+        ]
+      ],
+      [
+        [
+          "101",
+          0.3333333333333333
+        ],
+        [
+          "102",
+          0.16666666666666669
+        ]
+      ],
+      [
+        [
+          "202",
+          0.5
+        ]
+      ],
+      [
+        [
+          "201",
+          0.375
+        ],
+        [
+          "202",
+          0.625
+        ]
+      ]
+    ],
+    "cell_shapes_normalized": [
+      [
+        [
+          "101",
+          [
+            [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.75,
+                1.0
+              ],
+              [
+                1.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ]
+          ]
+        ],
+        [
+          "102",
+          [
+            [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0
+              ],
+              [
+                0.75,
+                1.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        [
+          "101",
+          [
+            [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0
+              ],
+              [
+                0.5,
+                1.0
+              ],
+              [
+                0.5,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        [
+          "201",
+          [
+            [
+              [
+                0.5,
+                0.0
+              ],
+              [
+                1.0,
+                0.6666666666666666
+              ],
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.5,
+                0.0
+              ]
+            ]
+          ]
+        ],
+        [
+          "202",
+          [
+            [
+              [
+                0.5,
+                0.0
+              ],
+              [
+                0.5,
+                1.0
+              ],
+              [
+                1.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.6666666666666666
+              ],
+              [
+                0.5,
+                0.0
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        [
+          "201",
+          [
+            [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.6666666666666666
+              ],
+              [
+                0.25,
+                1.0
+              ],
+              [
+                1.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ]
+            ]
+          ]
+        ],
+        [
+          "202",
+          [
+            [
+              [
+                0.0,
+                0.6666666666666666
+              ],
+              [
+                0.0,
+                1.0
+              ],
+              [
+                0.25,
+                1.0
+              ],
+              [
+                0.0,
+                0.6666666666666666
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        [
+          "101",
+          [
+            [
+              [
+                1.0,
+                0.33333333333333326
+              ],
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.75,
+                0.0
+              ],
+              [
+                1.0,
+                0.33333333333333326
+              ]
+            ]
+          ]
+        ],
+        [
+          "102",
+          [
+            [
+              [
+                0.75,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.33333333333333326
+              ],
+              [
+                0.75,
+                0.0
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        [
+          "101",
+          [
+            [
+              [
+                0.5,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                0.33333333333333326
+              ],
+              [
+                0.5,
+                1.0
+              ],
+              [
+                0.5,
+                0.0
+              ]
+            ]
+          ]
+        ],
+        [
+          "102",
+          [
+            [
+              [
+                0.0,
+                0.33333333333333326
+              ],
+              [
+                0.0,
+                1.0
+              ],
+              [
+                0.5,
+                1.0
+              ],
+              [
+                0.0,
+                0.33333333333333326
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        [
+          "202",
+          [
+            [
+              [
+                1.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.5,
+                0.0
+              ],
+              [
+                0.5,
+                1.0
+              ],
+              [
+                1.0,
+                1.0
+              ]
+            ]
+          ]
+        ]
+      ],
+      [
+        [
+          "201",
+          [
+            [
+              [
+                1.0,
+                0.0
+              ],
+              [
+                0.25,
+                0.0
+              ],
+              [
+                1.0,
+                1.0
+              ],
+              [
+                1.0,
+                0.0
+              ]
+            ]
+          ]
+        ],
+        [
+          "202",
+          [
+            [
+              [
+                0.25,
+                0.0
+              ],
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.0,
+                1.0
+              ],
+              [
+                1.0,
+                1.0
+              ],
+              [
+                0.25,
+                0.0
+              ]
+            ]
+          ]
+        ]
+      ]
+    ]
+  },
+  "native_result_sha256": "60527630ae2ba890bede53190f359c32ca17478062941cdecf30d418a8561cc4",
+  "native_triangles_remain_authoritative": true,
+  "nc2web_frame_files": [
+    {
+      "bytes": 148,
+      "file": "frame_000.bin",
+      "sha256": "dd653f32c5efc4d14027b7a48b195fcfca7e2d85f75488eb59efc34fe36b210c"
+    },
+    {
+      "bytes": 148,
+      "file": "frame_001.bin",
+      "sha256": "8b9152c2154b45e5eed447b284b734479d1c9d9ef1be9a13717d83fd8e0ea0bc"
+    },
+    {
+      "bytes": 148,
+      "file": "frame_002.bin",
+      "sha256": "46aa1c9140496878f4600b1b376720c3664b1014b5d2948d5de970afd526c775"
+    }
+  ],
+  "nx": 4,
+  "ny": 2,
+  "origin_lower_left_m": [
+    0.0,
+    0.0
+  ],
+  "project_full_run_domain_selection": {
+    "area_m2": null,
+    "area_policy": "Recompute from source geometries; do not copy a cached area or use a bounding box",
+    "choice": "EXISTING_DOMAIN_MINUS_VALIDATED_SECURITY_EXCLUSION",
+    "m1_sample_relation": "This small synthetic sample's native domain is not Qingbei D-S",
+    "source_geometry": "Use the actual original D and S geometry sources and revalidate them in M2"
+  },
+  "run_id": "m1qa-d98b8abf506b-5a78d1dc",
+  "schema_version": "1.0",
+  "variables": {
+    "time": {
+      "availability": "AVAILABLE",
+      "source": "strict native saved output times",
+      "mapping": "copy float64 seconds; time_origin remains source value"
+    },
+    "x": {
+      "availability": "AVAILABLE",
+      "source": "native projected mesh extent",
+      "mapping": "1 m display-cell centers in source CRS"
+    },
+    "y": {
+      "availability": "AVAILABLE",
+      "source": "native projected mesh extent",
+      "mapping": "1 m display-cell centers in source CRS"
+    },
+    "water_depth": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "native water_depth_m",
+      "mapping": "exact triangle∩cell overlap area mean over covered native area"
+    },
+    "water_level": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "P3 bed_elevation plus native water_depth",
+      "mapping": "area-mean bed + area-mean depth; no datum conversion"
+    },
+    "velocity_x": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "native momentum_x_m2_s and depth",
+      "mapping": "area-mean momentum_x / area-mean depth when mapped depth is strictly positive; native dry threshold is not applied to aggregate cells"
+    },
+    "velocity_y": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "native momentum_y_m2_s and depth",
+      "mapping": "area-mean momentum_y / area-mean depth when mapped depth is strictly positive; native dry threshold is not applied to aggregate cells"
+    },
+    "velocity_magnitude": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "derived compatibility velocity_x/y",
+      "mapping": "hypot of mapped velocity components"
+    },
+    "discharge": {
+      "availability": "AVAILABLE_LEGACY_DIAGNOSTIC",
+      "source": "mapped h and u_x",
+      "mapping": "legacy display diagnostic h * u_x * display_dy; not a native edge flux"
+    },
+    "elevation": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "P3 terrain elevation",
+      "mapping": "area mean over covered native area"
+    },
+    "active_mask": {
+      "availability": "AVAILABLE",
+      "source": "native active face coverage",
+      "mapping": "1 iff native projected coverage is positive; security-excluded gap remains 0"
+    },
+    "maximum_depth": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "mapped saved-frame water_depth",
+      "mapping": "maximum over saved output frames only"
+    },
+    "maximum_velocity": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "mapped saved-frame velocity magnitude",
+      "mapping": "maximum over saved output frames only"
+    },
+    "arrival_time": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "mapped saved-frame water_depth",
+      "mapping": "first saved frame with depth > native dry threshold 1e-06 m; NaN if never wet"
+    },
+    "inflow": {
+      "availability": "AVAILABLE_ZERO_CLOSED_WALL",
+      "source": "native boundary_policy",
+      "mapping": "0 only because the validated sample has closed_wall and no open-boundary flux"
+    },
+    "outflow": {
+      "availability": "AVAILABLE_ZERO_CLOSED_WALL",
+      "source": "native boundary_policy",
+      "mapping": "0 only because the validated sample has closed_wall and no open-boundary flux"
+    },
+    "rainfall": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "native validated rainfall_rate_m_s_by_interval",
+      "mapping": "preceding saved interval depth converted m to mm; initial frame 0; zero only for explicit sources=none"
+    },
+    "eta": {
+      "availability": "NOT_AVAILABLE_LEGACY_HYDROSTATIC_FILL",
+      "source": null,
+      "mapping": "old global hydrostatic DEM-fill parameter has no semantically equivalent native SWE field; NaN, never zero-filled"
+    },
+    "volume": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "native water_depth_m and face_area_m2",
+      "mapping": "sum(native depth × native face area); cross-checks native final-volume ledger"
+    },
+    "wet_area": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "native water_depth_m, face_area_m2 and dry threshold",
+      "mapping": "sum(native face area where depth > native dry threshold"
+    },
+    "active_coverage_fraction": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "native face polygons",
+      "mapping": "exact overlap area / source-CRS display-cell area, including partial active cells"
+    },
+    "source_covered_area_m2": {
+      "availability": "AVAILABLE_DERIVED",
+      "source": "native face polygons",
+      "mapping": "exact source-CRS native triangle∩display-cell overlap area in m2; used for compatibility covered-area summaries"
+    }
+  },
+  "source_covered_area_m2": [
+    [
+      1.0,
+      0.5,
+      0.5,
+      0.9999999999999999
+    ],
+    [
+      1.0,
+      0.5,
+      0.5,
+      1.0
+    ]
+  ],
+  "display_wet_area_semantics": "sum source_covered_area_m2 where mapped display depth is strictly positive; distinct from native wet_area, which uses the native face dry-depth threshold"
+}

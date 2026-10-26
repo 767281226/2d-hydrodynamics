@@ -1,179 +1,224 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<title>Qingbei 288h</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Native Triangle Result Viewer</title>
 <style>
-  :root { --bg:#0e1621; --panel:#162232; --line:#2a3d52; --ink:#e8f1fa; --muted:#8aa0b5; --accent:#3aa0ff; }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:"Microsoft YaHei",system-ui,sans-serif; background:var(--bg); color:var(--ink); height:100vh; display:flex; overflow:hidden; }
-  #stage { flex:1; display:flex; align-items:center; justify-content:center; min-width:0; }
-  #wrap { position:relative; background:#0b1220; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
-  canvas { display:block; }
-  #tip { position:absolute; pointer-events:none; background:rgba(8,16,28,.92); color:#dbeafe; font-size:12px; padding:8px 10px; border-radius:8px; display:none; white-space:nowrap; }
-  #side { width:320px; margin:12px; padding:16px; background:var(--panel); border:1px solid var(--line); border-radius:12px; display:flex; flex-direction:column; gap:12px; overflow:auto; }
-  h1 { font-size:16px; }
-  .sub { font-size:12px; color:var(--muted); line-height:1.55; }
-  .kpi { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .kpi div { background:#101b2a; border-radius:8px; padding:8px 10px; }
-  .kpi .v { font-size:18px; color:var(--accent); }
-  .kpi .l { font-size:11px; color:var(--muted); margin-top:2px; }
-  button { background:#1d4ed8; color:#fff; border:0; border-radius:8px; padding:8px 14px; cursor:pointer; }
-  input[type=range] { width:100%; accent-color:var(--accent); }
-  #status { font-size:12px; color:var(--muted); }
+  :root{--bg:#0e1621;--panel:#162232;--line:#2a3d52;--ink:#e8f1fa;--muted:#8aa0b5;--accent:#3aa0ff;--bad:#ff8a80}
+  *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;font-family:"Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  body{display:flex;overflow:hidden}#stage{flex:1;min-width:0;min-height:0;display:flex;align-items:center;justify-content:center;padding:12px}
+  #wrap{position:relative;width:100%;height:100%;background:#0a111b;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  #cv{display:block;width:100%;height:100%}#tip{position:absolute;display:none;pointer-events:none;z-index:4;background:rgba(5,12,21,.96);border:1px solid #58728b;border-radius:7px;padding:7px 9px;font-size:12px;white-space:pre;max-width:min(360px,80vw)}
+  #side{width:330px;flex:none;margin:12px 12px 12px 0;padding:15px;background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:11px;overflow:auto}
+  h1{font-size:16px;margin:0 0 5px}.sub{font-size:12px;color:var(--muted);line-height:1.5}.field{display:grid;gap:5px;font-size:12px;color:var(--muted)}
+  select,button{background:#203146;color:var(--ink);border:1px solid #38506a;border-radius:6px;padding:7px 9px;font:inherit}button{background:#1d4ed8;border:0;cursor:pointer}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  input[type=range]{width:100%;accent-color:var(--accent)}.kpi{display:grid;grid-template-columns:1fr 1fr;gap:7px}.kpi>div{background:#101b2a;border-radius:7px;padding:8px}.value{font-size:17px;color:var(--accent)}.label{font-size:11px;color:var(--muted);margin-top:2px}
+  #status{font-size:12px;color:var(--muted);overflow-wrap:anywhere}#status.error{color:var(--bad)}#legend{height:14px;border-radius:6px;background:linear-gradient(90deg,#14288c,#2898dc,#4cc88c,#fa783c)}
+  @media(max-width:760px){body{height:auto;min-height:100vh;flex-direction:column;overflow:auto}#stage{flex:none;height:55vh;min-height:300px;padding:7px 7px 0}#side{width:auto;max-height:none;margin:7px;padding:11px;gap:8px;overflow:visible}#wrap{border-radius:7px}.kpi{grid-template-columns:repeat(4,1fr)}.value{font-size:14px}}
 </style>
 </head>
 <body>
-<div id="stage"><div id="wrap"><canvas id="cv"></canvas><div id="tip"></div></div></div>
-<div id="side">
-  <div>
-    <h1>清北淹没过程</h1>
-    <div class="sub">整幅底图固定，水深在图上慢慢出现，不再按湿格裁切画布。台头高地保持干。EPSG:4548。</div>
-  </div>
+<main id="stage"><div id="wrap"><canvas id="cv" aria-label="水动力结果图"></canvas><div id="tip" role="status"></div></div></main>
+<aside id="side">
+  <div><h1 id="title">Native Triangle Result Viewer</h1><div class="sub" id="description">Loading validated output profiles…</div></div>
+  <label class="field">显示数据
+    <select id="profile"><option value="native_web">Native 三角网格</option><option value="compatibility_grid">Derived 兼容网格</option></select>
+  </label>
+  <label class="field">图层
+    <select id="layer"></select>
+  </label>
   <div class="kpi">
-    <div><div class="v" id="kHour">--</div><div class="l">小时</div></div>
-    <div><div class="v" id="kH">--</div><div class="l">本帧最大水深 m</div></div>
-    <div><div class="v" id="kWet">--</div><div class="l">湿格 / 面积 km2</div></div>
-    <div><div class="v" id="kFrame">--</div><div class="l">帧</div></div>
+    <div><div class="value" id="kTime">--</div><div class="label">时间</div></div>
+    <div><div class="value" id="kMax">--</div><div class="label" id="maxLabel">本帧最大水深</div></div>
+    <div><div class="value" id="kWet">--</div><div class="label" id="wetLabel">湿面 / 面积</div></div>
+    <div><div class="value" id="kFrame">--</div><div class="label">帧</div></div>
   </div>
-  <div style="display:flex;gap:8px;align-items:center;">
-    <button id="btn">播放</button>
-    <span class="sub" id="clock"></span>
-  </div>
-  <input type="range" id="seek" min="0" max="0" value="0">
-  <canvas id="leg" width="280" height="12" style="width:100%;height:12px;border-radius:6px;"></canvas>
-  <div class="sub" id="legTxt">水深</div>
-  <label class="sub"><input type="checkbox" id="chkSocio"> 叠加人口（可视化，非正式风险）</label>
-  <div id="status">加载…</div>
-</div>
+  <div style="display:flex;gap:8px;align-items:center"><button id="play" type="button">播放</button><span class="sub" id="timeLabel"></span></div>
+  <input type="range" id="seek" min="0" max="0" value="0" aria-label="选择时间帧">
+  <div id="legend"></div><div class="sub" id="legendText">图例</div>
+  <div class="sub" id="status">加载中…</div>
+</aside>
 <script>
-const START = Date.parse("2023-08-01T02:00:00+08:00");
-const MAGIC = "NC2WF01\n";
-const PLAY_MS = 420;
-let M, socio=null, socioMax=1, playing=false, idx=0, timer=0, cache={}, VIEW=null, VIEW_MASK=null;
-const cv=document.getElementById("cv"), ctx=cv.getContext("2d"), tip=document.getElementById("tip");
-function color(h,hmax){
-  if(!(h>0)||!isFinite(h)) return [18,28,40,255];
-  const t=Math.max(0,Math.min(1,h/(hmax||1)));
-  if(t<0.25){const u=t/0.25;return [20,40+80*u,140+80*u,230];}
-  if(t<0.5){const u=(t-0.25)/0.25;return [20+40*u,120+80*u,220-80*u,230];}
-  if(t<0.75){const u=(t-0.5)/0.25;return [60+160*u,200-40*u,140-80*u,230];}
-  const u=(t-0.75)/0.25; return [220+35*u,160-120*u,60-40*u,230];
+"use strict";
+const NATIVE_MAGIC="NTW3M01\n",NATIVE_FRAME_MAGIC="NTW3F01\n",GRID_MESH_MAGIC="NC2WM01\n",GRID_FRAME_MAGIC="NC2WF01\n";
+const MAX_CACHED_FRAME_BYTES=32*1024*1024,MAX_CACHE_BYTES=32*1024*1024,MAX_CACHE_FRAMES=2,PLAY_MS=500;
+const cv=document.getElementById("cv"),ctx=cv.getContext("2d"),tip=document.getElementById("tip");
+let bundle=null,profile="native_web",manifest=null,gridMeta=null,mesh=null,frameCache=new Map(),frameIndex=0,playing=false,timer=0,viewport=null;
+let profileEpoch=0,viewGeneration=0,profileAbortController=null,selectionAbortController=null,prefetchAbortController=null;
+let selectionRequest=null,prefetchRequest=null,playbackTarget=null;
+const nativeVariableLabels={water_depth_m:"水深 (m)",water_level_m:"水位 (m)",velocity_x_m_s:"流速 X (m/s)",velocity_y_m_s:"流速 Y (m/s)",speed_m_s:"流速大小 (m/s)"};
+const compatVariableLabels={water_depth:"水深 (m)",water_level:"水位 (m)",velocity_x:"流速 X (m/s)",velocity_y:"流速 Y (m/s)"};
+function setStatus(text,isError=false){const el=document.getElementById("status");el.textContent=text;el.classList.toggle("error",isError)}
+async function fetchBuffer(url,signal){const response=await fetch(url,{cache:"no-store",signal});if(!response.ok)throw new Error(`${url} HTTP ${response.status}`);return response.arrayBuffer()}
+async function fetchJson(url,signal){const response=await fetch(url,{cache:"no-store",signal});if(!response.ok)throw new Error(`${url} HTTP ${response.status}`);return response.json()}
+function magic(buffer,expected){if(buffer.byteLength<expected.length)throw new Error("文件头长度不足");const got=new TextDecoder().decode(new Uint8Array(buffer,0,expected.length));if(got!==expected)throw new Error(`magic错误: ${JSON.stringify(got)}`)}
+function shaHex(buffer){return crypto.subtle.digest("SHA-256",buffer).then(hash=>Array.from(new Uint8Array(hash),x=>x.toString(16).padStart(2,"0")).join(""))}
+async function checkedBuffer(url,expectedHash,signal){const buf=await fetchBuffer(url,signal);if(expectedHash&&await shaHex(buf)!==expectedHash)throw new Error(`${url} SHA-256不匹配`);return buf}
+function cacheFrame(cache,result){cache.set(result.index,result);let bytes=0;for(const item of cache.values())bytes+=item.bytes;while(cache.size>MAX_CACHE_FRAMES||bytes>MAX_CACHE_BYTES){const key=cache.keys().next().value;bytes-=cache.get(key).bytes;cache.delete(key)}}
+function clearCurrentDisplay(){ctx.clearRect(0,0,cv.width,cv.height);viewport=null;tip.style.display="none";for(const id of ["kTime","kMax","kWet","kFrame","timeLabel","legendText"])document.getElementById(id).textContent="--";document.getElementById("seek").value="0"}
+function color(value,min,max){if(!Number.isFinite(value))return [12,18,28,255];if(!(max>min))max=min+1;const t=Math.max(0,Math.min(1,(value-min)/(max-min)));if(t<.25){const u=t*4;return [18,40+75*u,135+85*u,255]}if(t<.5){const u=(t-.25)*4;return [18+35*u,115+80*u,220-70*u,255]}if(t<.75){const u=(t-.5)*4;return [53+170*u,195-45*u,150-80*u,255]}const u=(t-.75)*4;return [223+32*u,150-100*u,70-50*u,255]}
+function resizeCanvas(){const dpr=Math.min(window.devicePixelRatio||1,2),rect=cv.getBoundingClientRect();if(rect.width<2||rect.height<2)return;cv.width=Math.round(rect.width*dpr);cv.height=Math.round(rect.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);renderCurrent()}
+function setLayerOptions(){const select=document.getElementById("layer"),rows=profile==="native_web"?manifest.variables:manifest.variables.map(name=>({name,availability:"available"}));select.replaceChildren();for(const row of rows){const name=typeof row==="string"?row:row.name;const option=document.createElement("option");option.value=name;option.textContent=(profile==="native_web"?nativeVariableLabels[name]:compatVariableLabels[name])||name;if(typeof row!=="string"&&String(row.availability||"").startsWith("not_available")){option.disabled=true;option.textContent+="（不可用）"}select.appendChild(option)}select.onchange=renderCurrent}
+async function loadNativeMesh(token,signal){
+  const expectedManifest=manifest;
+  const record=manifest.mesh_file;if(!record||record.name!=="mesh.bin")throw new Error("native mesh manifest不符合版本1结构");
+  const buffer=await checkedBuffer("native_web/mesh.bin",record.sha256,signal);if(token!==profileEpoch||manifest!==expectedManifest)return;magic(buffer,NATIVE_MAGIC);const view=new DataView(buffer);
+  const nodeCount=view.getUint32(8,true),faceCount=view.getUint32(12,true);if(nodeCount!==manifest.node_count||faceCount!==manifest.face_count)throw new Error("native网格数量与manifest不一致");
+  const nodeOffset=16,nodeBytes=nodeCount*16,faceOffset=nodeOffset+nodeBytes,faceBytes=faceCount*12,idOffset=faceOffset+faceBytes,idBytes=faceCount*32,areaOffset=idOffset+idBytes;
+  const required=areaOffset+faceCount*8;if(buffer.byteLength!==required||record.bytes!==required)throw new Error("native mesh.bin长度与拓扑声明不一致");
+  const xy=new Float64Array(buffer,nodeOffset,nodeCount*2),faces=new Uint32Array(buffer,faceOffset,faceCount*3),areas=new Float64Array(faceCount);
+  const ids=[];const textDecoder=new TextDecoder("ascii");for(let i=0;i<faceCount;i++){const raw=new Uint8Array(buffer,idOffset+i*32,32);const id=textDecoder.decode(raw).trim();if(!/^\d+$/.test(id))throw new Error(`face_id[${i}]不是精确十进制字符串`);ids.push(id);areas[i]=view.getFloat64(areaOffset+i*8,true);if(!(areas[i]>0&&Number.isFinite(areas[i])))throw new Error(`face_area[${i}]非法`)}
+  for(let i=0;i<faces.length;i+=3){const a=faces[i],b=faces[i+1],c=faces[i+2];if(a>=nodeCount||b>=nodeCount||c>=nodeCount||a===b||b===c||a===c)throw new Error(`face_nodes[${i/3}]拓扑无效`)}
+  let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;for(let i=0;i<nodeCount;i++){const x=xy[2*i],y=xy[2*i+1];if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error(`node_xy[${i}]非有限`);xmin=Math.min(xmin,x);xmax=Math.max(xmax,x);ymin=Math.min(ymin,y);ymax=Math.max(ymax,y)}
+  mesh={buffer,xy,faces,areas,ids,nodeCount,faceCount,bounds:{xmin,xmax,ymin,ymax},bins:null,hoverAvailable:true};buildFaceBins();
 }
-function land(){ return [46, 58, 52, 255]; }
-function empty(){ return [12, 18, 28, 255]; }
-function drawLegend(hmax){
-  const c=document.getElementById("leg").getContext("2d");
-  const w=c.canvas.width,h=c.canvas.height,img=c.createImageData(w,h);
-  for(let x=0;x<w;x++){const col=color((x/(w-1))*hmax,hmax); for(let y=0;y<h;y++){const i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=col[3];}}
-  c.putImageData(img,0,0);
-  document.getElementById("legTxt").textContent="水深 0 — "+hmax.toFixed(2)+" m";
+function buildFaceBins(){
+  const binsX=48,binsY=48,bins=Array.from({length:binsX*binsY},()=>[]),b=mesh.bounds,dx=b.xmax-b.xmin||1,dy=b.ymax-b.ymin||1;let memberships=0;
+  for(let f=0;f<mesh.faceCount;f++){const a=mesh.faces[f*3],c=mesh.faces[f*3+1],d=mesh.faces[f*3+2];const xs=[mesh.xy[a*2],mesh.xy[c*2],mesh.xy[d*2]],ys=[mesh.xy[a*2+1],mesh.xy[c*2+1],mesh.xy[d*2+1]];const x0=Math.max(0,Math.min(binsX-1,Math.floor((Math.min(...xs)-b.xmin)/dx*binsX))),x1=Math.max(0,Math.min(binsX-1,Math.floor((Math.max(...xs)-b.xmin)/dx*binsX)));const y0=Math.max(0,Math.min(binsY-1,Math.floor((Math.min(...ys)-b.ymin)/dy*binsY))),y1=Math.max(0,Math.min(binsY-1,Math.floor((Math.max(...ys)-b.ymin)/dy*binsY)));for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){bins[y*binsX+x].push(f);if(++memberships>2000000){mesh.hoverAvailable=false;mesh.bins=null;return}}}
+  mesh.bins={bins,binsX,binsY};
 }
-function bbox(depth,ny,nx){
-  let r0=ny,r1=-1,c0=nx,c1=-1;
-  for(let r=0;r<ny;r++) for(let c=0;c<nx;c++){ const h=depth[r*nx+c]; if(h>0&&isFinite(h)){ if(r<r0)r0=r; if(r>r1)r1=r; if(c<c0)c0=c; if(c>c1)c1=c; } }
-  if(r1<r0) return {r0:0,r1:ny-1,c0:0,c1:nx-1};
-  const pr=Math.max(8,((r1-r0)*0.06)|0), pc=Math.max(8,((c1-c0)*0.06)|0);
-  return {r0:Math.max(0,r0-pr), r1:Math.min(ny-1,r1+pr), c0:Math.max(0,c0-pc), c1:Math.min(nx-1,c1+pc)};
+async function loadNativeFrame(index,token,generation,signal){
+  const expectedManifest=manifest,expectedMesh=mesh,expectedCache=frameCache;
+  if(expectedCache.has(index)){const hit=expectedCache.get(index);expectedCache.delete(index);expectedCache.set(index,hit);return hit}
+  const record=expectedManifest.frames[index];if(!record||record.index!==index||!/^frame_\d{6}\.bin$/.test(record.file))throw new Error(`native frame ${index}缺失或名称非法`);
+  const buffer=await checkedBuffer(`native_web/${record.file}`,record.sha256,signal);
+  if(token!==profileEpoch||generation!==viewGeneration||signal.aborted||manifest!==expectedManifest||mesh!==expectedMesh||frameCache!==expectedCache)return null;
+  magic(buffer,NATIVE_FRAME_MAGIC);const view=new DataView(buffer);const gotIndex=view.getUint32(8,true),time=view.getFloat64(12,true),faces=view.getUint32(20,true),vars=view.getUint32(24,true),reserved=view.getUint32(28,true);if(gotIndex!==index||time!==expectedManifest.times_s[index]||faces!==expectedMesh.faceCount||vars!==expectedManifest.variables.length||reserved!==0)throw new Error(`native frame ${index}header与manifest不一致`);
+  const bytes=faces*vars*8,expected=32+bytes;if(buffer.byteLength!==expected||record.bytes!==expected||expected>MAX_CACHED_FRAME_BYTES)throw new Error(`native frame ${index}长度越限或不匹配`);
+  const arrays=[];for(let j=0;j<vars;j++)arrays.push(new Float64Array(buffer,32+j*faces*8,faces));const result={index,time,arrays,bytes:buffer.byteLength};
+  if(token===profileEpoch&&generation===viewGeneration&&!signal.aborted&&manifest===expectedManifest&&mesh===expectedMesh&&frameCache===expectedCache)cacheFrame(expectedCache,result);
+  return result;
 }
-async function loadFrame(i){
-  if(cache[i]) return cache[i];
-  if(!M.frames[i]) return null;
-  const buf=await (await fetch("nc2web/"+M.frames[i].file+"?v=10")).arrayBuffer();
-  const u8=new Uint8Array(buf);
-  const mag=String.fromCharCode.apply(null,u8.subarray(0,8));
-  if(mag!==MAGIC) throw new Error("magic "+JSON.stringify(mag));
-  const dv=new DataView(buf);
-  const ny=dv.getUint32(8,true), nx=dv.getUint32(12,true);
-  const depth=new Float32Array(buf,20,ny*nx);
-  cache[i]={ny,nx,depth};
-  return cache[i];
-}
-function render(fr){
-  const box=VIEW || bbox(fr.depth,fr.ny,fr.nx);
-  const ny=box.r1-box.r0+1, nx=box.c1-box.c0+1;
-  const hmax=(M.extrema.water_depth&&M.extrema.water_depth.max)||7.2;
-  const img=ctx.createImageData(nx,ny);
-  const d=img.data;
-  let wet=0,mh=0;
-  const useSocio=socio && document.getElementById("chkSocio").checked;
-  const landCol=land(), emptyCol=empty();
-  for(let r=0;r<ny;r++) for(let c=0;c<nx;c++){
-    const gr=r+box.r0, gc=c+box.c0;
-    const h=fr.depth[gr*fr.nx+gc];
-    const y=ny-1-r, o=(y*nx+c)*4;
-    let col;
-    if(h>0&&isFinite(h)){ wet++; if(h>mh) mh=h; col=color(h,hmax);}
-    else col = VIEW_MASK && VIEW_MASK[gr*fr.nx+gc] ? landCol : emptyCol;
-    if(useSocio){ const pop=socio[gr*fr.nx+gc]; if(pop>0){ const a=Math.min(0.65,0.15+0.5*pop/socioMax); col=[col[0]*(1-a)+220*a, col[1]*(1-a)+60*a, col[2]*(1-a)+140*a, 230]; } }
-    d[o]=col[0]; d[o+1]=col[1]; d[o+2]=col[2]; d[o+3]=col[3];
+async function loadCompatibilityMeta(token,signal){
+  const expectedManifest=manifest;
+  if(bundle.legacy_structured){
+    const buffer=await fetchBuffer("nc2web/mesh.bin",signal);if(token!==profileEpoch||manifest!==expectedManifest)return;magic(buffer,GRID_MESH_MAGIC);const view=new DataView(buffer),nodes=view.getUint32(8,true),triangles=view.getUint32(12,true),stride=manifest.nx+1;
+    if(nodes!==stride*(manifest.ny+1)||buffer.byteLength!==28+nodes*8+triangles*12)throw new Error("legacy structured mesh.bin长度/网格维度不匹配");
+    const offset=28+nodes*8,counts=new Uint8Array(manifest.nx*manifest.ny);for(let i=0;i<triangles*3;i+=3){const ids=[view.getUint32(offset+i*4,true),view.getUint32(offset+(i+1)*4,true),view.getUint32(offset+(i+2)*4,true)];const rows=ids.map(n=>Math.floor(n/stride)),cols=ids.map(n=>n%stride),row=Math.min(...rows),col=Math.min(...cols);if(row<0||row>=manifest.ny||col<0||col>=manifest.nx)throw new Error("legacy mesh triangle索引越界");counts[row*manifest.nx+col]++}
+    if(counts.some(n=>n!==0&&n!==2))throw new Error("legacy mesh每个active cell必须对应两片显示三角");
+    gridMeta={format:"legacy-nc2web-v1-derived-mask",run_id:bundle.run_id,grid_id_digest:bundle.compatibility.grid_id_digest,
+      active_coverage_fraction:Array.from({length:manifest.ny},(_,row)=>Array.from({length:manifest.nx},(_,col)=>counts[row*manifest.nx+col]?1:0)),
+      cell_contributions:Array.from({length:manifest.nx*manifest.ny},()=>[]),cell_shapes_normalized:null,nc2web_frame_files:null};return;
   }
-  const off=document.createElement("canvas"); off.width=nx; off.height=ny;
-  off.getContext("2d").putImageData(img,0,0);
-  const H=Math.min(820, window.innerHeight-40);
-  const W=Math.max(280, Math.round(H*nx/ny));
-  cv.width=W; cv.height=H;
-  document.getElementById("wrap").style.width=W+"px";
-  document.getElementById("wrap").style.height=H+"px";
-  ctx.imageSmoothingEnabled=false;
-  ctx.drawImage(off,0,0,W,H);
-  document.getElementById("kH").textContent=mh.toFixed(2);
-  document.getElementById("kWet").textContent=wet+" / "+(wet*M.dx*M.dy/1e6).toFixed(2);
-  document.getElementById("kFrame").textContent=(idx+1)+" / "+M.frames.length;
-  const hour=(M.times[idx]||0)/3600;
-  document.getElementById("kHour").textContent=hour.toFixed(0)+" h";
-  document.getElementById("clock").textContent=new Date(START+(M.times[idx]||0)*1000).toLocaleString("zh-CN",{hour12:false,timeZone:"Asia/Shanghai"});
-  document.getElementById("status").textContent=M.epsg+" 固定全幅 "+nx+"x"+ny;
-  cv.onmousemove=e=>{
-    const rec=cv.getBoundingClientRect();
-    const c=box.c0+Math.floor((e.clientX-rec.left)/rec.width*nx);
-    const ydisp=Math.floor((e.clientY-rec.top)/rec.height*ny);
-    const row=box.r1-ydisp;
-    if(c<box.c0||c>box.c1||row<box.r0||row>box.r1){ tip.style.display="none"; return; }
-    const h=fr.depth[row*fr.nx+c];
-    const id=row*fr.nx+c+1;
-    tip.style.display="block"; tip.style.left=(e.clientX-rec.left+12)+"px"; tip.style.top=(e.clientY-rec.top+12)+"px";
-    let msg="格 "+id+" 水深 "+(h>0&&isFinite(h)?h.toFixed(3)+" m":"干");
-    if(socio) msg+="  人口 "+(socio[row*fr.nx+c]||0).toFixed(2);
-    tip.textContent=msg;
-  };
+  const nextGrid=await fetchJson("compatibility_grid.json",signal);if(token!==profileEpoch||manifest!==expectedManifest)return;gridMeta=nextGrid;if(gridMeta.format!=="hydrodynamics-legacy-grid-compatibility-v1"||gridMeta.run_id!==bundle.run_id||gridMeta.grid_id_digest!==bundle.compatibility.grid_id_digest)throw new Error("兼容网格identity与run.json不一致");
+  if(!Array.isArray(gridMeta.active_coverage_fraction)||gridMeta.active_coverage_fraction.length!==manifest.ny||gridMeta.active_coverage_fraction.some(r=>!Array.isArray(r)||r.length!==manifest.nx))throw new Error("coverage_fraction维度不匹配");
+  if(!Array.isArray(gridMeta.cell_shapes_normalized)||gridMeta.cell_shapes_normalized.length!==manifest.nx*manifest.ny)throw new Error("partial-cell几何索引不完整");
+  for(const cell of gridMeta.cell_shapes_normalized)for(const [faceId,rings] of cell){if(typeof faceId!=="string"||!/^\d+$/.test(faceId)||!Array.isArray(rings))throw new Error("partial-cell face identity无效");for(const ring of rings)for(const point of ring)if(!Array.isArray(point)||point.length!==2||!point.every(v=>Number.isFinite(v)&&v>=-1e-9&&v<=1+1e-9))throw new Error("partial-cell normalized geometry越界")}
+  if(!bundle.legacy_structured){
+    const areas=gridMeta.source_covered_area_m2;
+    if(!Array.isArray(areas)||areas.length!==manifest.ny||areas.some(row=>!Array.isArray(row)||row.length!==manifest.nx||row.some(value=>!Number.isFinite(value)||value<0)))throw new Error("source_covered_area_m2维度/数值无效");
+    const total=areas.reduce((sum,row)=>sum+row.reduce((part,value)=>part+value,0),0),expected=Number(gridMeta.mapping?.coverage_area_m2);
+    if(!Number.isFinite(expected)||Math.abs(total-expected)>Math.max(1e-8,Math.abs(expected)*1e-10))throw new Error("source covered physical area differs from mapping coverage area");
+  }
+  if(!Array.isArray(gridMeta.nc2web_frame_files)||gridMeta.nc2web_frame_files.length!==manifest.frames.length)throw new Error("compatibility frame hash索引不完整");
 }
-async function show(i){
-  idx=Math.max(0,Math.min(M.frames.length-1,i|0));
-  document.getElementById("seek").value=idx;
-  const fr=await loadFrame(idx);
-  if(!fr) return;
-  render(fr);
-  if(idx+1<M.frames.length) loadFrame(idx+1);
+async function loadCompatibilityFrame(index,token,generation,signal){
+  const expectedManifest=manifest,expectedGrid=gridMeta,expectedCache=frameCache;
+  if(expectedCache.has(index)){const hit=expectedCache.get(index);expectedCache.delete(index);expectedCache.set(index,hit);return hit}
+  const rec=expectedManifest.frames[index];if(!rec||rec.index!==index||!/^frame_\d{3}\.bin$/.test(rec.file))throw new Error(`兼容帧 ${index}缺失或名称非法`);const proof=expectedGrid.nc2web_frame_files?.find(row=>row.file===rec.file);if(!bundle.legacy_structured&&!proof)throw new Error("nc2web帧缺少source-bound hash");const buffer=await checkedBuffer(`nc2web/${rec.file}`,proof?.sha256||null,signal);
+  if(token!==profileEpoch||generation!==viewGeneration||signal.aborted||manifest!==expectedManifest||gridMeta!==expectedGrid||frameCache!==expectedCache)return null;
+  if(proof&&buffer.byteLength!==proof.bytes)throw new Error("nc2web帧长度与source-bound hash索引不一致");magic(buffer,GRID_FRAME_MAGIC);const view=new DataView(buffer),ny=view.getUint32(8,true),nx=view.getUint32(12,true),vars=view.getUint32(16,true);if(ny!==expectedManifest.ny||nx!==expectedManifest.nx||vars!==expectedManifest.variables.length)throw new Error("nc2web帧维度不匹配");const bytes=nx*ny*vars*4,expected=20+bytes;if(buffer.byteLength!==expected||expected>MAX_CACHED_FRAME_BYTES)throw new Error("nc2web帧长度越限或不匹配");const arrays=[];for(let j=0;j<vars;j++)arrays.push(new Float32Array(buffer,20+j*nx*ny*4,nx*ny));const result={index,time:expectedManifest.times[index],arrays,bytes:buffer.byteLength,nx,ny};
+  if(token===profileEpoch&&generation===viewGeneration&&!signal.aborted&&manifest===expectedManifest&&gridMeta===expectedGrid&&frameCache===expectedCache)cacheFrame(expectedCache,result);
+  return result;
 }
-function play(){
-  playing=!playing;
-  document.getElementById("btn").textContent=playing?"暂停":"播放";
-  if(!playing){ clearInterval(timer); return; }
-  timer=setInterval(()=>show((idx+1)%M.frames.length),PLAY_MS);
+async function loadFrame(index,token,generation,signal,selectedProfile=profile){return selectedProfile==="native_web"?loadNativeFrame(index,token,generation,signal):loadCompatibilityFrame(index,token,generation,signal)}
+function currentLayerIndex(){const name=document.getElementById("layer").value;return manifest.variables.findIndex(v=>(profile==="native_web"?v.name:v)===name)}
+function layerName(){return document.getElementById("layer").value}
+function manifestBounds(name){const item=profile==="native_web"?manifest.extrema[name]:manifest.extrema[name];if(item&&Number.isFinite(item.min)&&Number.isFinite(item.max))return [item.min,item.max];let min=Infinity,max=-Infinity;const frame=frameCache.get(frameIndex);if(frame){const data=frame.arrays[Math.max(0,currentLayerIndex())];for(const value of data){if(Number.isFinite(value)){min=Math.min(min,value);max=Math.max(max,value)}}}return [min===Infinity?0:min,max===-Infinity?1:max]}
+function updateLegend(name){const [min,max]=manifestBounds(name);document.getElementById("legendText").textContent=`${nativeVariableLabels[name]||compatVariableLabels[name]||name}: ${Number.isFinite(min)?min.toPrecision(4):"--"} — ${Number.isFinite(max)?max.toPrecision(4):"--"}`}
+function renderCurrent(){const frame=frameCache.get(frameIndex);if(!frame||!manifest)return;if(profile==="native_web")drawNative(frame);else renderCompatibility(frame)}
+function drawNative(frame){
+  const rect=cv.getBoundingClientRect(),w=rect.width,h=rect.height;if(w<2||h<2)return;ctx.clearRect(0,0,w,h);ctx.fillStyle="#09111b";ctx.fillRect(0,0,w,h);const b=mesh.bounds,pad=16,scale=Math.min((w-2*pad)/(b.xmax-b.xmin||1),(h-2*pad)/(b.ymax-b.ymin||1));const dw=(b.xmax-b.xmin)*scale,dh=(b.ymax-b.ymin)*scale,left=(w-dw)/2,top=(h-dh)/2;viewport={left,top,scale,width:w,height:h};const name=layerName(),li=currentLayerIndex(),values=frame.arrays[li],[min,max]=manifestBounds(name);const depth=frame.arrays[0];let maxDepth=0,wetArea=0;
+  for(let f=0;f<mesh.faceCount;f++){const hval=depth[f];if(Number.isFinite(hval)&&hval>Number(manifest.dry_depth_threshold_m||0)){wetArea+=mesh.areas[f];if(hval>maxDepth)maxDepth=hval}const val=values[f];const col=(name==="water_depth_m"&&!(val>0))?[12,18,28,255]:color(val,min,max);const p0=mesh.faces[f*3],p1=mesh.faces[f*3+1],p2=mesh.faces[f*3+2];const px=i=>left+(mesh.xy[2*i]-b.xmin)*scale,py=i=>top+(b.ymax-mesh.xy[2*i+1])*scale;ctx.beginPath();ctx.moveTo(px(p0),py(p0));ctx.lineTo(px(p1),py(p1));ctx.lineTo(px(p2),py(p2));ctx.closePath();ctx.fillStyle=`rgba(${col[0]},${col[1]},${col[2]},${col[3]/255})`;ctx.fill();ctx.strokeStyle="rgba(175,205,232,.45)";ctx.lineWidth=.6;ctx.stroke()}
+  document.getElementById("maxLabel").textContent="本帧最大水深 m";document.getElementById("wetLabel").textContent="湿面 / 原生面积 km²";document.getElementById("kMax").textContent=maxDepth.toFixed(4);document.getElementById("kWet").textContent=`${depth.filter(v=>v>(manifest.dry_depth_threshold_m||0)).length} / ${(wetArea/1e6).toFixed(6)}`;updateTime(frame);updateLegend(name);document.getElementById("status").textContent=`Native 三角网格 · ${mesh.faceCount} faces · ${manifest.coordinate_system} · native_web v${manifest.version}`;
 }
-async function lockView(){
-  const peak = Math.min(M.frames.length-1, 202);
-  const fr = await loadFrame(peak);
-  VIEW = bbox(fr.depth, fr.ny, fr.nx);
-  VIEW_MASK = new Uint8Array(fr.ny*fr.nx);
-  for(let i=0;i<fr.depth.length;i++) if(fr.depth[i]>0 && isFinite(fr.depth[i])) VIEW_MASK[i]=1;
+function renderCompatibility(frame){
+  const width=frame.nx,height=frame.ny,canvasWidth=cv.getBoundingClientRect().width,canvasHeight=cv.getBoundingClientRect().height;if(canvasWidth<2||canvasHeight<2)return;ctx.clearRect(0,0,canvasWidth,canvasHeight);ctx.fillStyle="#09111b";ctx.fillRect(0,0,canvasWidth,canvasHeight);const li=currentLayerIndex(),values=frame.arrays[li],[min,max]=manifestBounds(layerName()),depth=frame.arrays[manifest.variables.indexOf("water_depth")];let wetCells=0,wetArea=0,maxDepth=0;const dx=manifest.dx,dy=manifest.dy,cellW=canvasWidth/width,cellH=canvasHeight/height,shapes=gridMeta.cell_shapes_normalized||[],sourceAreas=gridMeta.source_covered_area_m2||null;
+  for(let row=0;row<height;row++)for(let col=0;col<width;col++){const idx=row*width+col,coverage=Number(gridMeta.active_coverage_fraction[row][col]||0),value=values[idx],h=depth[idx];if(coverage<=0)continue;let fill;if(Number.isFinite(h)&&h>0.0){wetCells++;wetArea+=sourceAreas?Number(sourceAreas[row][col]):coverage*dx*dy;if(h>maxDepth)maxDepth=h;fill=color(value,min,max)}else fill=[46,58,52,255];ctx.fillStyle=`rgb(${fill[0]},${fill[1]},${fill[2]})`;
+    const cellShapes=shapes[idx]||[];if(coverage<1-1e-10&&cellShapes.length){for(const [_faceId,rings] of cellShapes){ctx.beginPath();for(const ring of rings){if(!ring.length)continue;const x0=(col+ring[0][0])*cellW,y0=canvasHeight-(row+ring[0][1])*cellH;ctx.moveTo(x0,y0);for(let j=1;j<ring.length;j++)ctx.lineTo((col+ring[j][0])*cellW,canvasHeight-(row+ring[j][1])*cellH);ctx.closePath()}ctx.fill("evenodd");ctx.strokeStyle="rgba(220,235,248,.75)";ctx.lineWidth=.65;ctx.stroke()}}else{ctx.fillRect(col*cellW,(height-1-row)*cellH,cellW,cellH)}
+  }
+  viewport={left:0,top:0,scaleX:cellW,scaleY:cellH,width:canvasWidth,height:canvasHeight};document.getElementById("maxLabel").textContent="本帧最大水深 m";document.getElementById("wetLabel").textContent=sourceAreas?"湿格 / 源覆盖面积 km²":"湿格 / 显示格面积 km²";document.getElementById("kMax").textContent=maxDepth.toFixed(4);document.getElementById("kWet").textContent=`${wetCells} / ${(wetArea/1e6).toFixed(6)}`;updateTime(frame);updateLegend(layerName());document.getElementById("status").textContent=`Derived compatibility display · ${width}×${height} · ${sourceAreas?"source physical overlap area":"display-cell area"} · exact covered geometry shown · row-major IDs`;
+}
+function updateTime(frame){document.getElementById("kFrame").textContent=`${frameIndex+1} / ${manifest.frames.length}`;const origin=bundle.time_origin||manifest.time_origin||null;if(origin){const base=Date.parse(origin);if(Number.isFinite(base))document.getElementById("timeLabel").textContent=new Date(base+frame.time*1000).toLocaleString("zh-CN",{hour12:false,timeZone:"Asia/Shanghai"});else document.getElementById("timeLabel").textContent=`t=${frame.time}s`}else document.getElementById("timeLabel").textContent=`t=${frame.time}s`;document.getElementById("kTime").textContent=`${frame.time} s`;document.getElementById("seek").value=frameIndex}
+function pointInTriangle(x,y,a,b,c){const den=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1]);if(Math.abs(den)<1e-14)return false;const u=((b[1]-c[1])*(x-c[0])+(c[0]-b[0])*(y-c[1]))/den;const v=((c[1]-a[1])*(x-c[0])+(a[0]-c[0])*(y-c[1]))/den;return u>=-1e-10&&v>=-1e-10&&u+v<=1+1e-10}
+function nativeFaceAt(event){if(!mesh.hoverAvailable||!mesh.bins||!viewport)return -1;const rect=cv.getBoundingClientRect(),px=event.clientX-rect.left,py=event.clientY-rect.top,b=mesh.bounds,scale=viewport.scale;const x=b.xmin+(px-viewport.left)/scale,y=b.ymax-(py-viewport.top)/scale;if(x<b.xmin||x>b.xmax||y<b.ymin||y>b.ymax)return -1;const bx=Math.min(mesh.bins.binsX-1,Math.max(0,Math.floor((x-b.xmin)/(b.xmax-b.xmin||1)*mesh.bins.binsX))),by=Math.min(mesh.bins.binsY-1,Math.max(0,Math.floor((y-b.ymin)/(b.ymax-b.ymin||1)*mesh.bins.binsY)));for(const f of mesh.bins.bins[by*mesh.bins.binsX+bx]){const ids=[mesh.faces[f*3],mesh.faces[f*3+1],mesh.faces[f*3+2]],pts=ids.map(i=>[mesh.xy[2*i],mesh.xy[2*i+1]]);if(pointInTriangle(x,y,pts[0],pts[1],pts[2]))return f}return -1}
+cv.addEventListener("mousemove",event=>{const frame=frameCache.get(frameIndex);if(!frame)return;const rect=cv.getBoundingClientRect();if(profile==="native_web"){const f=nativeFaceAt(event);if(f<0){tip.style.display="none";return}const vars=manifest.variables.map(v=>v.name),h=frame.arrays[vars.indexOf("water_depth_m")][f],value=frame.arrays[currentLayerIndex()][f];tip.textContent=`face_id ${mesh.ids[f]}\n水深 ${h.toFixed(6)} m\n${nativeVariableLabels[layerName()]||layerName()} ${Number.isFinite(value)?value.toPrecision(8):"未提供"}`;tip.style.left=Math.min(event.clientX-rect.left+12,rect.width-260)+"px";tip.style.top=Math.min(event.clientY-rect.top+12,rect.height-72)+"px";tip.style.display="block";return}const col=Math.floor((event.clientX-rect.left)/(rect.width/frame.nx)),displayRow=frame.ny-1-Math.floor((event.clientY-rect.top)/(rect.height/frame.ny));if(col<0||col>=frame.nx||displayRow<0||displayRow>=frame.ny){tip.style.display="none";return}const flat=displayRow*frame.nx+col,h=frame.arrays[manifest.variables.indexOf("water_depth")][flat],coverage=gridMeta.active_coverage_fraction[displayRow][col],contributions=gridMeta.mapping?.cell_contributions?.[flat]||gridMeta.cell_contributions?.[flat]||[],contrib=contributions.map(row=>row[0]).join(", ")||"none";tip.textContent=`compat_id ${displayRow*frame.nx+col+1}\ncoverage ${Number(coverage).toFixed(4)}\nsource face_id ${contrib}\n水深 ${Number.isFinite(h)?h.toFixed(6)+" m":"NoData"}`;tip.style.left=Math.min(event.clientX-rect.left+12,rect.width-260)+"px";tip.style.top=Math.min(event.clientY-rect.top+12,rect.height-72)+"px";tip.style.display="block"});
+cv.addEventListener("mouseleave",()=>tip.style.display="none");
+function show(index){
+  if(!manifest)return Promise.resolve();const target=Math.max(0,Math.min(manifest.frames.length-1,index|0));
+  if(selectionRequest&&selectionRequest.index===target&&selectionRequest.epoch===profileEpoch&&!selectionRequest.controller.signal.aborted)return selectionRequest.promise;
+  const epoch=profileEpoch,generation=++viewGeneration,selectedProfile=profile,expectedManifest=manifest,expectedMesh=mesh,expectedGrid=gridMeta;
+  selectionAbortController?.abort();prefetchAbortController?.abort();prefetchRequest=null;selectionRequest=null;
+  const controller=new AbortController();selectionAbortController=controller;tip.style.display="none";setStatus(`读取帧 ${target+1} / ${manifest.frames.length}…`);
+  const request={index:target,epoch,generation,controller,promise:null};selectionRequest=request;
+  request.promise=(async()=>{
+    try{
+      const frame=await loadFrame(target,epoch,generation,controller.signal,selectedProfile);
+      if(!frame||controller.signal.aborted||epoch!==profileEpoch||generation!==viewGeneration||profile!==selectedProfile||manifest!==expectedManifest||mesh!==expectedMesh||gridMeta!==expectedGrid)return;
+      frameIndex=target;document.getElementById("seek").value=String(target);
+      if(selectedProfile==="native_web")drawNative(frame);else renderCompatibility(frame);
+      if(target+1<expectedManifest.frames.length){
+        const prefetchController=new AbortController();prefetchAbortController=prefetchController;
+        const prefetch={index:target+1,epoch,generation,controller:prefetchController};prefetchRequest=prefetch;
+        loadFrame(target+1,epoch,generation,prefetchController.signal,selectedProfile).catch(err=>{
+          if(!prefetchController.signal.aborted&&epoch===profileEpoch&&generation===viewGeneration&&prefetchRequest===prefetch)setStatus(`预取失败: ${err.message}`,true);
+        }).finally(()=>{if(prefetchRequest===prefetch)prefetchRequest=null});
+      }
+    }catch(err){
+      if(controller.signal.aborted||epoch!==profileEpoch||generation!==viewGeneration||err.name==="AbortError")return;
+      setStatus(`帧加载失败: ${err.message}`,true);tip.style.display="none";
+    }finally{if(selectionRequest===request)selectionRequest=null}
+  })();
+  return request.promise;
+}
+async function loadProfile(next){
+  const epoch=++profileEpoch;++viewGeneration;profileAbortController?.abort();selectionAbortController?.abort();prefetchAbortController?.abort();
+  selectionRequest=null;prefetchRequest=null;playing=false;playbackTarget=null;clearInterval(timer);profile=next;manifest=null;gridMeta=null;mesh=null;frameCache=new Map();frameIndex=0;clearCurrentDisplay();setStatus("校验数据版本和拓扑…");
+  const controller=new AbortController();profileAbortController=controller;
+  try{
+    if(profile==="native_web"){
+      const nextManifest=await fetchJson("native_web/manifest.json",controller.signal);if(epoch!==profileEpoch||controller.signal.aborted)return;
+      if(nextManifest.format!=="native-triangle-web"||nextManifest.version!=="1.0"||nextManifest.run_id!==bundle.run_id||nextManifest.topology!=="native_triangular_mesh"||!Array.isArray(nextManifest.frames)||!nextManifest.frames.length)throw new Error("native_web版本/run_id/topology不支持");manifest=nextManifest;await loadNativeMesh(epoch,controller.signal);
+    }else{
+      const nextManifest=await fetchJson("nc2web/manifest.json",controller.signal);if(epoch!==profileEpoch||controller.signal.aborted)return;
+      if(nextManifest.format!=="nc2web"||nextManifest.version!=="1.0"||nextManifest.status==="block"||!Array.isArray(nextManifest.frames)||!nextManifest.frames.length)throw new Error("nc2web v1 manifest不支持或没有帧");manifest=nextManifest;await loadCompatibilityMeta(epoch,controller.signal);
+    }
+    if(epoch!==profileEpoch||controller.signal.aborted)return;
+    setLayerOptions();document.getElementById("seek").max=manifest.frames.length-1;document.getElementById("seek").value="0";
+    document.getElementById("description").textContent=profile==="native_web"?`${bundle.run_id} · 权威native三角拓扑 · source ${bundle.native_result.sha256.slice(0,12)}`:`${bundle.run_id} · derived兼容显示 · grid ${bundle.compatibility.grid_id_digest.slice(0,12)}`;
+    await show(0);
+  }catch(err){if(epoch!==profileEpoch||controller.signal.aborted||err.name==="AbortError")return;setStatus(`加载失败: ${err.message}`,true);clearCurrentDisplay()}
 }
 async function main(){
-  M=await (await fetch("nc2web/manifest.json?v=10")).json();
-  try{
-    socio=new Float32Array(await (await fetch("nc2web/socio_pop.bin?v=10")).arrayBuffer());
-    socioMax=1e-6; for(let i=0;i<socio.length;i++) if(socio[i]>socioMax) socioMax=socio[i];
-  }catch(e){ socio=null; }
-  drawLegend((M.extrema.water_depth&&M.extrema.water_depth.max)||7);
-  document.getElementById("seek").max=M.frames.length-1;
-  document.getElementById("seek").oninput=e=>show(+e.target.value);
-  document.getElementById("btn").onclick=play;
-  document.getElementById("chkSocio").onchange=()=>{ if(cache[idx]) render(cache[idx]); };
-  await lockView();
-  await show(1);
+  const runResponse=await fetch("run.json",{cache:"no-store"});
+  if(runResponse.ok)bundle=await runResponse.json();
+  else if(runResponse.status===404){const oldManifest=await fetchJson("nc2web/manifest.json");if(oldManifest.format!=="nc2web"||oldManifest.version!=="1.0"||oldManifest.status==="block")throw new Error("legacy structured bundle未通过v1状态检查");const digest=await shaHex(new TextEncoder().encode(JSON.stringify(oldManifest)).buffer);bundle={format:"legacy-structured-viewer-bootstrap-v1",run_id:"legacy-"+digest.slice(0,12),status:"legacy_complete",legacy_structured:true,qa_fixture:false,time_origin:null,native_result:{dry_depth_threshold_m:0},compatibility:{grid_id_digest:"legacy-v1"},viewer:{default_profile:"compatibility_grid",profiles:{compatibility_grid:"nc2web/manifest.json"}}};}
+  else throw new Error(`run.json HTTP ${runResponse.status}`);
+  if(!bundle.run_id||!bundle.viewer||!bundle.viewer.profiles)throw new Error("run.json格式不支持");
+  if(!bundle.legacy_structured&&bundle.format!=="m1-output-bundle-v1")throw new Error("不支持的run.json版本");
+  document.getElementById("title").textContent=bundle.case_id||(bundle.legacy_structured?"Legacy Structured Result":"Native Triangle Result Viewer");
+  if(bundle.data_origin==="SYNTHETIC_SMALL_NATIVE_FIXTURE")document.getElementById("description").textContent+=" · QA小样本，不是全量工程结果";
+  const profileControl=document.getElementById("profile");
+  if(bundle.legacy_structured){profileControl.value="compatibility_grid";profileControl.querySelector('option[value="native_web"]').disabled=true;document.getElementById("description").textContent="Legacy structured grid · derived display profile · time relative to the source axis";}
+  else profileControl.value=bundle.viewer.default_profile||"native_web";
+  const expectedRunId=new URL(window.location.href).searchParams.get("expected_run_id");
+  if(expectedRunId!==null&&expectedRunId!==bundle.run_id)throw new Error(`页面run_id ${bundle.run_id}与启动器期望值 ${expectedRunId}不一致`);
+  document.body.dataset.runId=bundle.run_id;document.body.dataset.expectedRunId=expectedRunId||"";
+  profileControl.onchange=e=>loadProfile(e.target.value);
+  document.getElementById("seek").onchange=e=>{const desired=Number(e.target.value);e.target.value=String(frameIndex);void show(desired)};
+  document.getElementById("play").onclick=()=>{
+    playing=!playing;document.getElementById("play").textContent=playing?"暂停":"播放";clearTimeout(timer);
+    if(!playing||!manifest)return;playbackTarget=frameIndex;const epoch=profileEpoch;
+    const tick=async()=>{if(!playing||epoch!==profileEpoch||!manifest)return;playbackTarget=(playbackTarget+1)%manifest.frames.length;await show(playbackTarget);if(playing&&epoch===profileEpoch)timer=setTimeout(tick,PLAY_MS)};
+    timer=setTimeout(tick,PLAY_MS);
+  };
+  await loadProfile(profileControl.value)
 }
-main().catch(e=>{ document.getElementById("status").textContent=String(e); });
+window.addEventListener("resize",resizeCanvas);
+resizeCanvas();
+main().catch(err=>setStatus(`启动失败: ${err.message}`,true));
 </script>
 </body>
 </html>

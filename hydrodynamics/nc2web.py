@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 import json
+import os
 from pathlib import Path
 import struct
+import tempfile
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -66,6 +69,54 @@ def _open_dataset(path: Path):
     return netCDF4.Dataset(str(path), "r")
 
 
+def _read_hydro_values(variable: Any, raw: Any, active_mask: np.ndarray | None) -> np.ndarray:
+    """Read values while preserving valid zeros under the historical fill=0 contract.
+
+    New compatibility files use NaN as the fill value. Older structured files
+    used zero plus active_mask, which makes a valid active zero indistinguishable
+    from the masked fill to netCDF4. Restore only masked samples whose
+    underlying value is exactly that zero fill and whose metadata does not also
+    classify zero as missing or outside the valid range.
+    """
+    masked = np.ma.isMaskedArray(raw)
+    data = np.asarray(np.ma.getdata(raw) if masked else raw, dtype=np.float64).copy()
+    if masked:
+        missing = np.ma.getmaskarray(raw)
+        fill_value = getattr(variable, "_FillValue", None)
+        availability = str(getattr(variable, "availability", "")).strip().upper()
+        available = not availability.startswith("NOT_AVAILABLE")
+        legacy_zero_fill = (
+            active_mask is not None and available and fill_value is not None
+            and np.isscalar(fill_value) and float(fill_value) == 0.0
+        )
+        valid_legacy_zero = (
+            missing & active_mask & np.isfinite(data) & (data == float(fill_value))
+            if legacy_zero_fill else np.zeros(data.shape, dtype=bool)
+        )
+        if legacy_zero_fill:
+            # A second missing marker or validity attribute can mask a value
+            # independently of _FillValue. Keep those zeros unavailable.
+            try:missing_values=np.asarray(getattr(variable,"missing_value"),dtype=np.float64).reshape(-1)
+            except Exception:missing_values=np.asarray([],dtype=np.float64)
+            if np.any(missing_values==0.0):valid_legacy_zero[:]=False
+            try:valid_range=np.asarray(getattr(variable,"valid_range"),dtype=np.float64).reshape(-1)
+            except Exception:valid_range=np.asarray([],dtype=np.float64)
+            if valid_range.size>=2 and not (valid_range[0]<=0.0<=valid_range[1]):valid_legacy_zero[:]=False
+            try:valid_min=float(getattr(variable,"valid_min"))
+            except Exception:valid_min=-np.inf
+            try:valid_max=float(getattr(variable,"valid_max"))
+            except Exception:valid_max=np.inf
+            if not (valid_min<=0.0<=valid_max):valid_legacy_zero[:]=False
+            try:scale_factor=float(getattr(variable,"scale_factor",1.0));add_offset=float(getattr(variable,"add_offset",0.0))
+            except Exception:scale_factor,add_offset=np.nan,np.nan
+            if scale_factor!=1.0 or add_offset!=0.0:valid_legacy_zero[:]=False
+        data[missing & ~valid_legacy_zero] = np.nan
+        data[valid_legacy_zero] = 0.0
+    if active_mask is not None:
+        data = np.where(active_mask, data, np.nan)
+    return np.where(np.isfinite(data), data, np.nan)
+
+
 def _reject_native_triangular_artifact(path: Path) -> None:
     """Structured web encoders must not flatten native triangular face data."""
     with _open_dataset(path) as dataset:
@@ -122,6 +173,18 @@ def _reproject_xy(x: np.ndarray, y: np.ndarray, source_epsg: str, target_epsg: s
     return tx[0, :].astype(float), ty[:, 0].astype(float)
 
 
+def _reproject_single_axis_step(value:float,other:float,step:float,*,axis:str,source_epsg:str,target_epsg:str)->float:
+    try:from pyproj import Transformer
+    except ImportError as exc:raise Nc2WebError("coordinate conversion to EPSG:4548 requires optional dependency 'pyproj'") from exc
+    transformer=Transformer.from_crs(source_epsg,target_epsg,always_xy=True)
+    if axis=="x":
+        base=transformer.transform(value,other);shifted=transformer.transform(value+step,other);delta=shifted[0]-base[0]
+    else:
+        base=transformer.transform(other,value);shifted=transformer.transform(other,value+step);delta=shifted[1]-base[1]
+    if not np.isfinite(delta) or delta==0:raise Nc2WebError(f"cannot derive finite projected {axis} spacing for singleton axis")
+    return float(delta)
+
+
 def _quantize(values: np.ndarray, origin: float, scale: float) -> np.ndarray:
     return np.rint((values - origin) / scale).astype("<i4")
 
@@ -146,23 +209,34 @@ def _write_mesh(path: Path, *, xs: np.ndarray, ys: np.ndarray, active: np.ndarra
             n11 = n01 + 1
             triangles.append((n00, n10, n01))
             triangles.append((n10, n11, n01))
-    path.write_bytes(
-        MESH_MAGIC
-        + struct.pack("<IIfff", n_nodes, len(triangles), origin[0], origin[1], scale)
-        + qx.astype("<i4", copy=False).tobytes()
-        + qy.astype("<i4", copy=False).tobytes()
-        + np.asarray(triangles, dtype="<u4").tobytes()
-    )
+    with path.open("xb") as stream:
+        stream.write(MESH_MAGIC)
+        stream.write(struct.pack("<IIfff", n_nodes, len(triangles), origin[0], origin[1], scale))
+        stream.write(qx.astype("<i4", copy=False).tobytes())
+        stream.write(qy.astype("<i4", copy=False).tobytes())
+        stream.write(np.asarray(triangles, dtype="<u4").tobytes())
+        stream.flush();os.fsync(stream.fileno())
     return n_nodes, len(triangles)
 
 
 def _write_frame(path: Path, arrays: Sequence[np.ndarray]) -> None:
     first = arrays[0]
     ny, nx = first.shape
-    payload = FRAME_MAGIC + struct.pack("<III", ny, nx, len(arrays))
-    for item in arrays:
-        payload += np.asarray(item, dtype="<f4").tobytes()
-    path.write_bytes(payload)
+    with path.open("xb") as stream:
+        stream.write(FRAME_MAGIC);stream.write(struct.pack("<III", ny, nx, len(arrays)))
+        for item in arrays:stream.write(np.asarray(item, dtype="<f4").tobytes(order="C"))
+        stream.flush();os.fsync(stream.fileno())
+
+
+def _new_output_directory(path:Path)->None:
+    if path.exists():raise Nc2WebError(f"output directory already exists; no-clobber refused: {path}")
+    if not path.parent.is_dir():raise Nc2WebError(f"output parent directory does not exist: {path.parent}")
+    path.mkdir()
+
+
+def _write_json_noclobber(path:Path,value:Any)->None:
+    raw=(json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False)+"\n").encode("utf-8")
+    with path.open("xb") as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
 
 
 def convert_netcdf_to_web(
@@ -181,12 +255,12 @@ def convert_netcdf_to_web(
     """
 
     src = Path(source)
-    out = Path(output_dir)
+    out = Path(output_dir).resolve()
     _reject_native_triangular_artifact(src)
-    out.mkdir(parents=True, exist_ok=True)
     target = _normalize_epsg(target_epsg) or TARGET_WEB_EPSG
     if target != TARGET_WEB_EPSG:
         raise Nc2WebError(f"web coordinates must use {TARGET_WEB_EPSG}, got {target}")
+    _new_output_directory(out)
     warnings: list[str] = []
     blockers: list[str] = []
 
@@ -203,45 +277,49 @@ def convert_netcdf_to_web(
             x_web, y_web = x, y
         else:
             x_web, y_web = _reproject_xy(x, y, source_crs, target)
-        dx = float(getattr(ds, "dx", _finite_diff(x_web) if x_web.size > 1 else 50.0)) if x_web.size > 1 else float(np.nan)
-        dy = float(getattr(ds, "dy", _finite_diff(y_web) if y_web.size > 1 else 50.0)) if y_web.size > 1 else float(np.nan)
-        if x_web.size == 1 or y_web.size == 1:
-            origin_attr = str(getattr(ds, "origin", "")).split(",")
-            if len(origin_attr) == 2:
-                xmin = float(origin_attr[0])
-                ymin = float(origin_attr[1])
-                dx = float(str(getattr(ds, "grid_spacing", "50,50")).split(",")[0])
-                dy = float(str(getattr(ds, "grid_spacing", "50,50")).split(",")[1])
-            else:
-                raise Nc2WebError("cannot infer grid spacing and origin from a length-1 axis")
-        else:
-            xmin = float(x_web[0] - 0.5 * dx)
-            ymin = float(y_web[0] - 0.5 * dy)
+        spacing_parts=str(getattr(ds,"grid_spacing","50,50")).split(",")
+        if len(spacing_parts)!=2:raise Nc2WebError("grid_spacing must contain two source-axis steps")
+        source_dx=float(getattr(ds,"dx",spacing_parts[0]));source_dy=float(getattr(ds,"dy",spacing_parts[1]))
+        if x_web.size>1:
+            dx=_finite_diff(x_web)
+            if not np.allclose(np.diff(x_web),dx,rtol=0,atol=1e-6):raise Nc2WebError("projected x axis is not evenly spaced")
+        elif source_crs and _normalize_epsg(source_crs)!=_normalize_epsg(target):
+            dx=_reproject_single_axis_step(float(x[0]),float(y[0]),source_dx,axis="x",source_epsg=source_crs,target_epsg=target)
+        else:dx=source_dx
+        if y_web.size>1:
+            dy=_finite_diff(y_web)
+            if not np.allclose(np.diff(y_web),dy,rtol=0,atol=1e-6):raise Nc2WebError("projected y axis is not evenly spaced")
+        elif source_crs and _normalize_epsg(source_crs)!=_normalize_epsg(target):
+            dy=_reproject_single_axis_step(float(y[0]),float(x[0]),source_dy,axis="y",source_epsg=source_crs,target_epsg=target)
+        else:dy=source_dy
+        xmin=float(x_web[0]-0.5*dx);ymin=float(y_web[0]-0.5*dy)
         origin = (xmin, ymin)
         corner_x = xmin + np.arange(x_web.size + 1) * dx
         corner_y = ymin + np.arange(y_web.size + 1) * dy
         active = np.asarray(ds.variables["active_mask"][:], dtype=bool) if "active_mask" in ds.variables else None
         artifact_type = getattr(ds, "artifact_type", None)
-        hydro: dict[str, np.ndarray] = {}
+        hydro: dict[str, Any] = {}
+        hydro_dimensions:dict[str,tuple[str,...]]={}
         for name in HYDRO_VARS:
             if name not in ds.variables:
                 continue
-            values = np.asarray(ds.variables[name][:], dtype=float)
-            dims = tuple(ds.variables[name].dimensions)
-            if dims == ("y", "x"):
-                values = values[None, ...]
-            elif dims != ("time", "y", "x"):
+            variable=ds.variables[name]
+            dims = tuple(variable.dimensions)
+            if dims not in (("y","x"),("time","y","x")):
                 warnings.append(f"{name} skipped because dimensions are {dims}, not (time,y,x) or (y,x)")
                 continue
-            if values.shape[-2:] != (y_web.size, x_web.size):
+            if variable.shape[-2:] != (y_web.size, x_web.size):
                 raise Nc2WebError(f"{name} spatial shape does not match y/x coordinates")
-            hydro[name] = values
+            if dims==("time","y","x") and "time" in ds.dimensions and variable.shape[0]!=len(ds.dimensions["time"]):
+                raise Nc2WebError(f"{name} time dimension differs from the native time length")
+            hydro[name]=variable;hydro_dimensions[name]=dims
         times: list[float | None]
         if "time" in ds.variables and hydro:
-            times = [float(item) for item in np.asarray(ds.variables["time"][:], dtype=float).tolist()]
+            times = [float(item) for item in np.asarray(ds.variables["time"][:], dtype=np.float64).tolist()]
         elif hydro:
-            times = [None]
-            warnings.append("hydrodynamic fields have no time coordinate; a single frame was written")
+            timed=next((variable.shape[0] for name,variable in hydro.items() if hydro_dimensions[name]==("time","y","x")),1)
+            times=[None] if timed==1 else [float(i) for i in range(timed)]
+            warnings.append("hydrodynamic fields have no time coordinate; frame indices are used as relative display time")
         else:
             times = []
             if artifact_type == "terrain_preparation":
@@ -254,18 +332,18 @@ def convert_netcdf_to_web(
         frames: list[dict[str, Any]] = []
         extrema: dict[str, dict[str, float]] = {}
         variables = tuple(hydro)
-        n_time = next(iter(hydro.values())).shape[0] if hydro else 0
+        n_time = len(times) if hydro else 0
         if times and n_time and len(times) != n_time:
             raise Nc2WebError("time coordinate length does not match hydrodynamic fields")
         for index in range(n_time):
             arrays = []
             frame_ext: dict[str, dict[str, float]] = {}
             for name in variables:
-                values = hydro[name][index].astype(float)
-                if active is not None:
-                    values = np.where(active, values, np.nan)
-                values = np.where(np.isfinite(values), values, np.nan)
-                arrays.append(values.astype("<f4"))
+                variable=hydro[name]
+                raw=variable[index,:,:] if hydro_dimensions[name]==("time","y","x") else variable[:,:]
+                values=_read_hydro_values(variable,raw,active)
+                encoded=values.astype("<f4")
+                arrays.append(encoded)
                 finite = values[np.isfinite(values)]
                 if finite.size:
                     frame_ext[name] = {"min": float(finite.min()), "max": float(finite.max())}
@@ -298,7 +376,7 @@ def convert_netcdf_to_web(
         artifact_type=None if artifact_type is None else str(artifact_type),
         xy_scale=float(xy_scale),
     )
-    (out / "manifest.json").write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json_noclobber(out / "manifest.json",manifest.to_dict())
     return manifest
 
 
@@ -358,61 +436,63 @@ def convert_netcdf_to_step_json(
     """Write one JSON per timestep: all = ['id depth speed direction', ...]."""
 
     src = Path(source)
-    out = Path(output_dir)
+    out = Path(output_dir).resolve()
     _reject_native_triangular_artifact(src)
-    out.mkdir(parents=True, exist_ok=True)
+    _new_output_directory(out)
     warnings: list[str] = []
     with _open_dataset(src) as ds:
         if "water_depth" not in ds.variables:
             raise Nc2WebError("step JSON conversion requires water_depth")
-        depth = np.asarray(ds.variables["water_depth"][:], dtype=float)
-        dims = tuple(ds.variables["water_depth"].dimensions)
-        if dims == ("y", "x"):
-            depth = depth[None, ...]
-            times: list[float | None] = [None]
-            warnings.append("water_depth has no time coordinate; a single step JSON was written")
-        elif dims == ("time", "y", "x"):
-            times = [float(item) for item in np.asarray(ds.variables["time"][:], dtype=float).tolist()] if "time" in ds.variables else [float(i) for i in range(depth.shape[0])]
-        else:
+        depth_var=ds.variables["water_depth"]
+        depth_dims=tuple(depth_var.dimensions)
+        if depth_dims not in (("y","x"),("time","y","x")):
             raise Nc2WebError("water_depth must use (time,y,x) or (y,x)")
-        ny, nx = int(depth.shape[1]), int(depth.shape[2])
-        u = np.zeros_like(depth)
-        v = np.zeros_like(depth)
-        if "velocity_x" in ds.variables:
-            raw = np.asarray(ds.variables["velocity_x"][:], dtype=float)
-            u = raw[None, ...] if raw.ndim == 2 else raw
-        elif "u" in ds.variables:
-            raw = np.asarray(ds.variables["u"][:], dtype=float)
-            u = raw[None, ...] if raw.ndim == 2 else raw
+        ny,nx=map(int,depth_var.shape[-2:])
+        components=[]
+        for candidates,label in ((("velocity_x","u"),"x"),(("velocity_y","v"),"y")):
+            selected=next((name for name in candidates if name in ds.variables),None)
+            if selected is None:
+                raise Nc2WebError(f"step JSON requires {label}-velocity; missing values are never replaced by zero")
+            variable=ds.variables[selected];dims=tuple(variable.dimensions)
+            if dims not in (("y","x"),("time","y","x")) or variable.shape[-2:]!=(ny,nx):
+                raise Nc2WebError(f"{selected} dimensions/shape do not align with water_depth")
+            components.append((selected,variable,dims))
+        if "time" in ds.variables:
+            times=[float(item) for item in np.asarray(ds.variables["time"][:],dtype=np.float64).tolist()]
+            frame_count=len(times)
+        elif depth_dims==("time","y","x"):
+            frame_count=int(depth_var.shape[0]);times=[float(i) for i in range(frame_count)]
+            warnings.append("time variable missing; frame index is used as relative display time")
         else:
-            warnings.append("velocity_x/u missing; speed=0 and direction=180")
-        if "velocity_y" in ds.variables:
-            raw = np.asarray(ds.variables["velocity_y"][:], dtype=float)
-            v = raw[None, ...] if raw.ndim == 2 else raw
-        elif "v" in ds.variables:
-            raw = np.asarray(ds.variables["v"][:], dtype=float)
-            v = raw[None, ...] if raw.ndim == 2 else raw
-        active = np.asarray(ds.variables["active_mask"][:], dtype=bool) if "active_mask" in ds.variables else None
-        files: list[str] = []
-        wet_counts: list[int] = []
-        for index in range(depth.shape[0]):
-            h = depth[index]
-            uu = u[index] if u.shape[0] == depth.shape[0] else u[0]
-            vv = v[index] if v.shape[0] == depth.shape[0] else v[0]
-            wet = np.isfinite(h) & (h > min_depth)
-            if active is not None:
-                wet = wet & active
-            rows, cols = np.nonzero(wet)
-            records = []
-            for row, col in zip(rows.tolist(), cols.tolist()):
-                speed, direction = _flow_dir_deg(float(uu[row, col]), float(vv[row, col]), still_dir=still_direction_deg)
-                records.append(
-                    f"{_cell_id(row, col, nx)}_{_fmt_num(float(h[row, col]), 3)}_{_fmt_num(speed, 2)}_{_fmt_num(direction, 1)}"
-                )
-            filename = f"step_{index:03d}.json"
-            (out / filename).write_text(json.dumps({"all": records}, ensure_ascii=False, indent=2), encoding="utf-8")
-            files.append(filename)
-            wet_counts.append(len(records))
+            frame_count=1;times=[None]
+            warnings.append("water_depth has no time coordinate; a single step JSON was written")
+        if depth_dims==("time","y","x") and depth_var.shape[0]!=frame_count:
+            raise Nc2WebError("water_depth time length differs from time coordinate")
+        for name,variable,dims in components:
+            if dims==("time","y","x") and variable.shape[0]!=frame_count:
+                raise Nc2WebError(f"{name} time length differs from water_depth/time coordinate")
+        active=np.asarray(ds.variables["active_mask"][:],dtype=bool) if "active_mask" in ds.variables else None
+        files:list[str]=[];wet_counts:list[int]=[]
+        for index in range(frame_count):
+            raw_h=depth_var[index,:,:] if depth_dims==("time","y","x") else depth_var[:,:]
+            h=_read_hydro_values(depth_var,raw_h,active)
+            vectors=[]
+            for _name,variable,dims in components:
+                raw=variable[index,:,:] if dims==("time","y","x") else variable[:,:]
+                vectors.append(_read_hydro_values(variable,raw,active))
+            uu,vv=vectors
+            if h.shape!=(ny,nx) or uu.shape!=h.shape or vv.shape!=h.shape:
+                raise Nc2WebError("streamed step arrays differ from the fixed y/x shape")
+            valid=np.isfinite(h)&np.isfinite(uu)&np.isfinite(vv)
+            wet=valid&(h>min_depth)
+            if active is not None:wet=wet&active
+            rows,cols=np.nonzero(wet);records=[]
+            for row,col in zip(rows.tolist(),cols.tolist()):
+                speed,direction=_flow_dir_deg(float(uu[row,col]),float(vv[row,col]),still_dir=still_direction_deg)
+                records.append(f"{_cell_id(row,col,nx)}_{_fmt_num(float(h[row,col]),3)}_{_fmt_num(speed,2)}_{_fmt_num(direction,1)}")
+            filename=f"step_{index:03d}.json"
+            _write_json_noclobber(out/filename,{"all":records})
+            files.append(filename);wet_counts.append(len(records))
     report = Nc2WebStepJsonReport(
         status="warn" if warnings else "pass",
         epsg=TARGET_WEB_EPSG,
@@ -428,8 +508,18 @@ def convert_netcdf_to_step_json(
         warnings=tuple(dict.fromkeys(warnings)),
         wet_counts=tuple(wet_counts),
     )
-    (out / "index.json").write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json_noclobber(out / "index.json",report.to_dict())
     return report
+
+
+def convert_native_netcdf_to_web(source_request:str|Path,output_dir:str|Path,*,run_id:str)->dict[str,Any]:
+    """Write a separate exact-node/face web profile from a strict native source request."""
+    from .native_result_stream import open_validated_native_result_frames
+    from .native_triangle_web import NativeTriangleWebWriter
+    native=open_validated_native_result_frames(source_request)
+    writer=NativeTriangleWebWriter(output_dir,native,run_id=run_id)
+    for frame in native.iter_frames():writer.write_frame(frame)
+    return writer.finish()
 
 
 
@@ -499,9 +589,9 @@ def write_socio_overlay_rasters(
 def parse_netcdf_for_web(source: str | Path, output_dir: str | Path) -> dict[str, Any]:
     """Run both web parsers into sibling folders under output_dir."""
 
-    root = Path(output_dir)
+    root = Path(output_dir).resolve()
     _reject_native_triangular_artifact(Path(source))
-    root.mkdir(parents=True, exist_ok=True)
+    _new_output_directory(root)
     web = convert_netcdf_to_web(source, root / "nc2web")
     steps = convert_netcdf_to_step_json(source, root / "stepjson")
     try:
@@ -517,7 +607,7 @@ def parse_netcdf_for_web(source: str | Path, output_dir: str | Path) -> dict[str
         "stepjson": {"dir": "stepjson", "status": steps.status, "files": len(steps.files), "epsg": steps.epsg},
         "socio": socio,
     }
-    (root / "parse_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json_noclobber(root / "parse_summary.json",summary)
     return summary
 
-__all__ = ["MESH_MAGIC", "FRAME_MAGIC", "Nc2WebError", "Nc2WebManifest", "Nc2WebStepJsonReport", "TARGET_WEB_EPSG", "convert_netcdf_to_web", "convert_netcdf_to_step_json", "parse_netcdf_for_web"]
+__all__ = ["MESH_MAGIC", "FRAME_MAGIC", "Nc2WebError", "Nc2WebManifest", "Nc2WebStepJsonReport", "TARGET_WEB_EPSG", "convert_netcdf_to_web", "convert_netcdf_to_step_json", "convert_native_netcdf_to_web", "parse_netcdf_for_web"]

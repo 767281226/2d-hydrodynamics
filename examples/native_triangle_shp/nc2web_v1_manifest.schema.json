@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nc2web-1.0-manifest-v1",
+  "title": "Legacy nc2web 1.0 compatibility manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "epsg", "source", "mesh", "nx", "ny", "origin", "dx", "dy", "node_count", "triangle_count", "times", "variables", "frames", "extrema", "warnings", "blockers", "artifact_type", "xy_scale", "format", "version"],
+  "properties": {
+    "status": {"enum": ["pass", "warn", "block"]},
+    "epsg": {"const": "EPSG:4548"},
+    "source": {"type": "string"},
+    "mesh": {"const": "mesh.bin"},
+    "nx": {"type": "integer", "minimum": 1},
+    "ny": {"type": "integer", "minimum": 1},
+    "origin": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}},
+    "dx": {"type": "number"},
+    "dy": {"type": "number"},
+    "node_count": {"type": "integer", "minimum": 1},
+    "triangle_count": {"type": "integer", "minimum": 0},
+    "times": {"type": "array", "items": {"type": ["number", "null"]}},
+    "variables": {"type": "array", "items": {"type": "string"}},
+    "frames": {"type": "array", "items": {"type": "object", "required": ["index", "time", "file", "extrema"], "properties": {"index": {"type": "integer", "minimum": 0}, "time": {"type": ["number", "null"]}, "file": {"type": "string", "pattern": "^frame_[0-9]{3}\\.bin$"}, "extrema": {"type": "object"}}}},
+    "extrema": {"type": "object"},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "artifact_type": {"type": ["string", "null"]},
+    "xy_scale": {"type": "number", "exclusiveMinimum": 0},
+    "format": {"const": "nc2web"},
+    "version": {"const": "1.0"}
+  }
+}

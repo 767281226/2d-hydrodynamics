@@ -1,0 +1,123 @@
+{
+  "coordinate_system": "EPSG:32650",
+  "data_origin": "SYNTHETIC_SMALL_NATIVE_FIXTURE",
+  "database_status": "DISABLED_NOT_REQUESTED",
+  "dry_depth_threshold_m": 1e-06,
+  "extrema": {
+    "speed_m_s": {
+      "max": 0.0,
+      "min": 0.0
+    },
+    "velocity_x_m_s": {
+      "max": 0.0,
+      "min": 0.0
+    },
+    "velocity_y_m_s": {
+      "max": 0.0,
+      "min": 0.0
+    },
+    "water_depth_m": {
+      "max": 0.2,
+      "min": 0.2
+    },
+    "water_level_m": {
+      "max": 0.2,
+      "min": 0.2
+    }
+  },
+  "face_count": 2,
+  "face_id_sha256": "2d32d4670699d0d380b8967a8020990b79cbd1031e99e59b3b715643315e1861",
+  "face_ids_encoding": "decimal ASCII strings, fixed 32-byte records; never parsed as JavaScript Number",
+  "format": "native-triangle-web",
+  "frame_header": "uint32 index, float64 time_s, uint32 face_count, uint32 variable_count, uint32 reserved=0; 32-byte total header, then each manifest variable as face-order float64-le",
+  "frame_magic": "NTW3F01\n",
+  "frames": [
+    {
+      "bytes": 112,
+      "file": "frame_000000.bin",
+      "index": 0,
+      "sha256": "f12c5c40d9c3cc9d75d502f899f59ad1ccd37f5cd951a7e16aab3b54c757ea05",
+      "time_s": 0.0
+    },
+    {
+      "bytes": 112,
+      "file": "frame_000001.bin",
+      "index": 1,
+      "sha256": "5f37e975f66ebf8845863c8f8518e27ba29e97279be611226344760a3a43fb0d",
+      "time_s": 0.5
+    },
+    {
+      "bytes": 112,
+      "file": "frame_000002.bin",
+      "index": 2,
+      "sha256": "7460ad84af400339ecd639fface4375d2966dedf606232e07336c889f538ebc3",
+      "time_s": 1.0
+    }
+  ],
+  "live_solver_ran": false,
+  "mesh_file": {
+    "bytes": 184,
+    "layout": "magic[8], uint32 node_count, uint32 face_count, node_xy float64 interleaved, face_nodes uint32 triples, face_id 32-byte ASCII strings, face_area float64",
+    "name": "mesh.bin",
+    "sha256": "caf15c4136cbdb8dd83a1f0dea6c0a2f051d2d3f481b18103b3f6013c5952d47"
+  },
+  "node_count": 4,
+  "qa_fixture": true,
+  "run_id": "m1qa-253df2ada9a0-cbbab928",
+  "security_exclusion": null,
+  "social_economy_status": "NOT_READ_NOT_REQUESTED",
+  "source_graph": {
+    "business_package": "76b35d0b550047b2cd793852f6ecc06c4a66e9ff6d4a88c46c6b4973714e72f9",
+    "mesh": "45ff28e072107f45e0ad7adc3a96794f67cd84ec1bcf3c6b2ded7e815b5c9c9a",
+    "native_result": "77afe9bab56b977da0d76c2b8ce66bb9b43d95e6275faa36b546be8ff29a33a8",
+    "request": "99a29f4ef87ed95d4103f76785dcb0d1ff9c52e04fba58f649f9ddf315ebd30c",
+    "run_config": "c2bffc7dc99a583efd3e39daa1d97e7bac0f73edb50cbcc1488b8419c1cc1024"
+  },
+  "source_native_result_path": "D:\\devTools\\project\\2d-hydrodynamics\\examples\\native_triangle_shp\\result.nc",
+  "source_native_result_sha256": "77afe9bab56b977da0d76c2b8ce66bb9b43d95e6275faa36b546be8ff29a33a8",
+  "source_profile": "authoritative_native_faces",
+  "source_request_path": "D:\\devTools\\project\\2d-hydrodynamics\\examples\\native_triangle_shp\\export_frame.yaml",
+  "status": "qa_fixture_ready",
+  "time_origin": null,
+  "times_s": [
+    0.0,
+    0.5,
+    1.0
+  ],
+  "topology": "native_triangular_mesh",
+  "variables": [
+    {
+      "availability": "available",
+      "dtype": "float64-le",
+      "name": "water_depth_m",
+      "units": "m"
+    },
+    {
+      "availability": "available",
+      "dtype": "float64-le",
+      "name": "water_level_m",
+      "units": "m"
+    },
+    {
+      "availability": "available",
+      "dtype": "float64-le",
+      "name": "velocity_x_m_s",
+      "units": "m/s"
+    },
+    {
+      "availability": "available",
+      "dtype": "float64-le",
+      "name": "velocity_y_m_s",
+      "units": "m/s"
+    },
+    {
+      "availability": "available",
+      "dtype": "float64-le",
+      "name": "speed_m_s",
+      "units": "m/s"
+    }
+  ],
+  "version": "1.0",
+  "vertical_datum": "Native SHP synthetic local datum",
+  "wet_area_rule": "sum(native face_area_m2 where depth > 1e-06 m"
+}
