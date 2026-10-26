@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "triangle-terrain-windowed-v1",
+  "title": "Windowed native-triangle terrain mapping limits",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["max_source_pixels", "max_candidate_overlap_checks", "coverage_policy"],
+  "properties": {
+    "format": {"const": "triangle-terrain-windowed-v1", "default": "triangle-terrain-windowed-v1", "type": "string"},
+    "max_source_pixels": {"type": "integer", "minimum": 1, "maximum": 1000000000, "description": "Maximum raster identity/scan size, pixels; not an in-memory array dimension."},
+    "tile_rows": {"type": "integer", "minimum": 1, "maximum": 256, "default": 256, "description": "Raw source tile rows, pixels."},
+    "tile_cols": {"type": "integer", "minimum": 1, "maximum": 256, "default": 256, "description": "Raw source tile columns, pixels; tile_rows*tile_cols must be <=65536."},
+    "max_inflight_tiles": {"const": 1, "default": 1, "type": "integer"},
+    "gdal_cache_mib": {"const": 64, "default": 64, "type": "integer"},
+    "max_faces": {"type": "integer", "minimum": 1, "maximum": 500000, "default": 500000},
+    "max_nodes": {"type": "integer", "minimum": 3, "maximum": 2000000, "default": 2000000},
+    "max_candidate_overlap_checks": {"type": "integer", "minimum": 1, "maximum": 1000000000, "description": "Required cap on candidate face/pixel clip checks; fail before the first over-budget clip."},
+    "coverage_policy": {"enum": ["diagnostic_only", "minimum_valid_coverage"], "description": "Required. diagnostic_only never marks engineering terrain ready.", "type": "string"},
+    "minimum_valid_coverage": {"type": ["number", "null"], "minimum": 0.0, "maximum": 1.0, "default": null, "description": "Source-approved valid-area/face-area threshold. Required only for minimum_valid_coverage policy."},
+    "coverage_policy_evidence_path": {"type": ["string", "null"], "minLength": 1, "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+", "default": null, "description": "Relative path to the source-approved coverage policy."},
+    "coverage_policy_evidence_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "default": null},
+    "source_vertical_unit_declaration": {"anyOf": [{"const": "m", "type": "string"}, {"type": "null"}], "default": null},
+    "source_vertical_unit_evidence_path": {"type": ["string", "null"], "minLength": 1, "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+", "default": null},
+    "source_vertical_unit_evidence_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "default": null},
+    "source_vertical_datum_declaration": {"type": ["string", "null"], "minLength": 1, "default": null},
+    "source_vertical_datum_evidence_path": {"type": ["string", "null"], "minLength": 1, "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+", "default": null},
+    "source_vertical_datum_evidence_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "default": null},
+    "area_abs_tolerance_m2": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.001, "default": 1e-8},
+    "area_rel_tolerance": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.000001, "default": 1e-10},
+    "elevation_abs_tolerance_m": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.001, "default": 1e-8},
+    "elevation_rel_tolerance": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.000001, "default": 1e-10}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"coverage_policy": {"const": "diagnostic_only"}}},
+      "then": {"properties": {"minimum_valid_coverage": {"const": null}, "coverage_policy_evidence_path": {"const": null}, "coverage_policy_evidence_sha256": {"const": null}}}
+    },
+    {
+      "if": {"properties": {"coverage_policy": {"const": "minimum_valid_coverage"}}},
+      "then": {"required": ["minimum_valid_coverage", "coverage_policy_evidence_path", "coverage_policy_evidence_sha256"], "properties": {"minimum_valid_coverage": {"type": "number"}, "coverage_policy_evidence_path": {"type": "string"}, "coverage_policy_evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+    },
+    {
+      "if": {"required": ["source_vertical_unit_declaration"], "properties": {"source_vertical_unit_declaration": {"const": "m"}}},
+      "then": {"required": ["source_vertical_unit_evidence_path", "source_vertical_unit_evidence_sha256"], "properties": {"source_vertical_unit_evidence_path": {"type": "string"}, "source_vertical_unit_evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+    },
+    {
+      "if": {"required": ["source_vertical_datum_declaration"], "properties": {"source_vertical_datum_declaration": {"type": "string"}}},
+      "then": {"required": ["source_vertical_datum_evidence_path", "source_vertical_datum_evidence_sha256"], "properties": {"source_vertical_datum_evidence_path": {"type": "string"}, "source_vertical_datum_evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+    },
+    {
+      "if": {"required": ["source_vertical_unit_evidence_path"], "properties": {"source_vertical_unit_evidence_path": {"type": "string"}}},
+      "then": {"required": ["source_vertical_unit_declaration"], "properties": {"source_vertical_unit_declaration": {"const": "m"}}}
+    },
+    {
+      "if": {"required": ["source_vertical_unit_evidence_sha256"], "properties": {"source_vertical_unit_evidence_sha256": {"type": "string"}}},
+      "then": {"required": ["source_vertical_unit_declaration"], "properties": {"source_vertical_unit_declaration": {"const": "m"}}}
+    },
+    {
+      "if": {"required": ["source_vertical_datum_evidence_path"], "properties": {"source_vertical_datum_evidence_path": {"type": "string"}}},
+      "then": {"required": ["source_vertical_datum_declaration"], "properties": {"source_vertical_datum_declaration": {"type": "string"}}}
+    },
+    {
+      "if": {"required": ["source_vertical_datum_evidence_sha256"], "properties": {"source_vertical_datum_evidence_sha256": {"type": "string"}}},
+      "then": {"required": ["source_vertical_datum_declaration"], "properties": {"source_vertical_datum_declaration": {"type": "string"}}}
+    },
+    {"if": {"required": ["coverage_policy_evidence_path"], "properties": {"coverage_policy_evidence_path": {"type": "string"}}}, "then": {"required": ["coverage_policy_evidence_sha256"]}},
+    {"if": {"required": ["coverage_policy_evidence_sha256"], "properties": {"coverage_policy_evidence_sha256": {"type": "string"}}}, "then": {"required": ["coverage_policy_evidence_path"]}},
+    {"if": {"required": ["source_vertical_unit_evidence_path"], "properties": {"source_vertical_unit_evidence_path": {"type": "string"}}}, "then": {"required": ["source_vertical_unit_evidence_sha256"]}},
+    {"if": {"required": ["source_vertical_unit_evidence_sha256"], "properties": {"source_vertical_unit_evidence_sha256": {"type": "string"}}}, "then": {"required": ["source_vertical_unit_evidence_path"]}},
+    {"if": {"required": ["source_vertical_datum_evidence_path"], "properties": {"source_vertical_datum_evidence_path": {"type": "string"}}}, "then": {"required": ["source_vertical_datum_evidence_sha256"]}},
+    {"if": {"required": ["source_vertical_datum_evidence_sha256"], "properties": {"source_vertical_datum_evidence_sha256": {"type": "string"}}}, "then": {"required": ["source_vertical_datum_evidence_path"]}}
+  ]
+}

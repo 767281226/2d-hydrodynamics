@@ -7,7 +7,7 @@ to read a file.  It does not map a DEM to the model grid or run a solver.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from math import isclose, isfinite
 from numbers import Integral, Real
@@ -192,6 +192,30 @@ class DEMMetadata:
 
 
 @dataclass(frozen=True)
+class DEMWindow:
+    """A bounded pixel window using zero-based row/column offsets."""
+
+    row_off: int
+    col_off: int
+    height: int
+    width: int
+
+    def __post_init__(self) -> None:
+        for name, value in (("row_off", self.row_off), ("col_off", self.col_off)):
+            if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+            object.__setattr__(self, name, int(value))
+        object.__setattr__(self, "height", _positive_integer(self.height, "height"))
+        object.__setattr__(self, "width", _positive_integer(self.width, "width"))
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Window shape in ``(height, width)`` order."""
+
+        return self.height, self.width
+
+
+@dataclass(frozen=True)
 class DEMDataset(Sequence[Sequence[float]]):
     """Raw DEM values plus masks; no value is silently replaced.
 
@@ -339,6 +363,21 @@ class DEMReader(Protocol):
     def read_elevation(self, source: str | Path) -> Sequence[Sequence[float]]:
         """Read raw elevation values from ``source`` without replacement."""
 
+class WindowedDEMReader(DEMReader, Protocol):
+    """Optional extension for readers that support bounded raw reads."""
+
+    def read_window(self, source: str | Path, window: DEMWindow) -> DEMDataset:
+        """Read one bounded pixel window without loading the full raster."""
+
+    def iter_windows(
+        self,
+        source: str | Path,
+        *,
+        window_width: int = 1024,
+        window_height: int = 1024,
+    ) -> Iterator[tuple[DEMWindow, DEMDataset]]:
+        """Yield bounded windows in row-major order."""
+
 
 class DEMReaderError(ValueError):
     """Base error for unsupported or unreadable DEM sources."""
@@ -435,6 +474,164 @@ class GeoTIFFDEMReader:
         except Exception as exc:
             raise DEMReaderError(f"Could not read DEM metadata from {path}: {exc}") from exc
 
+    @staticmethod
+    def _dataset_from_arrays(metadata: DEMMetadata, raw: Any, source_mask: Any) -> DEMDataset:
+        rows = tuple(tuple(row.tolist()) for row in raw)
+        nodata = metadata.nodata_value
+        nodata_rows: list[tuple[bool, ...]] = []
+        nonfinite_rows: list[tuple[bool, ...]] = []
+        valid_rows: list[tuple[bool, ...]] = []
+        for row_index, row in enumerate(rows):
+            nodata_row: list[bool] = []
+            nonfinite_row: list[bool] = []
+            valid_row: list[bool] = []
+            for column_index, value in enumerate(row):
+                is_nonfinite = not isfinite(float(value))
+                is_nodata = (
+                    not is_nonfinite
+                    and (
+                        bool(source_mask[row_index, column_index] == 0)
+                        or (nodata is not None and float(value) == float(nodata))
+                    )
+                )
+                nodata_row.append(is_nodata)
+                nonfinite_row.append(is_nonfinite)
+                valid_row.append(not is_nodata and not is_nonfinite)
+            nodata_rows.append(tuple(nodata_row))
+            nonfinite_rows.append(tuple(nonfinite_row))
+            valid_rows.append(tuple(valid_row))
+        valid_count = sum(sum(row) for row in valid_rows)
+        nodata_count = sum(sum(row) for row in nodata_rows)
+        nonfinite_count = sum(sum(row) for row in nonfinite_rows)
+        metadata = replace(
+            metadata,
+            valid_pixel_count=valid_count,
+            nodata_pixel_count=nodata_count,
+            nonfinite_pixel_count=nonfinite_count,
+            valid_coverage_ratio=valid_count / metadata.pixel_count,
+        )
+        return DEMDataset(metadata, rows, valid_rows, nodata_rows, nonfinite_rows)
+
+    @staticmethod
+    def _validate_window(window: DEMWindow, *, width: int, height: int) -> None:
+        if not isinstance(window, DEMWindow):
+            raise TypeError("window must be a DEMWindow instance")
+        if window.col_off + window.width > width or window.row_off + window.height > height:
+            raise DEMReaderError(
+                "DEM window exceeds source bounds: "
+                f"window=({window.row_off},{window.col_off},{window.height},{window.width}), "
+                f"source=({height},{width})"
+            )
+
+    def _read_open_window(self, dataset: Any, metadata: DEMMetadata, window: DEMWindow, rasterio: Any) -> DEMDataset:
+        self._validate_window(window, width=dataset.width, height=dataset.height)
+        rasterio_window = rasterio.windows.Window(window.col_off, window.row_off, window.width, window.height)
+        left, bottom, right, top = dataset.window_bounds(rasterio_window)
+        window_metadata = replace(
+            metadata,
+            width=window.width,
+            height=window.height,
+            xmin=left,
+            xmax=right,
+            ymin=bottom,
+            ymax=top,
+            transform=tuple(dataset.window_transform(rasterio_window)),
+            valid_pixel_count=None,
+            nodata_pixel_count=None,
+            nonfinite_pixel_count=None,
+            valid_coverage_ratio=None,
+        )
+        raw = dataset.read(1, window=rasterio_window, masked=False)
+        source_mask = dataset.read_masks(1, window=rasterio_window)
+        return self._dataset_from_arrays(window_metadata, raw, source_mask)
+
+    def read_window(self, source: str | Path, window: DEMWindow) -> DEMDataset:
+        """Read one bounded raw pixel window without loading the full raster."""
+        path = self._source_path(source)
+        if not isinstance(window, DEMWindow):
+            raise TypeError("window must be a DEMWindow instance")
+        try:
+            rasterio = self._rasterio()
+            with rasterio.open(path) as dataset:
+                metadata = self._metadata_from_dataset(dataset)
+                return self._read_open_window(dataset, metadata, window, rasterio)
+        except DEMReaderError:
+            raise
+        except Exception as exc:
+            raise DEMReaderError(f"Could not read DEM window from {path}: {exc}") from exc
+
+    def iter_windows(
+        self,
+        source: str | Path,
+        *,
+        window_width: int = 1024,
+        window_height: int = 1024,
+    ) -> Iterator[tuple[DEMWindow, DEMDataset]]:
+        """Yield row-major raw windows without loading the complete raster."""
+        path = self._source_path(source)
+        tile_width = _positive_integer(window_width, "window_width")
+        tile_height = _positive_integer(window_height, "window_height")
+        try:
+            rasterio = self._rasterio()
+            with rasterio.open(path) as dataset:
+                metadata = self._metadata_from_dataset(dataset)
+                for row_off in range(0, dataset.height, tile_height):
+                    height = min(tile_height, dataset.height - row_off)
+                    for col_off in range(0, dataset.width, tile_width):
+                        width = min(tile_width, dataset.width - col_off)
+                        window = DEMWindow(row_off, col_off, height, width)
+                        yield window, self._read_open_window(dataset, metadata, window, rasterio)
+        except DEMReaderError:
+            raise
+        except Exception as exc:
+            raise DEMReaderError(f"Could not iterate DEM windows from {path}: {exc}") from exc
+
+    def iter_windows_selected(
+        self,
+        source: str | Path,
+        *,
+        window_width: int = 256,
+        window_height: int = 256,
+        gdal_cache_mib: int = 64,
+        include_window: Callable[[DEMMetadata, DEMWindow], bool],
+    ) -> Iterator[tuple[DEMWindow, DEMDataset]]:
+        """Yield selected raw windows from one source handle in row-major order.
+
+        ``include_window`` receives only global metadata and pixel offsets; it
+        can skip a window before any pixel values or masks are read. The reader
+        returns unmodified values, masks, and window affine metadata. Consumers
+        must release each yielded tile before advancing the iterator.
+        """
+        path = self._source_path(source)
+        tile_width = _positive_integer(window_width, "window_width")
+        tile_height = _positive_integer(window_height, "window_height")
+        cache_mib = _positive_integer(gdal_cache_mib, "gdal_cache_mib")
+        if cache_mib > 1024:
+            raise ValueError("gdal_cache_mib must be between 1 and 1024")
+        if not callable(include_window):
+            raise TypeError("include_window must be callable")
+        try:
+            rasterio = self._rasterio()
+            cache_bytes = cache_mib * 1024 * 1024
+            with rasterio.Env(GDAL_CACHEMAX=cache_bytes):
+                with rasterio.open(path) as dataset:
+                    metadata = self._metadata_from_dataset(dataset)
+                    for row_off in range(0, dataset.height, tile_height):
+                        height = min(tile_height, dataset.height - row_off)
+                        for col_off in range(0, dataset.width, tile_width):
+                            width = min(tile_width, dataset.width - col_off)
+                            window = DEMWindow(row_off, col_off, height, width)
+                            include = include_window(metadata, window)
+                            if not isinstance(include, bool):
+                                raise DEMReaderError("include_window must return a boolean")
+                            if not include:
+                                continue
+                            yield window, self._read_open_window(dataset, metadata, window, rasterio)
+        except DEMReaderError:
+            raise
+        except Exception as exc:
+            raise DEMReaderError(f"Could not iterate selected DEM windows from {path}: {exc}") from exc
+
     def read_dataset(self, source: str | Path) -> DEMDataset:
         path = self._source_path(source)
         try:
@@ -443,47 +640,7 @@ class GeoTIFFDEMReader:
                 metadata = self._metadata_from_dataset(dataset)
                 raw = dataset.read(1, masked=False)
                 source_mask = dataset.read_masks(1)
-                rows = tuple(tuple(row.tolist()) for row in raw)
-                nodata = metadata.nodata_value
-                nodata_rows: list[tuple[bool, ...]] = []
-                nonfinite_rows: list[tuple[bool, ...]] = []
-                valid_rows: list[tuple[bool, ...]] = []
-                for row_index, row in enumerate(rows):
-                    nodata_row: list[bool] = []
-                    nonfinite_row: list[bool] = []
-                    valid_row: list[bool] = []
-                    for column_index, value in enumerate(row):
-                        is_nonfinite = not isfinite(float(value))
-                        is_nodata = (
-                            not is_nonfinite
-                            and (
-                                bool(source_mask[row_index, column_index] == 0)
-                                or (nodata is not None and float(value) == float(nodata))
-                            )
-                        )
-                        nodata_row.append(is_nodata)
-                        nonfinite_row.append(is_nonfinite)
-                        valid_row.append(not is_nodata and not is_nonfinite)
-                    nodata_rows.append(tuple(nodata_row))
-                    nonfinite_rows.append(tuple(nonfinite_row))
-                    valid_rows.append(tuple(valid_row))
-                valid_count = sum(sum(row) for row in valid_rows)
-                nodata_count = sum(sum(row) for row in nodata_rows)
-                nonfinite_count = sum(sum(row) for row in nonfinite_rows)
-                metadata = replace(
-                    metadata,
-                    valid_pixel_count=valid_count,
-                    nodata_pixel_count=nodata_count,
-                    nonfinite_pixel_count=nonfinite_count,
-                    valid_coverage_ratio=valid_count / metadata.pixel_count,
-                )
-                return DEMDataset(
-                    metadata=metadata,
-                    elevation=rows,
-                    valid_mask=valid_rows,
-                    nodata_mask=nodata_rows,
-                    nonfinite_mask=nonfinite_rows,
-                )
+                return self._dataset_from_arrays(metadata, raw, source_mask)
         except DEMReaderError:
             raise
         except Exception as exc:
@@ -525,6 +682,11 @@ class PlaceholderDEMReader:
             "DEM elevation reading is not implemented; provide a concrete DEMReader in a later phase"
         )
 
+    def read_window(self, source: str | Path, window: DEMWindow) -> DEMDataset:
+        raise NotImplementedError(
+            "DEM window reading is not implemented; provide a concrete WindowedDEMReader"
+        )
+
     def read_dataset(self, source: str | Path) -> DEMDataset:
         raise NotImplementedError(
             "DEM dataset reading is not implemented; provide a concrete DEMReader in a later phase"
@@ -536,6 +698,7 @@ __all__ = [
     "DEMDataset",
     "DEMFormatError",
     "DEMMetadata",
+    "DEMWindow",
     "DEMReader",
     "DEMReaderDependencyError",
     "DEMReaderError",
@@ -547,4 +710,5 @@ __all__ = [
     "GeoTiffReader",
     "PlaceholderDEMReader",
     "RasterioDEMReader",
+    "WindowedDEMReader",
 ]
