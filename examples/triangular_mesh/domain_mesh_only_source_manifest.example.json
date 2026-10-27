@@ -1,0 +1,56 @@
+{
+  "format": "triangle-domain-mesh-source-manifest-v1",
+  "schema_version": "1.0",
+  "source_set_id": "replace-with-synthetic-source-set-id",
+  "target_coordinate_system": "EPSG:4548",
+  "components": [
+    {
+      "component_id": "domain_D",
+      "role": "domain_D",
+      "format": "polygon_shapefile",
+      "source_crs": "EPSG:4548",
+      "group_name": null,
+      "closed": null,
+      "files": {
+        "shp": {"path": "domain/domain_D.shp", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}},
+        "shx": {"path": "domain/domain_D.shx", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}},
+        "prj": {"path": "domain/domain_D.prj", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}},
+        "dbf": {"path": "domain/domain_D.dbf", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}},
+        "cpg": {"path": "domain/domain_D.cpg", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}
+      }
+    },
+    {
+      "component_id": "security_S",
+      "role": "security_S",
+      "format": "polygon_geojson",
+      "source_crs": "EPSG:4548",
+      "group_name": null,
+      "closed": null,
+      "files": {
+        "geometry": {"path": "security/security_S.geojson", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}
+      }
+    },
+    {
+      "component_id": "domain_boundary_01",
+      "role": "boundary_line",
+      "format": "line_geojson",
+      "source_crs": "EPSG:4548",
+      "group_name": "synthetic_domain_boundary",
+      "closed": true,
+      "files": {
+        "geometry": {"path": "lines/domain_boundary.geojson", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}
+      }
+    },
+    {
+      "component_id": "constraint_01",
+      "role": "constraint_line",
+      "format": "line_geojson",
+      "source_crs": "EPSG:4548",
+      "group_name": "synthetic_constraint",
+      "closed": false,
+      "files": {
+        "geometry": {"path": "lines/constraint_01.geojson", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}
+      }
+    }
+  ]
+}

@@ -32,6 +32,7 @@ from .prepared_terrain import PreparedTerrainStopped
 
 FORMAT = "triangle-terrain-preparation-worker-config-v1"
 B1_PILOT_FORMAT = "triangle-b1-synthetic-pilot-config-v1"
+DOMAIN_MESH_ONLY_FORMAT = "triangle-domain-mesh-only-config-v1"
 ROUTE_VERSION = "windowed-triangle-preparation-b0-v1"
 CHILD_POLICY = "job_object_inheritance_without_breakaway"
 MAX_CONFIG_BYTES = 4 * 1024 * 1024
@@ -176,6 +177,7 @@ class _WorkerStartState:
     ever_started: bool = False
     process_id: int | None = None
     resume_previous_suspend_count: int | None = None
+    mesh_only_route: bool = False
 
     def record_resume_success(self, *, process_id: int, previous_suspend_count: int) -> None:
         if type(process_id) is not int or process_id <= 0 or previous_suspend_count != 1:
@@ -334,6 +336,14 @@ def validate_config_shape(config: Any) -> dict[str, Any]:
 
 def validate_route_config_shape(config: Any) -> dict[str, Any]:
     """Dispatch the published B0 contract or the separate synthetic pilot contract."""
+    if isinstance(config, dict) and config.get("format") == DOMAIN_MESH_ONLY_FORMAT:
+        from .domain_mesh_only import validate_domain_mesh_only_config_shape
+        try:
+            return validate_domain_mesh_only_config_shape(config)
+        except RestrictedWorkerError:
+            raise
+        except (TypeError, ValueError, KeyError) as exc:
+            raise RestrictedWorkerError(f"invalid domain mesh-only config: {exc}") from exc
     if isinstance(config, dict) and config.get("format") == B1_PILOT_FORMAT:
         from .b1_synthetic_pilot import validate_pilot_config_shape
         try:
@@ -470,13 +480,24 @@ def _clear_success_scratch(scratch: Path, attempt_root: Path) -> None:
         directory.rmdir()
 
 
-def _module_code_hashes(project_root: Path, *, pilot_route: bool = False) -> dict[str, str]:
+def _module_code_hashes(project_root: Path, *, pilot_route: bool = False,
+                        domain_mesh_only_route: bool = False) -> dict[str, str]:
     names = ("hydrodynamics/restricted_worker.py", "hydrodynamics/prepared_terrain.py",
              "hydrodynamics/preparation_crs.py", "hydrodynamics/terrain_windowed_mapping.py",
              "hydrodynamics/dem_contract.py", "hydrodynamics/triangular_mesh.py",
              "hydrodynamics/mesh_preparation.py")
     if pilot_route:
         names = (*names, "hydrodynamics/b1_synthetic_pilot.py", "hydrodynamics/mesh_generation.py")
+    if domain_mesh_only_route:
+        package_root = project_root / "hydrodynamics"
+        if not package_root.is_dir() or package_root.is_symlink():
+            raise RestrictedWorkerError("hydrodynamics source package is missing or a symlink")
+        # Importing hydrodynamics executes its package initializer. Bind every
+        # Python source file in that package so the mesh-only worker's import
+        # graph cannot drift between supervisor check and worker execution.
+        names = tuple(sorted(path.relative_to(project_root).as_posix()
+                             for path in package_root.rglob("*.py")
+                             if path.is_file() and "__pycache__" not in path.parts))
     result: dict[str, str] = {}
     for name in names:
         path = project_root / name
@@ -1324,11 +1345,16 @@ def _worker_child(control_path: Path) -> int:
         root = Path(control["project_root"]).resolve()
         stage = Path(control["attempt_root"]).resolve()
         pilot_route = config.get("format") == B1_PILOT_FORMAT
-        current_code = _module_code_hashes(root, pilot_route=pilot_route)
+        mesh_only_route = config.get("format") == DOMAIN_MESH_ONLY_FORMAT
+        current_code = _module_code_hashes(root, pilot_route=pilot_route,
+                                           domain_mesh_only_route=mesh_only_route)
         if current_code != control["code_hashes"]:
             raise RestrictedWorkerError("worker route code changed between supervisor check and worker start")
         stage.joinpath("artifacts").mkdir(exist_ok=True)
-        if pilot_route:
+        if mesh_only_route:
+            from .domain_mesh_only import run_domain_mesh_only_worker
+            result = run_domain_mesh_only_worker(control, config, root)
+        elif pilot_route:
             from .b1_synthetic_pilot import run_pilot_worker
             result = run_pilot_worker(control, config, root)
         else:
@@ -1463,6 +1489,17 @@ def _path_length_preflight(project_root: Path, output_root: Path, run_id: str, s
             _short_temp_path(stage / "artifacts" / "gmsh_mesh.json"),
             _short_temp_path(stage / "artifacts" / "gmsh_mapping_mesh.json"),
         ))
+    if config.get("format") == DOMAIN_MESH_ONLY_FORMAT:
+        source_manifest = config.get("source_manifest")
+        if isinstance(source_manifest, dict) and isinstance(source_manifest.get("path"), str):
+            candidates.append(project_root / source_manifest["path"])
+        for directory in (final / "artifacts", stage / "artifacts"):
+            candidates.extend((directory / "domain-mesh.json", directory / "domain-source-audit.json",
+                              directory / "worker-result.json"))
+        candidates.extend((final / "MESH_READY", stage / "MESH_READY.pending",
+                           stage / "scratch" / "domain-mesh-generated.json",
+                           _short_temp_path(stage / "artifacts" / "domain-mesh.json"),
+                           _short_temp_path(stage / "artifacts" / "domain-source-audit.json")))
     try:
         source = config.get("source", {})
         mesh = config.get("mesh", {})
@@ -1534,12 +1571,18 @@ def _finish_failure(stage: Path, final_failure: Path, *, run_id: str, status: st
     worker_started = worker_start_state.ever_started
     (stage / "READY").unlink(missing_ok=True)
     (stage / "READY.pending").unlink(missing_ok=True)
+    if worker_start_state.mesh_only_route:
+        (stage / "MESH_READY").unlink(missing_ok=True)
+        (stage / "MESH_READY.pending").unlink(missing_ok=True)
     status_record = {
-        "format": "triangle-preparation-worker-status-v1", "run_id": run_id,
+        "format": ("triangle-domain-mesh-only-status-v1" if worker_start_state.mesh_only_route
+                   else "triangle-preparation-worker-status-v1"), "run_id": run_id,
         "status": status, "exit_code": exit_code, "worker_started": worker_started,
         "preparation_only": True, "simulation_result": False, "production_approved": False,
         "ready": False, "latest_published": False, "message": message[:2048], "finished_at": _now(),
     }
+    if worker_start_state.mesh_only_route:
+        status_record.update({"mesh_only": True, "mesh_ready": False, "engineering_ready": False})
     if worker_receipt is not None:
         status_record["worker"] = dict(worker_receipt)
     created = _read_worker_created_journal(stage)
@@ -1552,14 +1595,21 @@ def _finish_failure(stage: Path, final_failure: Path, *, run_id: str, status: st
         stage, expected_process_id=None if created is None else created["process_id"])
     if resumed is not None:
         status_record["last_job_process_ids_observed"] = resumed["process_ids"]
-    failure_manifest = {
+    failure_manifest = ({
+        "format": "triangle-domain-mesh-only-bundle-v1", "schema_version": "1.0",
+        "run_id": run_id, "manifest_status": status, "mesh_only": True, "mesh_ready": False,
+        "preparation_only": True, "simulation_result": False, "production_approved": False,
+        "engineering_ready": False, "latest_published": False,
+        "config_sha256": config_sha256, "message": message[:2048],
+        "worker": None if worker_receipt is None else dict(worker_receipt),
+    } if worker_start_state.mesh_only_route else {
         "manifest_format": "triangle-prepared-terrain-b0-v1", "schema_version": "1.0",
         "run_id": run_id, "manifest_status": status, "ready": False,
         "preparation_only": True, "simulation_result": False, "production_approved": False,
         "engineering_ready": False, "latest_published": False,
         "config_sha256": config_sha256, "message": message[:2048],
         "worker": None if worker_receipt is None else dict(worker_receipt),
-    }
+    })
     try:
         if output_budget is None:
             _write_atomic_json(stage / "manifest.json", failure_manifest)
@@ -1581,6 +1631,184 @@ def _finish_failure(stage: Path, final_failure: Path, *, run_id: str, status: st
             pass
     return WorkerRunResult(status, exit_code, run_id, None, stage, worker_started,
                            message[:2048], worker_receipt)
+
+
+def _publish_mesh_only_stage(
+    *, stage: Path, output_root: Path, final_path: Path, failed_path: Path,
+    run_id: str, config: Mapping[str, Any], config_sha256: str, project_root: Path,
+    config_path: Path,
+    resources: WorkerResources, worker_start_state: _WorkerStartState,
+    worker_receipt: Mapping[str, Any], worker_result: Mapping[str, Any],
+    code_hashes: Mapping[str, str], source_identity: Mapping[str, Any],
+    job_started_monotonic: float, stop_reason: Callable[[], str | None],
+    before_directory_commit: Callable[[Path], None] | None,
+) -> WorkerRunResult:
+    """Publish only the distinct MESH_READY diagnostic after Job exit and identity checks."""
+    from .domain_mesh_only import (
+        DOMAIN_MESH_BUNDLE_FORMAT, DOMAIN_MESH_READY_FORMAT,
+        inspect_source_manifest_identity, read_domain_mesh_bundle_identity,
+    )
+
+    def fail(status: str, code: int, message: str) -> WorkerRunResult:
+        return _finish_failure(stage, failed_path, run_id=run_id, status=status, exit_code=code,
+                               message=message, worker_start_state=worker_start_state,
+                               config_sha256=config_sha256, worker_receipt=worker_receipt,
+                               output_budget=resources.output_budget_bytes)
+
+    stopped = stop_reason()
+    if stopped is not None:
+        return fail(stopped, 44 if stopped == "cancelled" else 43,
+                    f"mesh-only generation stopped before envelope verification: {stopped}")
+    if (worker_result.get("route") != "triangle-domain-mesh-only-generate-v1"
+            or worker_result.get("mesh_only") is not True
+            or worker_result.get("preparation_only") is not True
+            or worker_result.get("simulation_result") is not False
+            or worker_result.get("production_approved") is not False
+            or worker_result.get("engineering_ready") is not False
+            or worker_result.get("config_sha256") != config_sha256
+            or worker_result.get("source_manifest_sha256") != config["source_manifest"]["sha256"]
+            or worker_result.get("route_code_sha256") != dict(code_hashes)
+            or worker_result.get("semantic_readback", {}).get("semantic_readback_passed") is not True):
+        return fail("worker_failed", 53, "mesh-only worker result does not bind the trusted route/config/source/readback")
+    if worker_receipt.get("job_active_processes_at_exit") != 0:
+        return fail("orphaned_child", 45, "mesh-only worker exited while a Job child remained active")
+    if time.monotonic() - job_started_monotonic > resources.wall_clock_limit_s:
+        return fail("timed_out", 43, "mesh-only worker and verification exceeded wall_clock_limit_s")
+
+    # Recheck only identities in the supervisor. Geometry parsing and set
+    # audits were completed by the worker while its Job limit was active.
+    if _is_reparse_or_symlink(config_path) or not config_path.is_file() or _sha256_file(config_path)[0] != config_sha256:
+        raise SourceIdentityError("mesh-only config changed after the restricted worker run")
+    source_after = inspect_source_manifest_identity(config, project_root)
+    if (source_after["manifest_sha256"] != source_identity["manifest_sha256"]
+            or source_after["manifest_stat_identity"] != source_identity["manifest_stat_identity"]
+            or source_after["component_file_records"] != source_identity["component_file_records"]):
+        raise SourceIdentityError("mesh-only source manifest/component identities changed during the Job run")
+    if (worker_result.get("source_manifest_stat_identity") != source_identity["manifest_stat_identity"]
+            or worker_result.get("source_components_before") != worker_result.get("source_components_after")
+            or worker_result.get("source_components_before") != list(source_identity["component_file_records"].values())):
+        raise SourceIdentityError("mesh-only worker source-component receipts differ from the trusted manifest identities")
+
+    artifact_directory = stage / "artifacts"
+    expected_artifact_names = {"domain-mesh.json", "domain-source-audit.json", "worker-result.json"}
+    actual_artifact_names = {entry.name for entry in artifact_directory.iterdir()}
+    if actual_artifact_names != expected_artifact_names or any((artifact_directory / name).is_symlink() for name in expected_artifact_names):
+        return fail("worker_failed", 53, "mesh-only worker produced missing or unexpected artifacts")
+    mesh_file, audit_file = worker_result.get("mesh_file"), worker_result.get("source_audit_file")
+    if (not isinstance(mesh_file, dict) or set(mesh_file) != {"name", "sha256", "bytes"}
+            or mesh_file.get("name") != "domain-mesh.json"
+            or not isinstance(audit_file, dict) or set(audit_file) != {"name", "sha256", "bytes"}
+            or audit_file.get("name") != "domain-source-audit.json"):
+        return fail("worker_failed", 53, "mesh-only worker artifact identities are malformed")
+    files = {"mesh_file": dict(mesh_file), "source_audit_file": dict(audit_file),
+             "worker_result_file": {"name": "worker-result.json", **_file_record(artifact_directory / "worker-result.json")}}
+    for key, record in (("mesh_file", mesh_file), ("source_audit_file", audit_file)):
+        digest, size = _sha256_file(artifact_directory / record["name"], maximum_bytes=resources.output_budget_bytes,
+                                    abort_check=stop_reason)
+        if digest != record["sha256"] or size != record["bytes"]:
+            return fail("worker_failed", 53, f"mesh-only {key} bytes differ from the worker receipt")
+    summary = worker_result.get("mesh_summary")
+    if (not isinstance(summary, dict) or type(summary.get("node_count")) is not int
+            or type(summary.get("face_count")) is not int or summary["node_count"] < 3
+            or summary["face_count"] < 1 or summary["node_count"] > config["mesh_generation"]["maximum_nodes"]
+            or summary["face_count"] > config["mesh_generation"]["maximum_faces"]
+            or not isinstance(summary.get("mesh_id"), str)):
+        return fail("worker_failed", 53, "mesh-only worker mesh summary is outside the trusted caps")
+    gmsh = worker_result.get("gmsh")
+    if (not isinstance(gmsh, dict) or gmsh.get("native_library_loaded_in_worker") is not True
+            or gmsh.get("python_binding_loaded_in_worker") is not True
+            or gmsh.get("python_binding_version") != config["expected_gmsh_version"]
+            or gmsh.get("native_library_sha256") != config["expected_gmsh_library_sha256"]
+            or gmsh.get("worker_pid") not in worker_receipt.get("job_process_ids_observed", [])):
+        return fail("worker_failed", 53, "mesh-only Gmsh binding/DLL is not bound to the restricted Job tree")
+    if (artifact_directory / "prepared_faces.jsonl").exists() or (artifact_directory / "prepared_body.json").exists():
+        return fail("worker_failed", 53, "mesh-only route produced terrain/prepared artifacts")
+    if (stage / "READY").exists() or (stage / "READY.pending").exists() or (output_root / "latest").exists():
+        return fail("worker_failed", 53, "mesh-only route produced a terrain READY/latest marker")
+    if (_tree_bytes(stage, skip_names={"scratch"}) > resources.output_budget_bytes
+            or _tree_bytes(stage / "scratch") > resources.scratch_budget_bytes):
+        return fail("resource_rejected", 40, "mesh-only output or scratch exceeded its configured budget")
+    stopped = stop_reason()
+    if stopped is not None:
+        return fail(stopped, 44 if stopped == "cancelled" else 43,
+                    f"mesh-only publication stopped before writer-owned manifest: {stopped}")
+
+    manifest = {
+        "format": DOMAIN_MESH_BUNDLE_FORMAT, "schema_version": "1.0", "run_id": run_id,
+        "route": "triangle-domain-mesh-only-generate-v1", "manifest_status": "mesh_generation_diagnostic_complete",
+        "mesh_only": True, "preparation_only": True, "simulation_result": False,
+        "production_approved": False, "engineering_ready": False, "latest_published": False,
+        "output_budget_bytes": resources.output_budget_bytes,
+        "scratch_budget_bytes": resources.scratch_budget_bytes,
+        "config_sha256": config_sha256,
+        "source_manifest_sha256": source_identity["manifest_sha256"],
+        "source_manifest": {"path": config["source_manifest"]["path"],
+                             "sha256": source_identity["manifest_sha256"],
+                             "stat_identity": source_identity["manifest_stat_identity"]},
+        "target_coordinate_system": config["target_coordinate_system"],
+        "resources": dict(config["resources"]),
+        "route_code_sha256": dict(code_hashes), "mesh": dict(summary),
+        "mesh_generation": {"quality_report": worker_result.get("quality_report"),
+                            "area_audit": worker_result.get("geometry_audit", {}).get("area_audit"),
+                            "line_coverage_audit": worker_result.get("geometry_audit", {}).get("line_coverage"),
+                            "security_audit": worker_result.get("security_audit"),
+                            "gmsh": gmsh, "gmsh_generation_seconds": worker_result.get("gmsh_generation_seconds")},
+        "source_audit_file": files["source_audit_file"], "files": files,
+        "worker": dict(worker_receipt), "operation_wallclock_limit_s": resources.wall_clock_limit_s,
+        "operation_elapsed_seconds": time.monotonic() - job_started_monotonic,
+        "mesh_ready": True,
+    }
+    _clear_success_scratch(stage / "scratch", stage)
+    stopped = stop_reason()
+    if stopped is not None:
+        return fail(stopped, 44 if stopped == "cancelled" else 43,
+                    f"mesh-only publication stopped while clearing scratch: {stopped}")
+    manifest_bytes = _json_bytes(manifest)
+    _write_no_clobber_bytes(stage / "manifest.json", manifest_bytes,
+                            output_budget=resources.output_budget_bytes, root=stage, reserve_bytes=16 * 1024)
+    manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    _write_atomic_json(stage / "status.json", {
+        "format": "triangle-domain-mesh-only-status-v1", "run_id": run_id,
+        "status": "mesh_generation_diagnostic_complete", "exit_code": 0,
+        "worker_started": worker_start_state.ever_started, "mesh_only": True,
+        "preparation_only": True, "simulation_result": False, "production_approved": False,
+        "engineering_ready": False, "ready": False, "mesh_ready": True, "latest_published": False,
+        "config_sha256": config_sha256, "worker": dict(worker_receipt),
+        "operation_wallclock_limit_s": resources.wall_clock_limit_s,
+        "operation_elapsed_seconds": time.monotonic() - job_started_monotonic,
+        "finished_at": _now(),
+    }, output_budget=resources.output_budget_bytes, root=stage, reserve_bytes=8 * 1024)
+    _write_no_clobber_bytes(stage / "MESH_READY.pending", _json_bytes({
+        "format": DOMAIN_MESH_READY_FORMAT, "manifest_sha256": manifest_sha, "run_id": run_id,
+        "mesh_only": True, "simulation_result": False, "production_approved": False,
+        "engineering_ready": False,
+    }), output_budget=resources.output_budget_bytes, root=stage, reserve_bytes=4 * 1024)
+    os.rename(stage / "MESH_READY.pending", stage / "MESH_READY")
+    if final_path.exists():
+        raise RestrictedWorkerError(f"mesh-only final path appeared during publication; no-clobber refused: {final_path}")
+    if before_directory_commit is not None:
+        before_directory_commit(stage)
+    stopped = stop_reason()
+    if stopped is not None:
+        return fail(stopped, 44 if stopped == "cancelled" else 43,
+                    f"mesh-only generation stopped before diagnostic directory commit: {stopped}")
+    if time.monotonic() - job_started_monotonic > resources.wall_clock_limit_s:
+        return fail("timed_out", 43, "mesh-only writer-owned publication exceeded wall_clock_limit_s")
+    os.rename(stage, final_path)
+    stage = final_path
+    try:
+        identity = read_domain_mesh_bundle_identity(
+            stage, expected_config_sha256=config_sha256,
+            expected_source_manifest_sha256=source_identity["manifest_sha256"])
+    except Exception as exc:
+        return fail("worker_failed", 53,
+                    f"mesh-only identity reader rejected the committed diagnostic bundle: {exc}")
+    if identity["manifest_sha256"] != manifest_sha:
+        return fail("worker_failed", 53, "mesh-only identity reader did not verify the supervisor manifest")
+    return WorkerRunResult("mesh_generation_diagnostic_complete", 0, run_id, final_path, None,
+                           worker_start_state.ever_started,
+                           "mesh-only geometry diagnostic published; no terrain or simulation result was produced",
+                           worker_receipt)
 
 
 def run_restricted_preparation(config_path: str | Path, *, project_root: str | Path,
@@ -1606,6 +1834,9 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
         config = json.loads(config_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RestrictedWorkerError(f"config JSON is malformed: {exc}") from exc
+    worker_start_state.mesh_only_route = (
+        isinstance(config, dict) and config.get("format") == DOMAIN_MESH_ONLY_FORMAT
+    )
     run_id, output_relative = _validate_basic_config_for_attempt(config)
     if output_root_override is not None:
         output_candidate = Path(output_root_override)
@@ -1635,11 +1866,14 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
     (scratch / "temp").mkdir()
     (scratch / "proj").mkdir()
     try:
-        initial_status = {"format": "triangle-preparation-worker-status-v1", "run_id": run_id,
+        initial_status = {"format": ("triangle-domain-mesh-only-status-v1" if worker_start_state.mesh_only_route
+                                      else "triangle-preparation-worker-status-v1"), "run_id": run_id,
                           "status": "running", "worker_started": False, "ready": False,
                           "preparation_only": True, "simulation_result": False,
                           "production_approved": False, "latest_published": False,
                           "config_sha256": config_sha, "started_at": _now()}
+        if worker_start_state.mesh_only_route:
+            initial_status.update({"mesh_only": True, "mesh_ready": False, "engineering_ready": False})
         _write_atomic_json(stage / "status.json", initial_status)
     except Exception as exc:
         return _finish_failure(stage, failed_path, run_id=run_id, status="supervisor_failed",
@@ -1678,16 +1912,26 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
 
     try:
         pilot_route = config.get("format") == B1_PILOT_FORMAT
-        code_hashes = _module_code_hashes(project_root, pilot_route=pilot_route)
-        source = config["source"]
-        raster_path = _resolve_project_path(project_root, source["raster_path"], "source.raster_path")
-        source_stat = _stat_identity(raster_path)
-        if source.get("expected_stat_identity") is not None and source_stat != source["expected_stat_identity"]:
-            raise SourceIdentityError("source raster stat identity differs before worker launch")
-        # Compute the contextual relation evidence hash from the already
-        # reviewed, local source contract.  It does not attest the DEM datum.
-        vertical_path = project_root / "docs/external_evidence_contract.md"
-        vertical_hash = _sha256_file(vertical_path)[0]
+        mesh_only_route = config.get("format") == DOMAIN_MESH_ONLY_FORMAT
+        code_hashes = _module_code_hashes(project_root, pilot_route=pilot_route,
+                                          domain_mesh_only_route=mesh_only_route)
+        mesh_source_identity: dict[str, Any] | None = None
+        if mesh_only_route:
+            from .domain_mesh_only import inspect_source_manifest_identity
+            # This supervisor preflight parses only the bounded source manifest
+            # and file identities. Geometry decoding, union/D−S, Gmsh and all
+            # heavy readback remain inside the Job-bound worker.
+            mesh_source_identity = inspect_source_manifest_identity(config, project_root)
+            vertical_hash = "0" * 64  # not part of this mesh-only input contract
+        else:
+            source = config["source"]
+            raster_path = _resolve_project_path(project_root, source["raster_path"], "source.raster_path")
+            source_stat = _stat_identity(raster_path)
+            if source.get("expected_stat_identity") is not None and source_stat != source["expected_stat_identity"]:
+                raise SourceIdentityError("source raster stat identity differs before worker launch")
+            # The contextual relation evidence hash does not attest the DEM datum.
+            vertical_path = project_root / "docs/external_evidence_contract.md"
+            vertical_hash = _sha256_file(vertical_path)[0]
         scratch_config = scratch / "worker-config.json"
         with scratch_config.open("xb") as stream:
             stream.write(config_bytes)
@@ -1772,7 +2016,8 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                    message=f"preparation stopped after worker-tree exit: {stopped}",
                                    worker_start_state=worker_start_state, config_sha256=config_sha,
                                    worker_receipt=job_receipt, output_budget=resources.output_budget_bytes)
-        code_hashes_after = _module_code_hashes(project_root, pilot_route=pilot_route)
+        code_hashes_after = _module_code_hashes(project_root, pilot_route=pilot_route,
+                                                domain_mesh_only_route=mesh_only_route)
         if code_hashes_after != code_hashes:
             raise RestrictedWorkerError("route code changed during the constrained worker run")
         stopped = stop_reason()
@@ -1840,7 +2085,9 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                    message=f"preparation stopped after reading the worker receipt: {stopped}",
                                    worker_start_state=worker_start_state, config_sha256=config_sha,
                                    worker_receipt=job_receipt, output_budget=resources.output_budget_bytes)
-        if worker_result.get("status") != "success" or worker_result.get("category") != "preparation_diagnostic_complete":
+        expected_worker_category = ("mesh_generation_diagnostic_complete" if mesh_only_route
+                                    else "preparation_diagnostic_complete")
+        if worker_result.get("status") != "success" or worker_result.get("category") != expected_worker_category:
             if worker_result.get("worker_result_write_failed") is True:
                 job_receipt["worker_result_write_failed"] = True
                 job_receipt["worker_result_write_error"] = worker_result.get("worker_result_write_error")
@@ -1855,6 +2102,19 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                                if worker_result.get("worker_result_write_failed") else "")),
                                    worker_start_state=worker_start_state, config_sha256=config_sha,
                                    worker_receipt=job_receipt, output_budget=resources.output_budget_bytes)
+
+        if mesh_only_route:
+            if mesh_source_identity is None:
+                raise RestrictedWorkerError("mesh-only source identity was not retained by the supervisor")
+            return _publish_mesh_only_stage(
+                stage=stage, output_root=output_root, final_path=final_path, failed_path=failed_path,
+                run_id=run_id, config=config, config_sha256=config_sha, config_path=config_path,
+                project_root=project_root,
+                resources=resources, worker_start_state=worker_start_state, worker_receipt=job_receipt,
+                worker_result=worker_result, code_hashes=code_hashes,
+                source_identity=mesh_source_identity, job_started_monotonic=job_started_monotonic,
+                stop_reason=stop_reason, before_directory_commit=_before_directory_commit,
+            )
 
         from .prepared_terrain import build_prepared_manifest, read_prepared_terrain
         stopped = stop_reason()
