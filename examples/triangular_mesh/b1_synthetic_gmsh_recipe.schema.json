@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "triangle-b1-synthetic-gmsh-recipe-v1",
+  "title": "Synthetic G0 Gmsh recipe",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "triangle-b1-synthetic-gmsh-recipe-v1",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "type": "string"
+    },
+    "coordinate_system": {
+      "const": "EPSG:4548",
+      "type": "string"
+    },
+    "geometry_tolerance_m": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "minimum_face_area_m2": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100
+    },
+    "gmsh_config": {
+      "$ref": "#/$defs/gmshMeshConfig"
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "coordinate_system",
+    "geometry_tolerance_m",
+    "minimum_face_area_m2",
+    "gmsh_config"
+  ],
+  "$defs": {
+    "GmshLineGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 2,
+          "title": "Points",
+          "type": "array"
+        },
+        "closed": {
+          "default": false,
+          "description": "Whether this path includes a closing segment",
+          "title": "Closed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "points"
+      ],
+      "title": "GmshLineGroup",
+      "type": "object"
+    },
+    "GmshRefinementPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "point": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Point",
+          "type": "array"
+        },
+        "size_m": {
+          "description": "Target element size near this point, m",
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Size M",
+          "type": "number"
+        },
+        "radius_m": {
+          "description": "Distance over which target size returns to default, m",
+          "exclusiveMinimum": 0,
+          "maximum": 100000,
+          "title": "Radius M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "point",
+        "size_m",
+        "radius_m"
+      ],
+      "title": "GmshRefinementPoint",
+      "type": "object"
+    },
+    "gmshMeshConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "gmsh",
+          "title": "Type",
+          "type": "string"
+        },
+        "outer_boundary": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 3,
+          "title": "Outer Boundary",
+          "type": "array"
+        },
+        "holes": {
+          "items": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Holes",
+          "type": "array"
+        },
+        "boundary_groups": {
+          "items": {
+            "$ref": "#/$defs/GmshLineGroup"
+          },
+          "title": "Boundary Groups",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "$ref": "#/$defs/GmshLineGroup"
+          },
+          "title": "Constraints",
+          "type": "array"
+        },
+        "default_size_m": {
+          "description": "Default target edge size, m",
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Default Size M",
+          "type": "number"
+        },
+        "minimum_size_m": {
+          "default": 1.0,
+          "description": "Smallest permitted target edge size, m",
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Minimum Size M",
+          "type": "number"
+        },
+        "refinement_points": {
+          "items": {
+            "$ref": "#/$defs/GmshRefinementPoint"
+          },
+          "title": "Refinement Points",
+          "type": "array"
+        },
+        "maximum_nodes": {
+          "default": 2000000,
+          "description": "Maximum generated node count, count",
+          "maximum": 10000000,
+          "minimum": 3,
+          "title": "Maximum Nodes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "outer_boundary",
+        "default_size_m"
+      ],
+      "title": "GmshMeshConfig",
+      "type": "object"
+    }
+  }
+}

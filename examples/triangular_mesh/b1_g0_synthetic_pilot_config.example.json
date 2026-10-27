@@ -1,0 +1,73 @@
+{
+  "format": "triangle-b1-synthetic-pilot-config-v1",
+  "schema_version": "1.0",
+  "run_id": "replace-with-unique-pilot-run-id",
+  "output_root": "work/full_dem_m2_b1_p0g0_20261027/output",
+  "resources": {
+    "max_workers": 1,
+    "job_memory_limit_mib": 2048,
+    "wall_clock_limit_s": 900.0,
+    "output_budget_bytes": 1073741824,
+    "scratch_budget_bytes": 16777216,
+    "child_process_policy": "job_object_inheritance_without_breakaway"
+  },
+  "source": {
+    "raster_path": "work/full_dem_m2_b1_p0g0_20261027/inputs/source_512.tif",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "source_manifest_path": "work/full_dem_m2_b1_p0g0_20261027/inputs/source_manifest.json",
+    "source_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "expected_stat_identity": null,
+    "components": []
+  },
+  "mapping_config": {
+    "format": "triangle-terrain-windowed-v1",
+    "max_source_pixels": 262144,
+    "tile_rows": 256,
+    "tile_cols": 256,
+    "max_inflight_tiles": 1,
+    "gdal_cache_mib": 64,
+    "max_faces": 500000,
+    "max_nodes": 2000000,
+    "max_candidate_overlap_checks": 1000000,
+    "coverage_policy": "diagnostic_only",
+    "minimum_valid_coverage": null,
+    "coverage_policy_evidence_path": null,
+    "coverage_policy_evidence_sha256": null,
+    "source_vertical_unit_declaration": null,
+    "source_vertical_unit_evidence_path": null,
+    "source_vertical_unit_evidence_sha256": null,
+    "source_vertical_datum_declaration": null,
+    "source_vertical_datum_evidence_path": null,
+    "source_vertical_datum_evidence_sha256": null,
+    "area_abs_tolerance_m2": 1e-08,
+    "area_rel_tolerance": 1e-10,
+    "elevation_abs_tolerance_m": 1e-08,
+    "elevation_rel_tolerance": 1e-10
+  },
+  "crs_alias": null,
+  "mesh": {
+    "path": "work/full_dem_m2_b1_p0g0_20261027/inputs/gmsh_recipe.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "action": "g0_gmsh_windowed_mapping",
+  "pilot_case": null,
+  "mesh_generation": {
+    "format": "triangle-b1-gmsh-generation-v1",
+    "maximum_faces": 500000,
+    "maximum_nodes": 2000000,
+    "minimum_face_quality": 0.1,
+    "area_abs_tolerance_m2": 1e-07,
+    "area_rel_tolerance": 1e-09,
+    "expected_gmsh_version": "4.15.2",
+    "expected_gmsh_library_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "area_roles": {
+      "outer_boundary": "synthetic_D",
+      "holes": {
+        "hole_0": "synthetic_safety_area_exclusion"
+      },
+      "constraints": {
+        "synthetic_constraint": "synthetic_constraint_line"
+      }
+    }
+  }
+}

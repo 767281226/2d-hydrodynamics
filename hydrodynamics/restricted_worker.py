@@ -31,6 +31,7 @@ from .prepared_terrain import PreparedTerrainStopped
 
 
 FORMAT = "triangle-terrain-preparation-worker-config-v1"
+B1_PILOT_FORMAT = "triangle-b1-synthetic-pilot-config-v1"
 ROUTE_VERSION = "windowed-triangle-preparation-b0-v1"
 CHILD_POLICY = "job_object_inheritance_without_breakaway"
 MAX_CONFIG_BYTES = 4 * 1024 * 1024
@@ -331,6 +332,19 @@ def validate_config_shape(config: Any) -> dict[str, Any]:
     return config
 
 
+def validate_route_config_shape(config: Any) -> dict[str, Any]:
+    """Dispatch the published B0 contract or the separate synthetic pilot contract."""
+    if isinstance(config, dict) and config.get("format") == B1_PILOT_FORMAT:
+        from .b1_synthetic_pilot import validate_pilot_config_shape
+        try:
+            return validate_pilot_config_shape(config)
+        except RestrictedWorkerError:
+            raise
+        except (TypeError, ValueError, KeyError) as exc:
+            raise RestrictedWorkerError(f"invalid synthetic pilot config: {exc}") from exc
+    return validate_config_shape(config)
+
+
 def _sha256_file(path: Path, *, maximum_bytes: int | None = None,
                  abort_check: Callable[[], str | None] | None = None) -> tuple[str, int]:
     digest = hashlib.sha256()
@@ -456,11 +470,13 @@ def _clear_success_scratch(scratch: Path, attempt_root: Path) -> None:
         directory.rmdir()
 
 
-def _module_code_hashes(project_root: Path) -> dict[str, str]:
+def _module_code_hashes(project_root: Path, *, pilot_route: bool = False) -> dict[str, str]:
     names = ("hydrodynamics/restricted_worker.py", "hydrodynamics/prepared_terrain.py",
              "hydrodynamics/preparation_crs.py", "hydrodynamics/terrain_windowed_mapping.py",
              "hydrodynamics/dem_contract.py", "hydrodynamics/triangular_mesh.py",
              "hydrodynamics/mesh_preparation.py")
+    if pilot_route:
+        names = (*names, "hydrodynamics/b1_synthetic_pilot.py", "hydrodynamics/mesh_generation.py")
     result: dict[str, str] = {}
     for name in names:
         path = project_root / name
@@ -1051,7 +1067,11 @@ def _load_mesh(mesh_path: Path, expected_sha256: str) -> tuple[Any, str, dict[st
     return mesh, actual_sha, before
 
 
-def _worker_run_mapping(control: dict[str, Any], config: dict[str, Any], root: Path) -> dict[str, Any]:
+def _worker_run_mapping(control: dict[str, Any], config: dict[str, Any], root: Path, *,
+                        body_metadata: Mapping[str, Any] | None = None,
+                        route_version: str | None = None,
+                        body_path_overrides: Mapping[str, str] | None = None,
+                        prepared_body_validator: Callable[[Mapping[str, Any]], None] | None = None) -> dict[str, Any]:
     source = config["source"]
     source_path = _resolve_project_path(root, source["raster_path"], "source.raster_path")
     if source_path.is_symlink() or not source_path.is_file():
@@ -1164,7 +1184,7 @@ def _worker_run_mapping(control: dict[str, Any], config: dict[str, Any], root: P
         "schema_version": "1.0",
         "run_id": config["run_id"],
         "status": "diagnostic_only",
-        "route_version": ROUTE_VERSION,
+        "route_version": route_version or ROUTE_VERSION,
         "preparation_only": True,
         "simulation_result": False,
         "production_approved": False,
@@ -1233,6 +1253,20 @@ def _worker_run_mapping(control: dict[str, Any], config: dict[str, Any], root: P
             "failure_count": len(report.get("failures", [])),
         },
     }
+    if body_metadata is not None:
+        reserved_body_keys = {"format", "schema_version", "run_id", "status", "preparation_only",
+                              "simulation_result", "production_approved", "engineering_ready", "bindings",
+                              "source", "mesh", "mapping", "face_count"}
+        if reserved_body_keys.intersection(body_metadata):
+            raise RestrictedWorkerError("route-specific body metadata may not replace prepared-terrain contract fields")
+        body.update(body_metadata)
+    if body_path_overrides is not None:
+        if set(body_path_overrides) - {"mesh_path", "source_manifest_path"}:
+            raise RestrictedWorkerError("route-specific prepared path override is unsupported")
+        if "mesh_path" in body_path_overrides:
+            body["mesh"]["path"] = body_path_overrides["mesh_path"]
+        if "source_manifest_path" in body_path_overrides:
+            body["source"]["source_manifest_path"] = body_path_overrides["source_manifest_path"]
     from .prepared_terrain import face_id_sequence_sha256
     body["mesh"]["face_id_sequence_sha256"] = face_id_sequence_sha256(int(item) for item in mesh.face_id)
     body["bindings"]["mesh_face_id_sequence_sha256"] = body["mesh"]["face_id_sequence_sha256"]
@@ -1262,6 +1296,7 @@ def _worker_run_mapping(control: dict[str, Any], config: dict[str, Any], root: P
     files = write_prepared_face_artifacts(
         stage_root / "artifacts", body=body, face_rows=iter_face_rows(),
         output_budget_bytes=resources.output_budget_bytes, starting_output_bytes=starting_output_bytes,
+        body_validator=prepared_body_validator,
     )
     return {"status": "success", "category": "preparation_diagnostic_complete",
             "message": "bounded window mapping and prepared artifact write completed",
@@ -1284,15 +1319,20 @@ def _worker_child(control_path: Path) -> int:
         config_bytes = config_path.read_bytes()
         if hashlib.sha256(config_bytes).hexdigest() != control["config_sha256"]:
             raise RestrictedWorkerError("copied worker config differs from its supervisor identity")
-        config = validate_config_shape(json.loads(config_bytes))
+        config = validate_route_config_shape(json.loads(config_bytes))
         resources = parse_worker_resources(config["resources"])
         root = Path(control["project_root"]).resolve()
         stage = Path(control["attempt_root"]).resolve()
-        current_code = _module_code_hashes(root)
+        pilot_route = config.get("format") == B1_PILOT_FORMAT
+        current_code = _module_code_hashes(root, pilot_route=pilot_route)
         if current_code != control["code_hashes"]:
             raise RestrictedWorkerError("worker route code changed between supervisor check and worker start")
         stage.joinpath("artifacts").mkdir(exist_ok=True)
-        result = _worker_run_mapping(control, config, root)
+        if pilot_route:
+            from .b1_synthetic_pilot import run_pilot_worker
+            result = run_pilot_worker(control, config, root)
+        else:
+            result = _worker_run_mapping(control, config, root)
         response = {"format": "triangle-preparation-worker-result-v1", **result,
                     "worker_exit_code": 0, "finished_at": _now(), "process_id": os.getpid()}
         response_bytes = _json_bytes(response)
@@ -1415,6 +1455,14 @@ def _path_length_preflight(project_root: Path, output_root: Path, run_id: str, s
         _short_temp_path(stage / "artifacts" / "prepared_body.json", prefix=".p-"),
         _short_temp_path(stage / "artifacts" / "prepared_faces.jsonl", prefix=".p-"),
     ]
+    if (config.get("format") == B1_PILOT_FORMAT
+            and config.get("action") == "g0_gmsh_windowed_mapping"):
+        for directory in (final / "artifacts", stage / "artifacts"):
+            candidates.extend((directory / "gmsh_mesh.json", directory / "gmsh_mapping_mesh.json"))
+        candidates.extend((
+            _short_temp_path(stage / "artifacts" / "gmsh_mesh.json"),
+            _short_temp_path(stage / "artifacts" / "gmsh_mapping_mesh.json"),
+        ))
     try:
         source = config.get("source", {})
         mesh = config.get("mesh", {})
@@ -1606,7 +1654,7 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                exit_code=40, message=str(exc), worker_start_state=worker_start_state,
                                config_sha256=config_sha, worker_receipt=None, output_budget=None)
     try:
-        config = validate_config_shape(config)
+        config = validate_route_config_shape(config)
         # Re-parse the complete config after strict shape validation; the
         # resource object is deliberately mandatory and has no fallback.
         resources = parse_worker_resources(config["resources"])
@@ -1629,7 +1677,8 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                output_budget=resources.output_budget_bytes)
 
     try:
-        code_hashes = _module_code_hashes(project_root)
+        pilot_route = config.get("format") == B1_PILOT_FORMAT
+        code_hashes = _module_code_hashes(project_root, pilot_route=pilot_route)
         source = config["source"]
         raster_path = _resolve_project_path(project_root, source["raster_path"], "source.raster_path")
         source_stat = _stat_identity(raster_path)
@@ -1723,7 +1772,7 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                    message=f"preparation stopped after worker-tree exit: {stopped}",
                                    worker_start_state=worker_start_state, config_sha256=config_sha,
                                    worker_receipt=job_receipt, output_budget=resources.output_budget_bytes)
-        code_hashes_after = _module_code_hashes(project_root)
+        code_hashes_after = _module_code_hashes(project_root, pilot_route=pilot_route)
         if code_hashes_after != code_hashes:
             raise RestrictedWorkerError("route code changed during the constrained worker run")
         stopped = stop_reason()
@@ -1859,10 +1908,19 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
             "finished_at": _now(),
         }, output_budget=resources.output_budget_bytes, root=stage, reserve_bytes=0)
         expected_bindings = body.get("bindings", {})
-        checked = read_prepared_terrain(stage, expected_bindings=expected_bindings,
-                                        allow_pending_marker=True, abort_check=stop_reason)
+        readback_started = time.monotonic()
+        pilot_route = config.get("format") == B1_PILOT_FORMAT
+        checked = read_prepared_terrain(
+            stage, expected_bindings=expected_bindings, allow_pending_marker=True,
+            abort_check=stop_reason,
+            pilot_config=config if pilot_route else None,
+            project_root=project_root if pilot_route else None,
+        )
         if checked.manifest.get("worker", {}).get("job_active_processes_at_exit") != 0:
             raise RestrictedWorkerError("prepared readback did not verify an empty process tree")
+        pilot_readback_seconds: float | None = None
+        if pilot_route:
+            pilot_readback_seconds = time.monotonic() - readback_started
         stopped = stop_reason()
         if stopped is not None:
             return _finish_failure(stage, failed_path, run_id=run_id, status=stopped,
@@ -1883,7 +1941,7 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                    message="complete worker and prepared readback exceeded wall_clock_limit_s",
                                    worker_start_state=worker_start_state, config_sha256=config_sha,
                                    worker_receipt=job_receipt, output_budget=resources.output_budget_bytes)
-        _write_atomic_json(stage / "status.json", {
+        final_status = {
             "format": "triangle-preparation-worker-status-v1", "run_id": run_id,
             "status": "preparation_diagnostic_complete", "exit_code": 0,
             "worker_started": worker_start_state.ever_started, "preparation_only": True, "simulation_result": False,
@@ -1892,7 +1950,11 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
             "operation_wallclock_limit_s": resources.wall_clock_limit_s,
             "operation_elapsed_seconds": time.monotonic() - job_started_monotonic,
             "finished_at": _now(),
-        }, output_budget=resources.output_budget_bytes, root=stage, reserve_bytes=8 * 1024)
+        }
+        if pilot_readback_seconds is not None:
+            final_status["pilot_readback_seconds"] = pilot_readback_seconds
+        _write_atomic_json(stage / "status.json", final_status,
+                           output_budget=resources.output_budget_bytes, root=stage, reserve_bytes=8 * 1024)
         if time.monotonic() - job_started_monotonic > resources.wall_clock_limit_s:
             return _finish_failure(stage, failed_path, run_id=run_id, status="timed_out", exit_code=43,
                                    message="atomic publication preparation exceeded wall_clock_limit_s",
@@ -2094,7 +2156,7 @@ if __name__ == "__main__":  # pragma: no cover - exercised through an OS Job Obj
 
 
 __all__ = [
-    "CHILD_POLICY", "FORMAT", "ROUTE_VERSION", "ResourceBudgetError", "RestrictedWorkerError",
+    "B1_PILOT_FORMAT", "CHILD_POLICY", "FORMAT", "ROUTE_VERSION", "ResourceBudgetError", "RestrictedWorkerError",
     "SourceIdentityError", "WorkerResources", "WorkerRunResult", "parse_worker_resources", "recover_incomplete_attempts",
-    "run_restricted_preparation", "validate_config_shape",
+    "run_restricted_preparation", "validate_config_shape", "validate_route_config_shape",
 ]

@@ -202,6 +202,7 @@ def write_prepared_face_artifacts(
     output_budget_bytes: int,
     reserved_bytes: int = _MAX_MANIFEST_BYTES + 16 * 1024,
     starting_output_bytes: int = 0,
+    body_validator: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Write bounded JSONL face terrain rows plus their immutable body.
 
@@ -244,6 +245,15 @@ def write_prepared_face_artifacts(
             raise PreparedTerrainError(f"prepared mapping {name} must be finite and positive")
     area_abs_tolerance = float(area_abs_tolerance)
     area_rel_tolerance = float(area_rel_tolerance)
+    if body_validator is not None:
+        if not callable(body_validator):
+            raise PreparedTerrainError("prepared body validator must be callable")
+        try:
+            body_validator(body_value)
+        except PreparedTerrainError:
+            raise
+        except Exception as exc:
+            raise PreparedTerrainError(f"prepared body route validation failed: {exc}") from exc
 
     id_digest = sha256()
     seen_ids: set[int] = set()
@@ -417,8 +427,12 @@ class PreparedTerrainReader:
 def read_prepared_terrain(bundle_directory: str | Path, *,
                           expected_bindings: Mapping[str, str] | None = None,
                           allow_pending_marker: bool = False,
-                          abort_check: Callable[[], str | None] | None = None) -> PreparedTerrainReader:
-    """Verify only stored identities/fields; no DEM or mapping dependency is used."""
+                          abort_check: Callable[[], str | None] | None = None,
+                          pilot_config: Mapping[str, Any] | None = None,
+                          project_root: str | Path | None = None) -> PreparedTerrainReader:
+    """Verify saved identities and, when supplied, B1 semantics without DEM I/O or remapping."""
+    if (pilot_config is None) != (project_root is None):
+        raise PreparedTerrainError("pilot_config and project_root must be supplied together for route validation")
     _abort_status(abort_check)
     root = Path(bundle_directory)
     if root.is_symlink() or not root.is_dir():
@@ -693,7 +707,16 @@ def read_prepared_terrain(bundle_directory: str | Path, *,
             or relation.get("proves_dem_source_datum") is not False
             or source_record.get("terrain_elevation_adjustment_m") != 0.0):
         raise PreparedTerrainError("scoped vertical relation was applied to or used as proof of DEM datum")
-    return PreparedTerrainReader(root, manifest)
+    reader = PreparedTerrainReader(root, manifest)
+    if pilot_config is not None:
+        from .b1_synthetic_pilot import validate_pilot_prepared_bundle
+        try:
+            validate_pilot_prepared_bundle(root, manifest, dict(pilot_config), project_root)
+        except PreparedTerrainError:
+            raise
+        except Exception as exc:
+            raise PreparedTerrainError(f"prepared pilot route validation failed: {exc}") from exc
+    return reader
 
 
 __all__ = [

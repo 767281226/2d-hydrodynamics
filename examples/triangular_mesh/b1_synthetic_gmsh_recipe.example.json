@@ -1,0 +1,118 @@
+{
+  "format": "triangle-b1-synthetic-gmsh-recipe-v1",
+  "schema_version": "1.0",
+  "coordinate_system": "EPSG:4548",
+  "geometry_tolerance_m": 1e-08,
+  "minimum_face_area_m2": 1e-12,
+  "gmsh_config": {
+    "type": "gmsh",
+    "outer_boundary": [
+      [
+        473506.0,
+        4335888.0
+      ],
+      [
+        473606.0,
+        4335888.0
+      ],
+      [
+        473606.0,
+        4335988.0
+      ],
+      [
+        473506.0,
+        4335988.0
+      ]
+    ],
+    "holes": [
+      [
+        [
+          473546.0,
+          4335928.0
+        ],
+        [
+          473556.0,
+          4335928.0
+        ],
+        [
+          473556.0,
+          4335938.0
+        ],
+        [
+          473546.0,
+          4335938.0
+        ]
+      ]
+    ],
+    "boundary_groups": [
+      {
+        "name": "synthetic_D_boundary",
+        "points": [
+          [
+            473506.0,
+            4335888.0
+          ],
+          [
+            473606.0,
+            4335888.0
+          ],
+          [
+            473606.0,
+            4335988.0
+          ],
+          [
+            473506.0,
+            4335988.0
+          ]
+        ],
+        "closed": true
+      },
+      {
+        "name": "synthetic_S_boundary",
+        "points": [
+          [
+            473546.0,
+            4335928.0
+          ],
+          [
+            473556.0,
+            4335928.0
+          ],
+          [
+            473556.0,
+            4335938.0
+          ],
+          [
+            473546.0,
+            4335938.0
+          ]
+        ],
+        "closed": true
+      }
+    ],
+    "constraints": [
+      {
+        "name": "synthetic_constraint",
+        "points": [
+          [
+            473516.0,
+            4335908.0
+          ],
+          [
+            473526.0,
+            4335908.0
+          ],
+          [
+            473526.0,
+            4335920.0
+          ]
+        ],
+        "closed": false
+      }
+    ],
+    "default_size_m": 18.0,
+    "minimum_size_m": 8.0,
+    "refinement_points": [],
+    "maximum_nodes": 2000000
+  }
+}
