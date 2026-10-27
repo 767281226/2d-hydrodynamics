@@ -1,0 +1,56 @@
+{
+  "format": "triangle-terrain-preparation-worker-config-v1",
+  "schema_version": "1.0",
+  "run_id": "b0-smallcase-001",
+  "output_root": "work/b0_synthetic_example/runs",
+  "resources": {
+    "max_workers": 1,
+    "job_memory_limit_mib": 2048,
+    "wall_clock_limit_s": 900.0,
+    "output_budget_bytes": 1073741824,
+    "scratch_budget_bytes": 16777216,
+    "child_process_policy": "job_object_inheritance_without_breakaway"
+  },
+  "source": {
+    "raster_path": "work/b0_synthetic_example/source_256.tif",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "source_manifest_path": "work/b0_synthetic_example/source_manifest.json",
+    "source_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "expected_stat_identity": null,
+    "components": []
+  },
+  "mesh": {
+    "path": "work/b0_synthetic_example/mesh.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "mapping_config": {
+    "format": "triangle-terrain-windowed-v1",
+    "max_source_pixels": 65536,
+    "tile_rows": 256,
+    "tile_cols": 256,
+    "max_inflight_tiles": 1,
+    "gdal_cache_mib": 64,
+    "max_faces": 500000,
+    "max_nodes": 2000000,
+    "max_candidate_overlap_checks": 1000000000,
+    "coverage_policy": "diagnostic_only",
+    "minimum_valid_coverage": null,
+    "coverage_policy_evidence_path": null,
+    "coverage_policy_evidence_sha256": null,
+    "source_vertical_unit_declaration": null,
+    "source_vertical_unit_evidence_path": null,
+    "source_vertical_unit_evidence_sha256": null,
+    "source_vertical_datum_declaration": null,
+    "source_vertical_datum_evidence_path": null,
+    "source_vertical_datum_evidence_sha256": null,
+    "area_abs_tolerance_m2": 1e-8,
+    "area_rel_tolerance": 1e-10,
+    "elevation_abs_tolerance_m": 1e-8,
+    "elevation_rel_tolerance": 1e-10
+  },
+  "crs_alias": {
+    "mode": "verify_embedded_epsg4548_xy",
+    "target_crs": "EPSG:4548",
+    "expected_source_wkt_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}
