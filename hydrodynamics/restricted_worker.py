@@ -2407,7 +2407,7 @@ def main(argv: list[str] | None = None) -> int:
                       "worker_started": result.worker_started,
                       "bundle_path": None if result.bundle_path is None else str(result.bundle_path),
                       "diagnostic_path": None if result.diagnostic_path is None else str(result.diagnostic_path),
-                      "message": result.message}, ensure_ascii=False, sort_keys=True))
+                      "message": result.message}, ensure_ascii=True, sort_keys=True))
     return result.exit_code
 
 

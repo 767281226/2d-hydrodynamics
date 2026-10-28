@@ -61,6 +61,14 @@ The existing one-worker Windows Job limits remain: 2 GiB memory, 900 seconds, 1 
 
 The parent/staging paths use the same owned-root relative resolver; absolute paths, parent traversal, links, reparse points, duplicate physical files, missing sidecars, origin/copy drift, and path escape fail. Cancellation, process exit, parse/CRS/geometry failure, write failure, and budget failure leave no MESH_READY, READY, or latest marker. Publication remains no-clobber.
 
+## Boundary group coverage
+
+The mesh adapter checks each boundary group against the exact boundary of D−S first. A complete line whose exact difference from that boundary is empty is accepted directly. If the line is not an exact subset, the existing tolerance-buffer check still applies; the tolerance is not increased and the adapter does not shorten lines. A group marked closed includes its last-to-first segment whether or not the repeated closing point is present in the input point list.
+
+This check is limited to boundary groups. The active-domain type, source validation, and constraint/exclusion checks remain in force. Lines that cross S, cross a hole, leave the active boundary, or extend beyond the existing tolerance continue to fail.
+
+The CLI summary is ASCII-safe JSON, so Unicode diagnostics remain recoverable on GBK and UTF-8 consoles and the process returns the worker's original exit code.
+
 ## Synthetic usage
 
 Install the bounded mesh-only dependencies with:

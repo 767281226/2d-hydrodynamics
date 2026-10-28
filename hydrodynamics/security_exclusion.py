@@ -447,14 +447,22 @@ def gmsh_config_for_active_domain(mesh_config: Any, assessment: SecurityDomainAs
         raise SecurityExclusionError(
             f"UNSUPPORTED_SECURITY_DOMAIN_MULTICOMPONENT: existing Gmsh adapter accepts one connected surface, D\\S produced {active.geom_type}"
         )
-    active_buffer = active.boundary.buffer(tolerance_m)
+    active_boundary = active.boundary
+    active_buffer = None
     for group in mesh_config.boundary_groups:
         coordinates = [(float(point[0]), float(point[1])) for point in group.points]
         if group.closed and coordinates[0] == coordinates[-1]:
             coordinates.pop()
         if len(coordinates) < 2:
             raise SecurityExclusionError(f"UNSUPPORTED_SECURITY_BOUNDARY_GROUP: group {group.name!r} has fewer than two retained points")
+        if group.closed:
+            coordinates.append(coordinates[0])
         line = LineString(coordinates)
+        # At large projected coordinates a tiny buffer may fail even for an exact boundary match.
+        if line.difference(active_boundary).is_empty:
+            continue
+        if active_buffer is None:
+            active_buffer = active_boundary.buffer(tolerance_m)
         if line.difference(active_buffer).length > tolerance_m:
             raise SecurityExclusionError(
                 f"UNSUPPORTED_SECURITY_BOUNDARY_GROUP: configured boundary group {group.name!r} is cut by D\\S and is not silently shortened"
