@@ -18,7 +18,7 @@ import re
 import struct
 import sys
 import time
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 DOMAIN_MESH_ONLY_FORMAT = "triangle-domain-mesh-only-config-v1"
@@ -26,6 +26,14 @@ DOMAIN_MESH_ONLY_VERSION = "1.0"
 DOMAIN_MESH_ONLY_ROUTE = "triangle-domain-mesh-only-generate-v1"
 DOMAIN_SOURCE_MANIFEST_FORMAT = "triangle-domain-mesh-source-manifest-v1"
 DOMAIN_SOURCE_MANIFEST_VERSION = "1.0"
+DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION = "1.1"
+DOMAIN_D_EXTERIOR_LINE_FORMAT = "derived_domain_D_exterior_line_v1"
+DOMAIN_D_EXTERIOR_DERIVATION_RULE = "exact_parent_D_union_exterior_xy_v1"
+DOMAIN_D_EXTERIOR_Q_BINDING = "NONE"
+DOMAIN_D_EXTERIOR_GEOMETRY_HASH_FORMAT = "triangle-domain-D-exterior-xy-m-f64le-v1"
+DOMAIN_D_EXTERIOR_PROVENANCE_FORMAT = "triangle-domain-D-exterior-provenance-v1"
+DOMAIN_D_EXTERIOR_AUDIT_FORMAT = "triangle-domain-mesh-only-source-audit-v2"
+MAX_DERIVED_LINE_POINTS = 250_000
 DOMAIN_MESH_ARTIFACT_FORMAT = "triangle-domain-mesh-only-artifact-v1"
 DOMAIN_MESH_AUDIT_FORMAT = "triangle-domain-mesh-only-source-audit-v1"
 DOMAIN_MESH_BUNDLE_FORMAT = "triangle-domain-mesh-only-bundle-v1"
@@ -103,6 +111,10 @@ class _PolygonComponent:
     source_crs: Any
     target_crs: Any
     source_file_sha256: str
+    source_crs_raw_text: str
+    declared_source_crs_text: str
+    operation_identity: Mapping[str, Any] | None
+    source_dimension_identity: Mapping[str, Any] | None = None
 
 
 def _is_strict_int(value: Any, low: int, high: int) -> bool:
@@ -309,8 +321,12 @@ def validate_source_manifest_shape(manifest: Any) -> dict[str, Any]:
     if not isinstance(manifest, dict) or set(manifest) != {
             "format", "schema_version", "source_set_id", "target_coordinate_system", "components"}:
         raise ValueError("source manifest root fields differ from the frozen contract")
-    if manifest["format"] != DOMAIN_SOURCE_MANIFEST_FORMAT or manifest["schema_version"] != DOMAIN_SOURCE_MANIFEST_VERSION:
+    schema_version = manifest["schema_version"]
+    if (manifest["format"] != DOMAIN_SOURCE_MANIFEST_FORMAT
+            or not isinstance(schema_version, str)
+            or schema_version not in {DOMAIN_SOURCE_MANIFEST_VERSION, DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION}):
         raise ValueError("unsupported domain mesh-only source manifest format/version")
+    derived_version = schema_version == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION
     if (not isinstance(manifest["source_set_id"], str)
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", manifest["source_set_id"]) is None):
         raise ValueError("source_set_id must be a 1–64 character safe identifier")
@@ -325,10 +341,24 @@ def validate_source_manifest_shape(manifest: Any) -> dict[str, Any]:
     line_names: set[str] = set()
     domain_count = security_count = line_count = 0
     shapefile_roles = {"shp", "shx", "prj", "dbf", "cpg"}
+    components_by_id: dict[str, Mapping[str, Any]] = {}
+    derived_components: list[Mapping[str, Any]] = []
     for index, component in enumerate(components):
         label = f"components[{index}]"
-        if not isinstance(component, dict) or set(component) != {
-                "component_id", "role", "format", "source_crs", "files", "group_name", "closed"}:
+        if not isinstance(component, dict):
+            raise ValueError(f"{label} must be an object")
+        source_kind = component.get("source_kind") if derived_version else "file"
+        file_fields = {"component_id", "role", "format", "source_crs", "files", "group_name", "closed"}
+        if source_kind == "file":
+            expected_fields = file_fields | ({"source_kind", "source_version"} if derived_version else set())
+        elif source_kind == "derived":
+            expected_fields = {
+                "component_id", "source_kind", "role", "format", "parent_component_id",
+                "group_name", "closed", "geometry_only", "q_binding",
+            }
+        else:
+            raise ValueError(f"{label}.source_kind must select file or derived")
+        if set(component) != expected_fields:
             raise ValueError(f"{label} fields differ from the frozen contract")
         component_id = component["component_id"]
         if (not isinstance(component_id, str)
@@ -336,57 +366,124 @@ def validate_source_manifest_shape(manifest: Any) -> dict[str, Any]:
                 or component_id in ids):
             raise ValueError(f"{label}.component_id must be unique and 1–64 safe characters")
         ids.add(component_id)
+        components_by_id[component_id] = component
         role, fmt = component["role"], component["format"]
-        allowed = {"domain_D": {"polygon_geojson", "polygon_shapefile"},
-                   "security_S": {"polygon_geojson", "polygon_shapefile"},
-                   "boundary_line": {"line_geojson", "line_shapefile"},
-                   "constraint_line": {"line_geojson", "line_shapefile"}}
-        if not isinstance(role, str) or not isinstance(fmt, str) or role not in allowed or fmt not in allowed[role]:
-            raise ValueError(f"{label} role/format pair is unsupported")
-        if not isinstance(component["source_crs"], str) or not component["source_crs"].strip():
-            raise ValueError(f"{label}.source_crs is required")
+        if not isinstance(role, str) or not isinstance(fmt, str):
+            raise ValueError(f"{label}.role and format must be strings")
         is_line = role in {"boundary_line", "constraint_line"}
-        if is_line:
-            line_count += 1
-            name = component["group_name"]
-            if (not isinstance(name, str)
-                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name) is None
-                    or name in line_names):
+        if source_kind == "derived":
+            derived_components.append(component)
+            if role != "boundary_line" or fmt != DOMAIN_D_EXTERIOR_LINE_FORMAT:
+                raise ValueError(f"{label} derived source only supports the versioned domain-D exterior boundary_line")
+            parent_id = component["parent_component_id"]
+            if (not isinstance(parent_id, str)
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", parent_id) is None):
+                raise ValueError(f"{label}.parent_component_id must be a safe component ID")
+            if not isinstance(component["group_name"], str) or re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", component["group_name"]) is None:
                 raise ValueError(f"{label}.group_name must be a unique 1–64 character safe ID")
-            line_names.add(name)
-            if type(component["closed"]) is not bool:
-                raise ValueError(f"{label}.closed must be boolean")
-            if role == "constraint_line" and component["closed"]:
-                raise ValueError(f"{label} constraint lines must be open paths")
-        elif component["group_name"] is not None or component["closed"] is not None:
-            raise ValueError(f"{label} polygon components cannot declare line-group fields")
+            if type(component["closed"]) is not bool or component["closed"] is not True:
+                raise ValueError(f"{label}.closed must be true for the derived D exterior")
+            if type(component["geometry_only"]) is not bool or component["geometry_only"] is not True:
+                raise ValueError(f"{label}.geometry_only must be true")
+            if component["q_binding"] != DOMAIN_D_EXTERIOR_Q_BINDING:
+                raise ValueError(f"{label}.q_binding must be the literal NONE; geometry lines carry no Q")
+            if (component["group_name"] in {"outer_boundary", "security_exclusion_boundary"}
+                    or re.fullmatch(r"hole_[0-9]+", component["group_name"]) is not None):
+                raise ValueError(f"{label}.group_name conflicts with a reserved generated mesh group")
+            line_count += 1
+            if component["group_name"] in line_names:
+                raise ValueError(f"{label}.group_name must be unique among line components")
+            line_names.add(component["group_name"])
+        else:
+            allowed = {"domain_D": {"polygon_geojson", "polygon_shapefile"},
+                       "security_S": {"polygon_geojson", "polygon_shapefile"},
+                       "boundary_line": {"line_geojson", "line_shapefile"},
+                       "constraint_line": {"line_geojson", "line_shapefile"}}
+            if not isinstance(role, str) or not isinstance(fmt, str) or role not in allowed or fmt not in allowed[role]:
+                raise ValueError(f"{label} role/format pair is unsupported")
+            if not isinstance(component["source_crs"], str) or not component["source_crs"].strip():
+                raise ValueError(f"{label}.source_crs is required")
+            if derived_version:
+                source_version = component["source_version"]
+                if (not isinstance(source_version, str)
+                        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", source_version) is None):
+                    raise ValueError(f"{label}.source_version must be a required 1–64 character safe source-version ID")
+            if is_line:
+                line_count += 1
+                name = component["group_name"]
+                if (not isinstance(name, str)
+                        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", name) is None
+                        or name in line_names):
+                    raise ValueError(f"{label}.group_name must be a unique 1–64 character safe ID")
+                if derived_version and (name in {"outer_boundary", "security_exclusion_boundary"}
+                                        or re.fullmatch(r"hole_[0-9]+", name) is not None):
+                    raise ValueError(f"{label}.group_name conflicts with a reserved generated mesh group")
+                line_names.add(name)
+                if type(component["closed"]) is not bool:
+                    raise ValueError(f"{label}.closed must be boolean")
+                if role == "constraint_line" and component["closed"]:
+                    raise ValueError(f"{label} constraint lines must be open paths")
+            elif component["group_name"] is not None or component["closed"] is not None:
+                raise ValueError(f"{label} polygon components cannot declare line-group fields")
         if role == "domain_D":
             domain_count += 1
         elif role == "security_S":
             security_count += 1
-        files = component["files"]
-        if not isinstance(files, dict) or not files:
-            raise ValueError(f"{label}.files must be a non-empty file-identity object")
-        if fmt.endswith("shapefile"):
-            if not {"shp", "shx", "prj"}.issubset(files) or set(files) - shapefile_roles:
-                raise ValueError(f"{label} Shapefile files require shp/shx/prj and allow only optional dbf/cpg")
-            for file_role in files:
-                if not isinstance(file_role, str):
-                    raise ValueError(f"{label}.files roles must be strings")
-        elif set(files) != {"geometry"}:
-            raise ValueError(f"{label} GeoJSON component requires exactly one geometry file")
-        for file_role, file_record in files.items():
-            file_label = f"{label}.files.{file_role}"
-            if not isinstance(file_record, dict) or set(file_record) != {"path", "sha256", "expected_stat_identity"}:
-                raise ValueError(f"{file_label} fields differ from the frozen file identity contract")
-            _safe_relative(file_record["path"], f"{file_label}.path")
-            _validate_sha256(file_record["sha256"], f"{file_label}.sha256")
-            _validate_stat_identity(file_record["expected_stat_identity"], f"{file_label}.expected_stat_identity")
+        if source_kind == "file":
+            files = component["files"]
+            if not isinstance(files, dict) or not files:
+                raise ValueError(f"{label}.files must be a non-empty file-identity object")
+            if fmt.endswith("shapefile"):
+                if not {"shp", "shx", "prj"}.issubset(files) or set(files) - shapefile_roles:
+                    raise ValueError(f"{label} Shapefile files require shp/shx/prj and allow only optional dbf/cpg")
+                for file_role in files:
+                    if not isinstance(file_role, str):
+                        raise ValueError(f"{label}.files roles must be strings")
+            elif set(files) != {"geometry"}:
+                raise ValueError(f"{label} GeoJSON component requires exactly one geometry file")
+            for file_role, file_record in files.items():
+                file_label = f"{label}.files.{file_role}"
+                expected_file_fields = {"path", "sha256", "expected_stat_identity"}
+                if derived_version:
+                    expected_file_fields.add("origin")
+                if not isinstance(file_record, dict) or set(file_record) != expected_file_fields:
+                    raise ValueError(f"{file_label} fields differ from the frozen file identity contract")
+                _safe_relative(file_record["path"], f"{file_label}.path")
+                _validate_sha256(file_record["sha256"], f"{file_label}.sha256")
+                _validate_stat_identity(file_record["expected_stat_identity"], f"{file_label}.expected_stat_identity")
+                if derived_version:
+                    origin = file_record["origin"]
+                    if not isinstance(origin, dict) or set(origin) != {"path", "sha256", "expected_stat_identity"}:
+                        raise ValueError(f"{file_label}.origin fields differ from the frozen source identity contract")
+                    _safe_relative(origin["path"], f"{file_label}.origin.path")
+                    _validate_sha256(origin["sha256"], f"{file_label}.origin.sha256")
+                    _validate_stat_identity(origin["expected_stat_identity"], f"{file_label}.origin.expected_stat_identity")
+                    if (origin["path"].casefold() == file_record["path"].casefold()
+                            or origin["sha256"] != file_record["sha256"]
+                            or origin["expected_stat_identity"]["size_bytes"]
+                            != file_record["expected_stat_identity"]["size_bytes"]):
+                        raise ValueError(f"{file_label} must bind a distinct byte-identical original-to-staged source chain")
     if domain_count != 1 or security_count != 1 or line_count < 1:
         raise ValueError("source manifest requires exactly one D, one S, and at least one source boundary/constraint line")
     if len({x["component_id"] for x in components}) != len(components):
         raise ValueError("source manifest component IDs must be unique")
+    if len(derived_components) > 1:
+        raise ValueError("source manifest supports at most one derived D-exterior boundary component")
+    if derived_components:
+        if not derived_version:
+            raise ValueError("derived components require source manifest schema_version 1.1")
+        parent = components_by_id.get(derived_components[0]["parent_component_id"])
+        if (parent is None or parent.get("role") != "domain_D"
+                or (derived_version and parent.get("source_kind") != "file")):
+            raise ValueError("derived D-exterior parent_component_id must identify the unique file-backed domain_D component")
     return manifest
+
+
+def _component_source_kind(manifest: Mapping[str, Any], component: Mapping[str, Any]) -> str:
+    if manifest.get("schema_version") == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION:
+        return str(component.get("source_kind", ""))
+    return "file"
 
 
 def _resolve_component_file(root: Path, manifest_path: Path, value: str, label: str) -> Path:
@@ -454,6 +551,122 @@ def _component_file_records(root: Path, manifest_path: Path, manifest: Mapping[s
     return records, total_bytes
 
 
+def _component_file_records_v11(root: Path, manifest_path: Path, manifest: Mapping[str, Any], *,
+                                verify_sha: bool) -> tuple[dict[str, dict[str, Any]], int]:
+    """Validate both original-source and staged-copy identities for manifest 1.1."""
+    from .restricted_worker import (
+        ResourceBudgetError, SourceIdentityError, _is_reparse_or_symlink,
+        _sha256_file, _stat_identity,
+    )
+    records: dict[str, dict[str, Any]] = {}
+    total_bytes = 0
+    total_files = 0
+    seen_paths: set[str] = set()
+    seen_physical_files: dict[tuple[int, int], str] = {}
+
+    def capture(component: Mapping[str, Any], file_role: str, record: Mapping[str, Any],
+                identity_kind: str) -> dict[str, Any]:
+        nonlocal total_bytes, total_files
+        label = f"{component['component_id']}.{file_role} {identity_kind}"
+        path = _resolve_component_file(root, manifest_path, record["path"], label)
+        if _is_reparse_or_symlink(path) or not path.is_file():
+            raise SourceIdentityError(f"source component file must be a regular non-symlink file: {label}")
+        resolved_key = str(path).casefold()
+        if resolved_key in seen_paths:
+            raise SourceIdentityError(f"source identity chain must not reuse a physical file: {label}")
+        seen_paths.add(resolved_key)
+        before = _stat_identity(path)
+        device = before.get("device")
+        file_id = before.get("file_id")
+        if (type(device) is not int or device < 0
+                or type(file_id) is not int or file_id <= 0):
+            raise SourceIdentityError(
+                f"SOURCE_PHYSICAL_IDENTITY_UNAVAILABLE: {label} requires a non-negative device and positive file_id"
+            )
+        if before != record["expected_stat_identity"]:
+            raise SourceIdentityError(f"source component stat identity differs: {label}")
+        physical_key = (device, file_id)
+        prior_label = seen_physical_files.get(physical_key)
+        if prior_label is not None:
+            raise SourceIdentityError(
+                f"SOURCE_PHYSICAL_IDENTITY_REUSED: {label} aliases the same physical file as {prior_label}"
+            )
+        seen_physical_files[physical_key] = label
+        if before["size_bytes"] > MAX_COMPONENT_FILE_BYTES:
+            raise ResourceBudgetError(f"source component exceeds the fixed {MAX_COMPONENT_FILE_BYTES}-byte cap: {label}")
+        total_bytes += before["size_bytes"]
+        total_files += 1
+        if total_bytes > MAX_COMPONENT_TOTAL_BYTES:
+            raise ResourceBudgetError(f"original plus staged source components exceed the fixed {MAX_COMPONENT_TOTAL_BYTES}-byte input cap")
+        if total_files > MAX_SOURCE_FILE_COUNT:
+            raise ResourceBudgetError(f"source manifest has more than the fixed {MAX_SOURCE_FILE_COUNT}-file cap")
+        digest = record["sha256"]
+        if verify_sha:
+            digest, size = _sha256_file(path, maximum_bytes=MAX_COMPONENT_FILE_BYTES)
+            if digest != record["sha256"] or size != before["size_bytes"]:
+                raise SourceIdentityError(f"source component bytes differ from their manifest identity: {label}")
+        after = _stat_identity(path)
+        if before != after:
+            raise SourceIdentityError(f"source component changed while its identity was captured: {label}")
+        return {
+            "component_id": component["component_id"], "component_role": component["role"],
+            "file_role": file_role, "identity_kind": identity_kind,
+            "path": record["path"], "sha256": digest,
+            "bytes": before["size_bytes"], "stat_identity": before,
+        }
+
+    for component in manifest["components"]:
+        if component["source_kind"] == "derived":
+            continue
+        files = component["files"]
+        if component["format"].endswith("shapefile"):
+            staged_shp = Path(files["shp"]["path"])
+            origin_shp = Path(files["shp"]["origin"]["path"])
+            if staged_shp.suffix.lower() != ".shp" or origin_shp.suffix.lower() != ".shp":
+                raise SourceIdentityError(f"{component['component_id']} staged and original SHP paths must end in .shp")
+            for base, is_origin in ((staged_shp, False), (origin_shp, True)):
+                for extension in ("shx", "prj"):
+                    actual_record = files[extension]["origin"] if is_origin else files[extension]
+                    if Path(actual_record["path"]).as_posix().lower() != base.with_suffix(f".{extension}").as_posix().lower():
+                        kind = "original " if is_origin else "staged "
+                        raise SourceIdentityError(f"{component['component_id']} {kind}{extension.upper()} sidecar must share the SHP basename")
+                for extension in ("dbf", "cpg"):
+                    expected_path = base.with_suffix(f".{extension}")
+                    actual_path = manifest_path.parent / expected_path
+                    if actual_path.exists() != (extension in files):
+                        kind = "original " if is_origin else "staged "
+                        raise SourceIdentityError(
+                            f"{component['component_id']} {kind}{extension.upper()} presence must match its declared file identity"
+                        )
+                    actual_record = files[extension]["origin"] if is_origin and extension in files else files.get(extension)
+                    if extension in files and Path(actual_record["path"]).as_posix().lower() != base.with_suffix(f".{extension}").as_posix().lower():
+                        kind = "original " if is_origin else "staged "
+                        raise SourceIdentityError(f"{component['component_id']} {kind}{extension.upper()} sidecar must share the SHP basename")
+            for file_role, record in files.items():
+                if Path(record["path"]).name.casefold() != Path(record["origin"]["path"]).name.casefold():
+                    raise SourceIdentityError(f"{component['component_id']} original and staged sidecar basenames differ: {file_role}")
+
+        for file_role, record in files.items():
+            origin = record["origin"]
+            if (origin["sha256"] != record["sha256"]
+                    or origin["expected_stat_identity"]["size_bytes"]
+                    != record["expected_stat_identity"]["size_bytes"]):
+                raise SourceIdentityError(f"{component['component_id']}.{file_role} original and staged identities are not byte-equivalent")
+            original_record = capture(component, file_role, origin, "original_source")
+            staged_record = capture(component, file_role, record, "staged_copy")
+            records[f"{component['component_id']}:origin:{file_role}"] = original_record
+            records[f"{component['component_id']}:{file_role}"] = staged_record
+    return records, total_bytes
+
+
+def _component_file_records_for_manifest(root: Path, manifest_path: Path,
+                                         manifest: Mapping[str, Any], *,
+                                         verify_sha: bool) -> tuple[dict[str, dict[str, Any]], int]:
+    if manifest["schema_version"] == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION:
+        return _component_file_records_v11(root, manifest_path, manifest, verify_sha=verify_sha)
+    return _component_file_records(root, manifest_path, manifest, verify_sha=verify_sha)
+
+
 def inspect_source_manifest_identity(config: Mapping[str, Any], project_root: str | Path) -> dict[str, Any]:
     """Supervisor-safe identity preflight; reads only the bounded manifest and file stats."""
     from .restricted_worker import SourceIdentityError, _is_reparse_or_symlink, _resolve_project_path, _sha256_file, _stat_identity
@@ -479,7 +692,7 @@ def inspect_source_manifest_identity(config: Mapping[str, Any], project_root: st
         raise SourceIdentityError(f"source manifest contract is invalid: {exc}") from exc
     if manifest["target_coordinate_system"] != config["target_coordinate_system"]:
         raise DomainMeshOnlyError("source manifest target CRS differs from trusted config")
-    file_stats, total_bytes = _component_file_records(root, path, manifest, verify_sha=False)
+    file_stats, total_bytes = _component_file_records_for_manifest(root, path, manifest, verify_sha=False)
     after = _stat_identity(path)
     if before != after:
         raise SourceIdentityError("source manifest changed while its identity was captured")
@@ -580,8 +793,294 @@ def _read_line_geometry(component: Mapping[str, Any], manifest_path: Path, root:
     return geometry
 
 
+def _crs_runtime_identity() -> dict[str, Any]:
+    import pyproj
+    from pyproj import database, network
+
+    network.set_network_enabled(False)
+    try:
+        pyshp_version = importlib.metadata.version("pyshp")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise DomainMeshOnlyError("CRS_OPERATION_EVIDENCE_UNAVAILABLE: PyShp dependency identity is missing") from exc
+    metadata = {
+        "epsg_database_version": database.get_database_metadata("EPSG.VERSION"),
+        "epsg_database_date": database.get_database_metadata("EPSG.DATE"),
+    }
+    if (not isinstance(pyproj.__version__, str) or not pyproj.__version__
+            or not isinstance(pyshp_version, str) or not pyshp_version
+            or not isinstance(pyproj.proj_version_str, str) or not pyproj.proj_version_str
+            or any(not isinstance(value, str) or not value for value in metadata.values())):
+        raise DomainMeshOnlyError("CRS_OPERATION_EVIDENCE_UNAVAILABLE: PyProj/PROJ/database identity is incomplete")
+    return {
+        "pyproj_version": pyproj.__version__, "proj_version": pyproj.proj_version_str,
+        "pyshp_version": pyshp_version, "python_version": platform.python_version(),
+        **metadata, "proj_network_enabled": bool(network.is_network_enabled()),
+    }
+
+
+def _coordinate_operation_chain(used_operation: Any) -> list[dict[str, Any]]:
+    operations = getattr(used_operation, "operations", None)
+    if not isinstance(operations, (tuple, list)) or not operations:
+        raise DomainMeshOnlyError("CRS_OPERATION_EVIDENCE_UNAVAILABLE: selected operation chain has no CoordinateOperation records")
+    chain: list[dict[str, Any]] = []
+    for index, operation in enumerate(operations):
+        ballpark = getattr(operation, "has_ballpark_transformation", None)
+        if type(ballpark) is not bool:
+            raise DomainMeshOnlyError(
+                f"CRS_OPERATION_EVIDENCE_UNAVAILABLE: operation-chain item {index} has no explicit ballpark flag"
+            )
+        if ballpark:
+            raise DomainMeshOnlyError(f"BALLPARK_TRANSFORMATION_REJECTED: operation-chain item {index} is ballpark")
+        try:
+            operation_json = operation.to_json_dict()
+            operation_wkt = operation.to_wkt(pretty=False)
+        except Exception as exc:
+            raise DomainMeshOnlyError(f"CRS_OPERATION_EVIDENCE_UNAVAILABLE: operation-chain item {index} cannot be serialized") from exc
+        if not isinstance(operation_json, dict) or not isinstance(operation_wkt, str) or not operation_wkt:
+            raise DomainMeshOnlyError(f"CRS_OPERATION_EVIDENCE_UNAVAILABLE: operation-chain item {index} is incomplete")
+        accuracy = getattr(operation, "accuracy", None)
+        if isinstance(accuracy, bool) or not isinstance(accuracy, (int, float)) or not math.isfinite(float(accuracy)):
+            raise DomainMeshOnlyError(f"CRS_OPERATION_EVIDENCE_UNAVAILABLE: operation-chain item {index} has invalid accuracy metadata")
+        chain.append({
+            "name": getattr(operation, "name", None),
+            "method_name": getattr(operation, "method_name", None),
+            "method_auth_name": getattr(operation, "method_auth_name", None),
+            "method_code": getattr(operation, "method_code", None),
+            "accuracy_m": float(accuracy),
+            "has_ballpark_transformation": ballpark,
+            "definition": getattr(operation, "definition", None),
+            "wkt": operation_wkt,
+            "projjson": operation_json,
+        })
+    return chain
+
+
+def _project_polygon_features(geometries: tuple[Any, ...], source_crs: Any, target_crs: Any, *,
+                              source_crs_raw_text: str,
+                              declared_source_crs_text: str) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    from pyproj import Transformer
+    from pyproj.transformer import TransformerGroup
+    import shapely
+    from pyproj import network
+    from shapely.ops import transform as transform_geometry
+
+    runtime = _crs_runtime_identity()
+    base: dict[str, Any] = {
+        "source_crs_raw_text": source_crs_raw_text,
+        "declared_source_crs_text": declared_source_crs_text,
+        "source_crs_wkt2": source_crs.to_wkt(version="WKT2_2019", pretty=False),
+        "target_crs": target_crs.to_string(),
+        "target_crs_wkt2": target_crs.to_wkt(version="WKT2_2019", pretty=False),
+        "coordinate_array_axis_policy": "always_xy",
+        "allow_ballpark": False,
+        "only_best": True,
+        "shapely_version": shapely.__version__,
+        **runtime,
+    }
+    if _crs_equivalent(source_crs, target_crs):
+        projected = tuple(geometries)
+        base.update({
+            "operation_status": "identity_no_transform_required",
+            "coordinate_transform_applied": False,
+            "best_available": None,
+            "selected_operation": None,
+            "operation_chain": [],
+            "ballpark_flags": [],
+            "ballpark_flag": None,
+        })
+    else:
+        network.set_network_enabled(False)
+        try:
+            group = TransformerGroup(source_crs, target_crs, always_xy=True, allow_ballpark=False)
+            best_available = group.best_available
+            candidates = tuple(group.transformers)
+            if type(best_available) is not bool or not best_available or not candidates:
+                raise DomainMeshOnlyError("CRS_OPERATION_UNAVAILABLE: no best available non-ballpark operation")
+            transformer = Transformer.from_crs(
+                source_crs, target_crs, always_xy=True, allow_ballpark=False, only_best=True
+            )
+            projected = tuple(transform_geometry(transformer.transform, geometry) for geometry in geometries)
+            used = transformer.get_last_used_operation()
+        except DomainMeshOnlyError:
+            raise
+        except Exception as exc:
+            raise DomainMeshOnlyError(f"CRS_OPERATION_UNAVAILABLE: source-to-target operation could not be selected: {exc}") from exc
+        if used is None or not isinstance(getattr(used, "definition", None), str):
+            raise DomainMeshOnlyError("CRS_OPERATION_EVIDENCE_UNAVAILABLE: the transformed coordinates have no selected operation")
+        candidate_definitions = {item.definition for item in candidates if isinstance(getattr(item, "definition", None), str)}
+        if used.definition not in candidate_definitions:
+            raise DomainMeshOnlyError("CRS_OPERATION_EVIDENCE_UNAVAILABLE: selected operation is not in the best available operation group")
+        chain = _coordinate_operation_chain(used)
+        flags = [item["has_ballpark_transformation"] for item in chain]
+        if not flags or any(type(value) is not bool for value in flags):
+            raise DomainMeshOnlyError("CRS_OPERATION_EVIDENCE_UNAVAILABLE: actual operation-chain flags are incomplete")
+        selected_accuracy = getattr(used, "accuracy", None)
+        if (isinstance(selected_accuracy, bool) or not isinstance(selected_accuracy, (int, float))
+                or not math.isfinite(float(selected_accuracy))):
+            raise DomainMeshOnlyError("CRS_OPERATION_EVIDENCE_UNAVAILABLE: selected operation accuracy is invalid")
+        transformer_accuracy = getattr(transformer, "accuracy", None)
+        if (isinstance(transformer_accuracy, bool) or not isinstance(transformer_accuracy, (int, float))
+                or not math.isfinite(float(transformer_accuracy))):
+            raise DomainMeshOnlyError("CRS_OPERATION_EVIDENCE_UNAVAILABLE: transformer accuracy is invalid")
+        base.update({
+            "operation_status": "transformed_with_best_available_operation",
+            "coordinate_transform_applied": True,
+            "best_available": best_available,
+            "candidate_operation_count": len(candidates),
+            "transformer_description": transformer.description,
+            "transformer_definition": transformer.definition,
+            "transformer_accuracy_m": float(transformer_accuracy),
+            "selected_operation_description": used.description,
+            "selected_operation_definition": used.definition,
+            "selected_operation_accuracy_m": float(selected_accuracy),
+            "operation_chain": chain,
+            "ballpark_flags": flags,
+            "ballpark_flag": any(flags),
+        })
+    identity_bytes = _canonical_json_bytes(base)
+    return projected, {**base, "operation_identity_sha256": hashlib.sha256(identity_bytes).hexdigest()}
+
+
+def _inspect_parent_d_shapefile_xy_dimension(path: Path) -> dict[str, Any]:
+    """Read raw SHP headers/record type words before any GeoJSON interface can drop Z/M."""
+    if not path.is_file() or path.stat().st_size > MAX_COMPONENT_FILE_BYTES:
+        raise DomainMeshOnlyError("PARENT_D_SHP_IDENTITY_INVALID: bounded regular SHP file is required")
+    size_bytes = path.stat().st_size
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(100)
+            if len(header) != 100:
+                raise DomainMeshOnlyError("PARENT_D_SHP_HEADER_TRUNCATED: 100-byte SHP header is required")
+            file_code = struct.unpack_from(">i", header, 0)[0]
+            declared_size = struct.unpack_from(">i", header, 24)[0] * 2
+            version = struct.unpack_from("<i", header, 28)[0]
+            header_shape_type = struct.unpack_from("<i", header, 32)[0]
+            if file_code != 9994 or version != 1000 or declared_size != size_bytes:
+                raise DomainMeshOnlyError(
+                    "PARENT_D_SHP_HEADER_INVALID: file code, version, or declared byte length is invalid"
+                )
+            offset = 100
+            record_types: list[int] = []
+            while offset < size_bytes:
+                stream.seek(offset)
+                record_header = stream.read(8)
+                if len(record_header) != 8:
+                    raise DomainMeshOnlyError("PARENT_D_SHP_RECORD_HEADER_TRUNCATED: 8-byte record header is required")
+                record_number, content_length_words = struct.unpack(">ii", record_header)
+                record_content_bytes = content_length_words * 2
+                if (record_number != len(record_types) + 1 or record_content_bytes < 4
+                        or offset + 8 + record_content_bytes > size_bytes):
+                    raise DomainMeshOnlyError(
+                        f"PARENT_D_SHP_RECORD_INVALID: record {len(record_types)} number or content length is invalid"
+                    )
+                shape_type_bytes = stream.read(4)
+                if len(shape_type_bytes) != 4:
+                    raise DomainMeshOnlyError("PARENT_D_SHP_RECORD_TYPE_TRUNCATED: record shape type is missing")
+                record_shape_type = struct.unpack("<i", shape_type_bytes)[0]
+                record_types.append(record_shape_type)
+                if record_shape_type == 5:
+                    if record_content_bytes < 44:
+                        raise DomainMeshOnlyError(
+                            f"PARENT_D_SHP_RECORD_TRUNCATED: XY Polygon record {len(record_types) - 1} is shorter than its fixed header"
+                        )
+                    xy_header = stream.read(40)
+                    if len(xy_header) != 40:
+                        raise DomainMeshOnlyError(
+                            f"PARENT_D_SHP_RECORD_TRUNCATED: XY Polygon record {len(record_types) - 1} is incomplete"
+                        )
+                    part_count, point_count = struct.unpack_from("<ii", xy_header, 32)
+                    if part_count < 1 or point_count < 4:
+                        raise DomainMeshOnlyError(
+                            f"PARENT_D_SHP_RECORD_INVALID: XY Polygon record {len(record_types) - 1} has invalid counts"
+                        )
+                    expected_xy_bytes = 44 + part_count * 4 + point_count * 16
+                    if record_content_bytes != expected_xy_bytes:
+                        raise DomainMeshOnlyError(
+                            "UNSUPPORTED_PARENT_D_SHAPE_DIMENSION: "
+                            f"Polygon record {len(record_types) - 1} content length does not match XY-only layout"
+                        )
+                offset += 8 + record_content_bytes
+            if offset != size_bytes or not record_types:
+                raise DomainMeshOnlyError("PARENT_D_SHP_RECORD_INVALID: record sequence is empty or does not end at EOF")
+    except DomainMeshOnlyError:
+        raise
+    except (OSError, struct.error) as exc:
+        raise DomainMeshOnlyError(f"PARENT_D_SHP_HEADER_INVALID: raw shape type inspection failed: {exc}") from exc
+
+    mixed_records = [index for index, shape_type in enumerate(record_types) if shape_type != header_shape_type]
+    if mixed_records:
+        first = mixed_records[0]
+        raise DomainMeshOnlyError(
+            "PARENT_D_SHP_HEADER_RECORD_TYPE_MISMATCH: "
+            f"header shape type {header_shape_type} differs from record {first} type {record_types[first]}"
+        )
+    if header_shape_type != 5 or any(shape_type != 5 for shape_type in record_types):
+        raise DomainMeshOnlyError(
+            "UNSUPPORTED_PARENT_D_SHAPE_DIMENSION: schema 1.1 parent D supports only XY Polygon shape type 5; "
+            f"header={header_shape_type}, record_types={sorted(set(record_types))}"
+        )
+    return {
+        "source_encoding": "shapefile",
+        "header_shape_type": header_shape_type,
+        "record_count": len(record_types),
+        "record_shape_type_counts": {str(shape_type): record_types.count(shape_type) for shape_type in sorted(set(record_types))},
+        "coordinate_dimension": 2,
+    }
+
+
+def _inspect_parent_d_geojson_xy_dimension(path: Path) -> dict[str, Any]:
+    """Verify raw parent-D GeoJSON positions have exactly XY before Shapely decoding."""
+    if not path.is_file() or path.stat().st_size > MAX_COMPONENT_FILE_BYTES:
+        raise DomainMeshOnlyError("PARENT_D_GEOJSON_IDENTITY_INVALID: bounded regular GeoJSON file is required")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DomainMeshOnlyError(f"PARENT_D_GEOJSON_INVALID: cannot inspect raw coordinates: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise DomainMeshOnlyError("PARENT_D_GEOJSON_INVALID: root must be an object")
+    if payload.get("type") == "FeatureCollection":
+        features = payload.get("features")
+        if not isinstance(features, list) or not features:
+            raise DomainMeshOnlyError("PARENT_D_GEOJSON_INVALID: FeatureCollection must contain features")
+        geometries = [feature.get("geometry") if isinstance(feature, dict) else None for feature in features]
+    elif payload.get("type") == "Feature":
+        geometries = [payload.get("geometry")]
+    else:
+        geometries = [payload]
+    coordinate_position_count = 0
+
+    def visit(node: Any, feature_index: int) -> None:
+        nonlocal coordinate_position_count
+        if not isinstance(node, list) or not node:
+            raise DomainMeshOnlyError(f"PARENT_D_GEOJSON_INVALID: feature {feature_index} has an empty coordinate array")
+        if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in node):
+            if len(node) != 2:
+                raise DomainMeshOnlyError(
+                    "UNSUPPORTED_PARENT_D_GEOJSON_DIMENSION: schema 1.1 parent D supports XY positions only; "
+                    f"feature {feature_index} has a {len(node)}-value position"
+                )
+            if any(not math.isfinite(float(value)) for value in node):
+                raise DomainMeshOnlyError(f"PARENT_D_GEOJSON_NONFINITE: feature {feature_index} has a non-finite XY position")
+            coordinate_position_count += 1
+            return
+        for child in node:
+            visit(child, feature_index)
+
+    for feature_index, geometry in enumerate(geometries):
+        if not isinstance(geometry, dict) or geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+            raise DomainMeshOnlyError(f"PARENT_D_GEOJSON_INVALID: feature {feature_index} must be Polygon/MultiPolygon")
+        visit(geometry.get("coordinates"), feature_index)
+    return {
+        "source_encoding": "geojson",
+        "feature_count": len(geometries),
+        "coordinate_position_count": coordinate_position_count,
+        "coordinate_dimension": 2,
+    }
+
+
 def _load_polygon_component(component: Mapping[str, Any], manifest_path: Path,
-                            root: Path, target_crs_text: str) -> _PolygonComponent:
+                            root: Path, target_crs_text: str, *,
+                            source_schema_version: str) -> _PolygonComponent:
     from pyproj import CRS, Transformer
     from shapely.ops import transform as transform_geometry, unary_union
     from .restricted_worker import _resolve_project_path
@@ -596,22 +1095,46 @@ def _load_polygon_component(component: Mapping[str, Any], manifest_path: Path,
         root, (manifest_base / component["files"][file_role]["path"]).as_posix(),
         f"{component['component_id']}.{file_role}",
     )
-    source_crs = CRS.from_user_input(component["source_crs"])
+    declared_source_crs = CRS.from_user_input(component["source_crs"])
     target_crs = CRS.from_user_input(target_crs_text)
+    dimension_identity: Mapping[str, Any] | None = None
+    strict_parent_d_dimension = (
+        source_schema_version == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION
+        and component["role"] == "domain_D"
+    )
     if component["format"] == "polygon_shapefile":
+        if strict_parent_d_dimension:
+            dimension_identity = _inspect_parent_d_shapefile_xy_dimension(path)
         geometries, prj_text, source_file_sha = _read_shapefile_geometries(path)
-        if not _crs_equivalent(CRS.from_wkt(prj_text), source_crs):
+        raw_source_crs = CRS.from_wkt(prj_text)
+        if not _crs_equivalent(raw_source_crs, declared_source_crs):
             raise DomainMeshOnlyError(f"{component['component_id']} explicit source_crs differs from its PRJ")
+        source_crs_raw_text = prj_text
+        source_crs = raw_source_crs if source_schema_version == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION else declared_source_crs
     else:
+        if strict_parent_d_dimension:
+            dimension_identity = _inspect_parent_d_geojson_xy_dimension(path)
         geometries, source_file_sha, declared_crs = _read_geojson_geometries(path)
         if (declared_crs is not None
-                and not _crs_equivalent(CRS.from_user_input(declared_crs), source_crs)):
+                and not _crs_equivalent(CRS.from_user_input(declared_crs), declared_source_crs)):
             raise DomainMeshOnlyError(f"{component['component_id']} GeoJSON CRS differs from its explicit source_crs")
-    if _crs_equivalent(source_crs, target_crs):
-        projected = tuple(geometries)
+        source_crs_raw_text = declared_crs if declared_crs is not None else component["source_crs"]
+        source_crs = (CRS.from_user_input(source_crs_raw_text)
+                      if source_schema_version == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION
+                      else declared_source_crs)
+    if source_schema_version == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION:
+        projected, operation_identity = _project_polygon_features(
+            tuple(geometries), source_crs, target_crs,
+            source_crs_raw_text=source_crs_raw_text,
+            declared_source_crs_text=component["source_crs"],
+        )
     else:
-        transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
-        projected = tuple(transform_geometry(transformer.transform, geometry) for geometry in geometries)
+        if _crs_equivalent(source_crs, target_crs):
+            projected = tuple(geometries)
+        else:
+            transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
+            projected = tuple(transform_geometry(transformer.transform, geometry) for geometry in geometries)
+        operation_identity = None
     for index, geometry in enumerate(projected):
         try:
             _validate_polygon_geometry(geometry, f"{component['component_id']} feature {index}")
@@ -628,6 +1151,10 @@ def _load_polygon_component(component: Mapping[str, Any], manifest_path: Path,
         source_geometry_sha256=hashlib.sha256(source_geometry).hexdigest(),
         source_union_geometry_sha256=_geometry_sha256(union),
         source_crs=source_crs, target_crs=target_crs, source_file_sha256=source_file_sha,
+        source_crs_raw_text=source_crs_raw_text,
+        declared_source_crs_text=component["source_crs"],
+        operation_identity=operation_identity,
+        source_dimension_identity=dimension_identity,
     )
 
 
@@ -643,7 +1170,7 @@ def _load_geometry_context(config: Mapping[str, Any], project_root: str | Path, 
     identity = inspect_source_manifest_identity(config, root)
     manifest_path = identity["manifest_path"]
     manifest = identity["manifest"]
-    before_records, _ = _component_file_records(root, manifest_path, manifest, verify_sha=verify_component_sha)
+    before_records, _ = _component_file_records_for_manifest(root, manifest_path, manifest, verify_sha=verify_component_sha)
     target_crs_text = config["target_coordinate_system"]
     _validate_projected_metric_crs(target_crs_text)
     target_crs = CRS.from_user_input(target_crs_text)
@@ -653,7 +1180,10 @@ def _load_geometry_context(config: Mapping[str, Any], project_root: str | Path, 
 
     loaded_areas: dict[str, _PolygonComponent] = {}
     for role, component in by_role.items():
-        loaded_areas[role] = _load_polygon_component(component, manifest_path, root, target_crs_text)
+        loaded_areas[role] = _load_polygon_component(
+            component, manifest_path, root, target_crs_text,
+            source_schema_version=manifest["schema_version"],
+        )
     domain_geometry = loaded_areas["domain_D"].source_union
     security_load = loaded_areas["security_S"]
     security_geometry = security_load.source_union
@@ -675,14 +1205,24 @@ def _load_geometry_context(config: Mapping[str, Any], project_root: str | Path, 
     for component in manifest["components"]:
         if component["role"] not in {"boundary_line", "constraint_line"}:
             continue
-        line=_read_line_geometry(component,manifest_path,root,target_crs)
+        if _component_source_kind(manifest, component) == "derived":
+            line, line_identity = _derived_domain_d_exterior_line(
+                component, by_role["domain_D"], loaded_areas["domain_D"],
+                domain_geometry, tuple(before_records.values()), target_crs_text,
+            )
+        else:
+            line=_read_line_geometry(component,manifest_path,root,target_crs)
+            line_identity={"component_id":component["component_id"],"role":component["role"],
+                           "group_name":component["group_name"],"geometry_sha256":_geometry_sha256(line),
+                           "feature_count":1,"source_crs":component["source_crs"],
+                           "target_crs":target_crs_text,
+                           "coordinate_transform_applied":not _crs_equivalent(CRS.from_user_input(component["source_crs"]),target_crs)}
+            if manifest["schema_version"] == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION:
+                line_identity.update({"source_kind":"file","source_version":component["source_version"]})
         points=[tuple(map(float,point[:2])) for point in line.coords]
         group=GmshLineGroup(name=component["group_name"],points=points,closed=component["closed"])
         (boundary_groups if component["role"]=="boundary_line" else constraint_groups).append(group)
-        line_components.append({"component_id":component["component_id"],"role":component["role"],
-                                "group_name":component["group_name"],"geometry_sha256":_geometry_sha256(line),
-                                "feature_count":1,"source_crs":component["source_crs"],
-                                "target_crs":target_crs_text,"coordinate_transform_applied":not _crs_equivalent(CRS.from_user_input(component["source_crs"]),target_crs)})
+        line_components.append(line_identity)
     base_config=GmshMeshConfig.model_validate({**base_config.model_dump(mode="python"),
                                                "boundary_groups":boundary_groups,"constraints":constraint_groups})
     assessment=assess_security_domain(domain_geometry,security_load)
@@ -703,7 +1243,7 @@ def _load_geometry_context(config: Mapping[str, Any], project_root: str | Path, 
         raise DomainMeshOnlyError(f"D−S/line geometry is not representable by the current Gmsh adapter: {exc}") from exc
     if gmsh_config is None:
         raise DomainMeshOnlyError("D−S geometry adapter returned no Gmsh config")
-    after_records,total_bytes=_component_file_records(root,manifest_path,manifest,verify_sha=True)
+    after_records,total_bytes=_component_file_records_for_manifest(root,manifest_path,manifest,verify_sha=True)
     before_hashes={key:value["sha256"] for key,value in before_records.items()}
     after_hashes={key:value["sha256"] for key,value in after_records.items()}
     if before_hashes!=after_hashes or total_bytes>MAX_COMPONENT_TOTAL_BYTES:
@@ -711,15 +1251,6 @@ def _load_geometry_context(config: Mapping[str, Any], project_root: str | Path, 
     from .restricted_worker import _sha256_file
     if _stat_identity(manifest_path)!=identity["manifest_stat_identity"] or _sha256_file(manifest_path,maximum_bytes=MAX_SOURCE_MANIFEST_BYTES)[0]!=identity["manifest_sha256"]:
         raise SourceIdentityError("source manifest changed during geometry loading")
-    polygon_metadata={}
-    for role,component in by_role.items():
-        loaded=loaded_areas[role]
-        polygon_metadata[role]={"component_id":component["component_id"],"source_format":component["format"],
-                                "source_crs":component["source_crs"],"target_crs":target_crs_text,
-                                "source_feature_count":len(loaded.source_feature_indices),
-                                "source_geometry_sha256":loaded.source_geometry_sha256,
-                                "source_union_geometry_sha256":loaded.source_union_geometry_sha256,
-                                "coordinate_transform_applied":not _crs_equivalent(loaded.source_crs,loaded.target_crs)}
     return _GeometryContext(
         manifest_path=manifest_path,manifest_sha256=identity["manifest_sha256"],
         manifest_stat=identity["manifest_stat_identity"],manifest=manifest,
@@ -755,6 +1286,119 @@ def _new_worker_semantic_context(bundle_path: Path, config_sha256: str,
 
 def _canonical_json_bytes(value: Any) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+
+
+def _canonical_domain_exterior_sha256(points: Sequence[tuple[float, float]]) -> str:
+    point_count = len(points)
+    if not 4 <= point_count <= MAX_DERIVED_LINE_POINTS:
+        raise DomainMeshOnlyError(
+            f"DERIVED_LINE_POINT_COUNT_LIMIT: D exterior point count must be in [4,{MAX_DERIVED_LINE_POINTS}]"
+        )
+    digest = hashlib.sha256()
+    digest.update((DOMAIN_D_EXTERIOR_GEOMETRY_HASH_FORMAT + "\0").encode("ascii"))
+    digest.update(struct.pack("<Q", point_count))
+    for index, point in enumerate(points):
+        if len(point) != 2 or not all(math.isfinite(float(value)) for value in point):
+            raise DomainMeshOnlyError(f"DERIVED_LINE_NONFINITE_COORDINATE: exterior point {index} must be finite XY")
+        x, y = float(point[0]), float(point[1])
+        # Normalize negative zero while preserving every other IEEE-754 XY value.
+        digest.update(struct.pack("<dd", 0.0 if x == 0.0 else x, 0.0 if y == 0.0 else y))
+    return digest.hexdigest()
+
+
+def _derived_domain_d_exterior_line(
+    component: Mapping[str, Any],
+    parent_component: Mapping[str, Any],
+    parent_load: _PolygonComponent,
+    domain_geometry: Any,
+    parent_file_records: tuple[Mapping[str, Any], ...],
+    target_crs_text: str,
+) -> tuple[Any, dict[str, Any]]:
+    from shapely.geometry import LineString
+
+    if component["format"] != DOMAIN_D_EXTERIOR_LINE_FORMAT:
+        raise DomainMeshOnlyError("DERIVED_LINE_RULE_UNSUPPORTED: unsupported derived boundary rule version")
+    if component["parent_component_id"] != parent_component["component_id"] or parent_component["role"] != "domain_D":
+        raise DomainMeshOnlyError("DERIVED_LINE_PARENT_MISMATCH: parent ID must resolve to the loaded domain_D component")
+    if domain_geometry.geom_type != "Polygon" or domain_geometry.is_empty or not domain_geometry.is_valid:
+        raise DomainMeshOnlyError("DERIVED_LINE_PARENT_UNSUPPORTED: parent D union must be one valid Polygon")
+    if parent_load.operation_identity is None:
+        raise DomainMeshOnlyError("DERIVED_LINE_OPERATION_UNAVAILABLE: parent D has no versioned CRS operation identity")
+    if parent_load.source_dimension_identity is None:
+        raise DomainMeshOnlyError("DERIVED_LINE_SOURCE_DIMENSION_UNAVAILABLE: parent D raw XY dimension proof is missing")
+    raw_coordinates = tuple(domain_geometry.exterior.coords)
+    if not 4 <= len(raw_coordinates) <= MAX_DERIVED_LINE_POINTS:
+        raise DomainMeshOnlyError(
+            f"DERIVED_LINE_POINT_COUNT_LIMIT: D exterior point count must be in [4,{MAX_DERIVED_LINE_POINTS}]"
+        )
+    points: list[tuple[float, float]] = []
+    for index, coordinate in enumerate(raw_coordinates):
+        if len(coordinate) != 2:
+            raise DomainMeshOnlyError("DERIVED_LINE_COORDINATE_DIMENSION: parent D exterior must use XY coordinates only")
+        point = (float(coordinate[0]), float(coordinate[1]))
+        if not all(math.isfinite(value) for value in point):
+            raise DomainMeshOnlyError(f"DERIVED_LINE_NONFINITE_COORDINATE: exterior point {index} is not finite")
+        points.append(point)
+    ordered_points = tuple(points)
+    if ordered_points[0] != ordered_points[-1]:
+        raise DomainMeshOnlyError("DERIVED_LINE_OPEN_RING: parent D exterior is not explicitly closed")
+    if len(set(ordered_points[:-1])) < 3 or any(a == b for a, b in zip(ordered_points, ordered_points[1:])):
+        raise DomainMeshOnlyError("DERIVED_LINE_DEGENERATE_RING: parent D exterior has repeated consecutive or insufficient vertices")
+    line = LineString(ordered_points)
+    if (line.geom_type != "LineString" or line.is_empty or not line.is_valid
+            or tuple((float(x), float(y)) for x, y in line.coords) != ordered_points):
+        raise DomainMeshOnlyError("DERIVED_LINE_SEQUENCE_CHANGED: LineString construction changed the parent D exterior sequence")
+
+    geometry_sha256 = _canonical_domain_exterior_sha256(ordered_points)
+    parent_records = sorted(
+        (dict(item) for item in parent_file_records if item.get("component_id") == parent_component["component_id"]),
+        key=lambda item: (item.get("file_role", ""), item.get("identity_kind", "staged"), item.get("path", "")),
+    )
+    if not parent_records or any(item.get("identity_kind") not in {"original_source", "staged_copy"} for item in parent_records):
+        raise DomainMeshOnlyError("DERIVED_LINE_PARENT_IDENTITY_INCOMPLETE: D original and staged sidecar identities are required")
+    provenance = {
+        "format": DOMAIN_D_EXTERIOR_PROVENANCE_FORMAT,
+        "derivation_rule": DOMAIN_D_EXTERIOR_DERIVATION_RULE,
+        "derived_component_id": component["component_id"],
+        "role": "boundary_line",
+        "parent_component_id": parent_component["component_id"],
+        "parent_component_role": parent_component["role"],
+        "parent_source_version": parent_component["source_version"],
+        "parent_file_identity_chain": parent_records,
+        "parent_source_crs_raw_text": parent_load.source_crs_raw_text,
+        "parent_declared_source_crs_text": parent_load.declared_source_crs_text,
+        "parent_source_dimension_identity": dict(parent_load.source_dimension_identity),
+        "target_crs": target_crs_text,
+        "coordinate_operation": dict(parent_load.operation_identity),
+        "parent_geometry_stage": "all_valid_transformed_D_features_then_unary_union_then_exterior",
+        "parent_feature_count": len(parent_load.source_feature_indices),
+        "parent_union_geometry_sha256": parent_load.source_union_geometry_sha256,
+        "geometry_hash_format": DOMAIN_D_EXTERIOR_GEOMETRY_HASH_FORMAT,
+        "geometry_sha256": geometry_sha256,
+        "ordered_point_count": len(ordered_points),
+        "closed": True,
+        "group_name": component["group_name"],
+        "geometry_only": True,
+        "q_binding": DOMAIN_D_EXTERIOR_Q_BINDING,
+    }
+    provenance_sha256 = hashlib.sha256(_canonical_json_bytes(provenance)).hexdigest()
+    line_identity = {
+        "component_id": component["component_id"], "role": "boundary_line",
+        "source_kind": "derived", "format": DOMAIN_D_EXTERIOR_LINE_FORMAT,
+        "parent_component_id": parent_component["component_id"],
+        "group_name": component["group_name"], "closed": True,
+        "geometry_only": True, "q_binding": DOMAIN_D_EXTERIOR_Q_BINDING,
+        "geometry_type": "LineString", "geometry_hash_format": DOMAIN_D_EXTERIOR_GEOMETRY_HASH_FORMAT,
+        "geometry_sha256": geometry_sha256, "provenance_format": DOMAIN_D_EXTERIOR_PROVENANCE_FORMAT,
+        "provenance_sha256": provenance_sha256, "derivation_provenance": provenance,
+        "ordered_point_count": len(ordered_points), "feature_count": 1,
+        "source_crs": parent_load.declared_source_crs_text,
+        "source_crs_raw_text": parent_load.source_crs_raw_text,
+        "target_crs": target_crs_text,
+        "coordinate_transform_applied": parent_load.operation_identity["coordinate_transform_applied"],
+        "coordinate_operation": dict(parent_load.operation_identity),
+    }
+    return line, line_identity
 
 
 def _mesh_payload(mesh: Any) -> dict[str, Any]:
@@ -826,18 +1470,34 @@ def _audit_generated_mesh(mesh: Any, context: _GeometryContext, config: Mapping[
 def _component_audit(context: _GeometryContext) -> list[dict[str, Any]]:
     files_by_id: dict[str, list[dict[str, Any]]] = {}
     for item in context.components_after:
-        files_by_id.setdefault(item["component_id"], []).append({
+        file_identity = {
             "role": item["file_role"], "path": item["path"], "sha256": item["sha256"],
             "bytes": item["bytes"], "stat_identity": dict(item["stat_identity"]),
-        })
+        }
+        if "identity_kind" in item:
+            file_identity["identity_kind"] = item["identity_kind"]
+        files_by_id.setdefault(item["component_id"], []).append(file_identity)
     component_meta: dict[str, dict[str, Any]] = {}
     for component in context.manifest["components"]:
-        component_meta[component["component_id"]] = {
+        source_kind = _component_source_kind(context.manifest, component)
+        metadata = {
             "component_id": component["component_id"], "role": component["role"],
-            "format": component["format"], "source_crs": component["source_crs"],
+            "format": component["format"],
             "group_name": component["group_name"], "closed": component["closed"],
-            "files": sorted(files_by_id[component["component_id"]], key=lambda x: x["role"]),
+            "files": sorted(files_by_id.get(component["component_id"], []),
+                             key=lambda x: (x["role"], x.get("identity_kind", ""), x["path"])),
         }
+        if source_kind == "file":
+            metadata["source_crs"] = component["source_crs"]
+            if context.manifest["schema_version"] == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION:
+                metadata["source_kind"] = "file"
+                metadata["source_version"] = component["source_version"]
+        else:
+            metadata.update({
+                "source_kind": "derived", "parent_component_id": component["parent_component_id"],
+                "geometry_only": component["geometry_only"], "q_binding": component["q_binding"],
+            })
+        component_meta[component["component_id"]] = metadata
     domain = context.domain_load
     security = context.security_load
     for role, loaded in (("domain_D", domain), ("security_S", security)):
@@ -850,9 +1510,30 @@ def _component_audit(context: _GeometryContext) -> list[dict[str, Any]]:
             "coordinate_transform_applied": not _crs_equivalent(loaded.source_crs, loaded.target_crs),
             "target_crs": loaded.target_crs.to_string(),
         })
+        if context.manifest["schema_version"] == DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION:
+            source_component = context.domain_component if role == "domain_D" else context.security_component
+            if loaded.operation_identity is None:
+                raise DomainMeshOnlyError(f"{role} CRS operation identity is missing from schema 1.1 audit")
+            item.update({
+                "source_version": source_component["source_version"],
+                "source_crs_raw_text": loaded.source_crs_raw_text,
+                "declared_source_crs_text": loaded.declared_source_crs_text,
+                "coordinate_operation": dict(loaded.operation_identity),
+            })
+            if role == "domain_D":
+                if loaded.source_dimension_identity is None:
+                    raise DomainMeshOnlyError("domain_D raw XY dimension proof is missing from schema 1.1 audit")
+                item["source_dimension_identity"] = dict(loaded.source_dimension_identity)
     for line in context.line_components:
         component_meta[line["component_id"]].update(line)
     return [component_meta[x["component_id"]] for x in context.manifest["components"]]
+
+
+def _source_audit_format(context: _GeometryContext) -> str:
+    if any(_component_source_kind(context.manifest, component) == "derived"
+           for component in context.manifest["components"]):
+        return DOMAIN_D_EXTERIOR_AUDIT_FORMAT
+    return DOMAIN_MESH_AUDIT_FORMAT
 
 
 def _build_source_audit(
@@ -867,7 +1548,7 @@ def _build_source_audit(
     payload = _mesh_payload(mesh)
     payload_sha = hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
     return {
-        "format": DOMAIN_MESH_AUDIT_FORMAT,
+        "format": _source_audit_format(context),
         "mesh_only": True,
         "preparation_only": True,
         "simulation_result": False,
@@ -1042,7 +1723,7 @@ def _source_audit_record(context: _GeometryContext, mesh: Any, config: Mapping[s
     payload = _make_mesh_only_payload(mesh)
     domain_area = float(context.domain_geometry.area)
     return {
-        "format": DOMAIN_MESH_AUDIT_FORMAT,
+        "format": _source_audit_format(context),
         "mesh_only": True,
         "preparation_only": True,
         "simulation_result": False,
@@ -1276,8 +1957,14 @@ def run_domain_mesh_only_worker(control: Mapping[str, Any], config: dict[str, An
          "security_boundary_group_name":"security_exclusion_boundary"},
         gmsh_identity,control["code_hashes"],control["config_sha256"])
     mesh_payload=_mesh_payload(secured_mesh,full=True);mesh_payload["format"]=DOMAIN_MESH_ARTIFACT_FORMAT;mesh_payload["mesh_only"]=True
-    mesh_bytes=_canonical_json_bytes(mesh_payload);mesh_sha=hashlib.sha256(mesh_bytes).hexdigest()
-    audit_bytes=_canonical_json_bytes(audit_record);audit_sha=hashlib.sha256(audit_bytes).hexdigest()
+    mesh_bytes=_canonical_json_bytes(mesh_payload)
+    if len(mesh_bytes) > MAX_COMPONENT_TOTAL_BYTES:
+        raise DomainMeshOnlyError(f"MESH_ARTIFACT_BYTE_CAP: mesh artifact exceeds {MAX_COMPONENT_TOTAL_BYTES} bytes")
+    mesh_sha=hashlib.sha256(mesh_bytes).hexdigest()
+    audit_bytes=_canonical_json_bytes(audit_record)
+    if len(audit_bytes) > MAX_COMPONENT_TOTAL_BYTES:
+        raise DomainMeshOnlyError(f"AUDIT_ARTIFACT_BYTE_CAP: source audit exceeds {MAX_COMPONENT_TOTAL_BYTES} bytes")
+    audit_sha=hashlib.sha256(audit_bytes).hexdigest()
     mesh_file=_write_route_file(artifacts/"domain-mesh.json",mesh_bytes,output_budget=resources["output_budget_bytes"],root=stage)
     audit_file=_write_route_file(artifacts/"domain-source-audit.json",audit_bytes,output_budget=resources["output_budget_bytes"],root=stage)
     semantic_context=_new_worker_semantic_context(stage,control["config_sha256"],context.manifest_sha256)

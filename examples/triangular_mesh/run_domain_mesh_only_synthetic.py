@@ -1,17 +1,45 @@
-"""Create a small synthetic D/S/line source set and dispatch the restricted mesh-only route."""
+"""Create a small synthetic D/S source set and dispatch the restricted mesh-only route."""
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.machinery
 import json
 from pathlib import Path, PureWindowsPath
+import shutil
 import subprocess
 import sys
+import types
 from typing import Any, Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+_RESTRICTED_WORKER_CLI_BOOTSTRAP = r"""
+import importlib.machinery, os, sys, types
+root = os.path.abspath(sys.argv[1])
+package = types.ModuleType("hydrodynamics")
+package.__path__ = [os.path.join(root, "hydrodynamics")]
+package.__package__ = "hydrodynamics"
+package.__spec__ = importlib.machinery.ModuleSpec("hydrodynamics", loader=None, is_package=True)
+package.__spec__.submodule_search_locations = package.__path__
+sys.modules["hydrodynamics"] = package
+from hydrodynamics.restricted_worker import main
+raise SystemExit(main(sys.argv[2:]))
+"""
+
+
+def _install_namespace_package(root: Path) -> None:
+    if "hydrodynamics" in sys.modules:
+        return
+    package = types.ModuleType("hydrodynamics")
+    package.__path__ = [str(root / "hydrodynamics")]
+    package.__package__ = "hydrodynamics"
+    package.__spec__ = importlib.machinery.ModuleSpec("hydrodynamics", loader=None, is_package=True)
+    package.__spec__.submodule_search_locations = package.__path__
+    sys.modules["hydrodynamics"] = package
 
 
 RESOURCE_LIMITS = {
@@ -108,20 +136,23 @@ def create_synthetic_domain_mesh_case(
     s_source_crs: str = "EPSG:4548",
     constraint_points: list[list[float]] | None = None,
     boundary_points: list[list[float]] | None = None,
+    include_constraint: bool = True,
+    derived_domain_exterior: bool = False,
     maximum_faces: int = 500_000,
     minimum_face_quality: float = 0.1,
 ) -> tuple[Path, dict[str, Any], Path, dict[str, Any]]:
     """Create a fresh experiment tree. Inputs contain only small synthetic vectors."""
+    root = Path(project_root).resolve()
+    _install_namespace_package(root)
     from hydrodynamics.domain_mesh_only import (
         DOMAIN_MESH_ONLY_FORMAT, DOMAIN_MESH_ONLY_VERSION,
-        DOMAIN_SOURCE_MANIFEST_FORMAT, DOMAIN_SOURCE_MANIFEST_VERSION,
+        DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION, DOMAIN_SOURCE_MANIFEST_FORMAT, DOMAIN_SOURCE_MANIFEST_VERSION,
         RESOURCE_LIMITS as MESH_ONLY_RESOURCE_LIMITS,
         validate_domain_mesh_only_config_shape, validate_source_manifest_shape,
     )
     from hydrodynamics.restricted_worker import _stat_identity
     from hydrodynamics.b1_synthetic_pilot import _gmsh_runtime_identity
 
-    root = Path(project_root).resolve()
     experiment = Path(experiment_dir)
     if Path(experiment).is_absolute() or PureWindowsPath(str(experiment)).is_absolute() or PureWindowsPath(str(experiment)).drive:
         raise ValueError("experiment_dir must be project-relative")
@@ -139,37 +170,96 @@ def create_synthetic_domain_mesh_case(
     input_root.mkdir()
     d_polygons = d_polygons or [[OUTER]]
     s_polygons = s_polygons or [[SECURITY]]
-    constraint_points = constraint_points or CONSTRAINT
-    boundary_points = boundary_points or DOMAIN_BOUNDARY_LINE
-    d_sidecars = _write_domain_shapefile(input_root / "domain" / "domain_D.shp", d_polygons, prj_crs=d_prj_crs)
-    security_path = _polygon_geojson(input_root / "security" / "security_S.geojson", s_polygons)
-    boundary_path = _line_geojson(input_root / "lines" / "domain_boundary.geojson", boundary_points)
-    constraint_path = _line_geojson(input_root / "lines" / "constraint_01.geojson", constraint_points)
+    if derived_domain_exterior and boundary_points is not None:
+        raise ValueError("derived_domain_exterior does not accept an external boundary_points file")
+    if derived_domain_exterior:
+        manifest_root = input_root / "staged"
+        originals_root = manifest_root / "originals"
+        files_root = manifest_root / "files"
+        originals_root.mkdir(parents=True)
+        files_root.mkdir()
+        d_originals = _write_domain_shapefile(originals_root / "domain" / "domain_D.shp", d_polygons, prj_crs=d_prj_crs)
+        d_sidecars: dict[str, Path] = {}
+        for role, source_path in d_originals.items():
+            staged_path = files_root / "domain" / source_path.name
+            staged_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_path, staged_path)
+            d_sidecars[role] = staged_path
+        security_original = _polygon_geojson(originals_root / "security" / "security_S.geojson", s_polygons)
+        security_path = files_root / "security" / security_original.name
+        security_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(security_original, security_path)
+        if include_constraint:
+            constraint_points = constraint_points or CONSTRAINT
+            constraint_original = _line_geojson(originals_root / "lines" / "constraint_01.geojson", constraint_points)
+            constraint_path = files_root / "lines" / constraint_original.name
+            constraint_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(constraint_original, constraint_path)
+        else:
+            constraint_path = None
 
-    components = [{
-        "component_id": "domain_D", "role": "domain_D", "format": "polygon_shapefile",
-        "source_crs": d_source_crs, "group_name": None, "closed": None,
-        "files": {role: _file_identity(path, base=input_root) for role, path in d_sidecars.items()},
-    }, {
-        "component_id": "security_S", "role": "security_S", "format": "polygon_geojson",
-        "source_crs": s_source_crs, "group_name": None, "closed": None,
-        "files": {"geometry": _file_identity(security_path, base=input_root)},
-    }, {
-        "component_id": "domain_boundary_01", "role": "boundary_line", "format": "line_geojson",
-        "source_crs": "EPSG:4548", "group_name": "synthetic_domain_boundary", "closed": True,
-        "files": {"geometry": _file_identity(boundary_path, base=input_root)},
-    }, {
-        "component_id": "constraint_01", "role": "constraint_line", "format": "line_geojson",
-        "source_crs": "EPSG:4548", "group_name": "synthetic_constraint", "closed": False,
-        "files": {"geometry": _file_identity(constraint_path, base=input_root)},
-    }]
+        def copied_identity(staged: Path, original: Path) -> dict[str, Any]:
+            value = _file_identity(staged, base=manifest_root)
+            value["origin"] = _file_identity(original, base=manifest_root)
+            return value
+
+        components = [{
+            "component_id": "D", "source_kind": "file", "role": "domain_D", "format": "polygon_shapefile",
+            "source_crs": d_source_crs, "source_version": "synthetic-D-v1",
+            "group_name": None, "closed": None,
+            "files": {role: copied_identity(path, d_originals[role]) for role, path in d_sidecars.items()},
+        }, {
+            "component_id": "S", "source_kind": "file", "role": "security_S", "format": "polygon_geojson",
+            "source_crs": s_source_crs, "source_version": "synthetic-S-v1",
+            "group_name": None, "closed": None,
+            "files": {"geometry": copied_identity(security_path, security_original)},
+        }, {
+            "component_id": "D-exterior", "source_kind": "derived", "role": "boundary_line",
+            "format": "derived_domain_D_exterior_line_v1", "parent_component_id": "D",
+            "group_name": "synthetic_D_exterior", "closed": True,
+            "geometry_only": True, "q_binding": "NONE",
+        }]
+        if constraint_path is not None:
+            components.append({
+                "component_id": "constraint_01", "source_kind": "file", "role": "constraint_line",
+                "format": "line_geojson", "source_crs": "EPSG:4548", "source_version": "synthetic-constraint-v1",
+                "group_name": "synthetic_constraint", "closed": False,
+                "files": {"geometry": copied_identity(constraint_path, constraint_original)},
+            })
+        manifest_version = DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION
+    else:
+        manifest_root = input_root
+        constraint_points = constraint_points or CONSTRAINT
+        boundary_points = boundary_points or DOMAIN_BOUNDARY_LINE
+        d_sidecars = _write_domain_shapefile(input_root / "domain" / "domain_D.shp", d_polygons, prj_crs=d_prj_crs)
+        security_path = _polygon_geojson(input_root / "security" / "security_S.geojson", s_polygons)
+        boundary_path = _line_geojson(input_root / "lines" / "domain_boundary.geojson", boundary_points)
+        constraint_path = _line_geojson(input_root / "lines" / "constraint_01.geojson", constraint_points)
+        components = [{
+            "component_id": "domain_D", "role": "domain_D", "format": "polygon_shapefile",
+            "source_crs": d_source_crs, "group_name": None, "closed": None,
+            "files": {role: _file_identity(path, base=input_root) for role, path in d_sidecars.items()},
+        }, {
+            "component_id": "security_S", "role": "security_S", "format": "polygon_geojson",
+            "source_crs": s_source_crs, "group_name": None, "closed": None,
+            "files": {"geometry": _file_identity(security_path, base=input_root)},
+        }, {
+            "component_id": "domain_boundary_01", "role": "boundary_line", "format": "line_geojson",
+            "source_crs": "EPSG:4548", "group_name": "synthetic_domain_boundary", "closed": True,
+            "files": {"geometry": _file_identity(boundary_path, base=input_root)},
+        }, {
+            "component_id": "constraint_01", "role": "constraint_line", "format": "line_geojson",
+            "source_crs": "EPSG:4548", "group_name": "synthetic_constraint", "closed": False,
+            "files": {"geometry": _file_identity(constraint_path, base=input_root)},
+        }]
+        manifest_version = DOMAIN_SOURCE_MANIFEST_VERSION
     source_manifest = {
-        "format": DOMAIN_SOURCE_MANIFEST_FORMAT, "schema_version": DOMAIN_SOURCE_MANIFEST_VERSION,
+        "format": DOMAIN_SOURCE_MANIFEST_FORMAT, "schema_version": manifest_version,
         "source_set_id": f"{run_id[:55]}-sources", "target_coordinate_system": "EPSG:4548",
         "components": components,
     }
     validate_source_manifest_shape(source_manifest)
-    manifest_path = input_root / "source_manifest.json"
+    manifest_path = manifest_root / "source_manifest.json"
     manifest_bytes = _write_json(manifest_path, source_manifest)
     gmsh_identity = _gmsh_runtime_identity()
     config = {
@@ -196,17 +286,35 @@ def create_synthetic_domain_mesh_case(
     return config_path, config, manifest_path, source_manifest
 
 
+def dispatch_restricted_worker_cli(config_path: str | Path, project_root: str | Path) -> subprocess.CompletedProcess[str]:
+    root = Path(project_root).resolve()
+    config = Path(config_path).resolve()
+    if not config.is_relative_to(root):
+        raise ValueError("config_path must remain inside project_root")
+    command = [
+        sys.executable, "-c", _RESTRICTED_WORKER_CLI_BOOTSTRAP, str(root),
+        "--run-config", config.relative_to(root).as_posix(), "--project-root", str(root),
+    ]
+    return subprocess.run(command, cwd=root, check=False, text=True, capture_output=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--experiment-dir", required=True)
+    parser.add_argument("--derived-domain-exterior", action="store_true",
+                        help="use schema 1.1 and derive a geometry-only D exterior inside the worker Job")
     args = parser.parse_args(argv)
     root = args.project_root.resolve()
+    _install_namespace_package(root)
     config_path, _config, _manifest_path, _manifest = create_synthetic_domain_mesh_case(
-        root, args.experiment_dir)
-    command = [sys.executable, "-m", "hydrodynamics.restricted_worker",
-               "--run-config", config_path.relative_to(root).as_posix(), "--project-root", str(root)]
-    completed = subprocess.run(command, cwd=root, check=False)
+        root, args.experiment_dir, derived_domain_exterior=args.derived_domain_exterior,
+        include_constraint=not args.derived_domain_exterior)
+    completed = dispatch_restricted_worker_cli(config_path, root)
+    if completed.stdout:
+        sys.stdout.write(completed.stdout)
+    if completed.stderr:
+        sys.stderr.write(completed.stderr)
     return completed.returncode
 
 

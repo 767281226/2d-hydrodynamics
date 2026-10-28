@@ -157,6 +157,23 @@ def _ring_area(points: list[list[float]] | tuple[tuple[float, float], ...]) -> f
         for index in range(len(points)))
 
 
+def _stable_ring_area(points: list[list[float]] | tuple[tuple[float, float], ...]) -> float:
+    """Compute signed shoelace area after translating the ring to a local origin.
+
+    Translation preserves the input coordinates and winding while avoiding
+    cancellation between products formed from large absolute map coordinates.
+    """
+    if len(points) < 3:
+        return 0.0
+    origin_x = float(points[0][0])
+    origin_y = float(points[0][1])
+    return 0.5 * math.fsum(
+        (float(points[index][0]) - origin_x) * (float(points[(index + 1) % len(points)][1]) - origin_y)
+        - (float(points[(index + 1) % len(points)][0]) - origin_x) * (float(points[index][1]) - origin_y)
+        for index in range(len(points))
+    )
+
+
 def _mesh_payload(mesh: Any, *, full: bool) -> dict[str, Any]:
     payload = {
         "format": GMSH_MESH_FORMAT if full else "triangle-mesh-xy-json-v1",
@@ -322,7 +339,9 @@ def _audit_g0_mesh(mesh: Any, gmsh_config: Any, generation_config: Mapping[str, 
     domain = Polygon(outer, holes)
     if not domain.is_valid or not math.isfinite(float(domain.area)) or domain.area <= 0:
         raise ValueError("G0 trusted outer-minus-hole recipe does not form a valid positive-area domain")
-    recipe_expected_area = abs(_ring_area(outer)) - math.fsum(abs(_ring_area(ring)) for ring in holes)
+    recipe_expected_area = abs(_stable_ring_area(outer)) - math.fsum(
+        abs(_stable_ring_area(ring)) for ring in holes
+    )
     if not math.isclose(float(domain.area), recipe_expected_area, rel_tol=1e-12, abs_tol=1e-12):
         raise ValueError("G0 polygon domain area differs from its ring-area calculation")
     triangles = [Polygon([mesh.node_xy[index] for index in face]) for face in mesh.face_nodes]

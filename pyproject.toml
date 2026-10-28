@@ -22,6 +22,7 @@ netcdf = ["netCDF4>=1.6,<2.0"]
 workflow = ["netCDF4>=1.6,<2.0", "pyproj>=3.6,<4.0"]
 triangular = ["netCDF4>=1.6,<2.0", "pyproj>=3.6,<4.0", "shapely>=2.0,<3.0"]
 shp = ["pyshp>=2.3,<3.0", "pyproj>=3.6,<4.0", "netCDF4>=1.6,<2.0"]
+domain-mesh-only = ["pyproj>=3.8,<4.0", "shapely>=2.0,<3.0", "pyshp>=2.3,<3.0", "gmsh>=4.11,<5.0"]
 gmsh = ["gmsh>=4.11,<5.0"]
 
 [project.scripts]
@@ -44,7 +45,7 @@ hydrodynamics-triangular-source-run = "hydrodynamics.triangular_source:main"
 include = ["hydrodynamics*"]
 
 [tool.setuptools.package-data]
-hydrodynamics = ["assets/*.html", "rehearsal_data/*.json", "shapefile_schemas/*.json"]
+hydrodynamics = ["assets/*.html", "rehearsal_data/*.json", "shapefile_schemas/*.json", "schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

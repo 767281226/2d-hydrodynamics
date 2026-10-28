@@ -1,0 +1,50 @@
+{
+  "format": "triangle-domain-mesh-source-manifest-v1",
+  "schema_version": "1.1",
+  "source_set_id": "synthetic-derived-source-v1",
+  "target_coordinate_system": "EPSG:4548",
+  "components": [
+    {
+      "component_id": "D",
+      "source_kind": "file",
+      "role": "domain_D",
+      "format": "polygon_shapefile",
+      "source_crs": "EPSG:4548",
+      "source_version": "synthetic-D-v1",
+      "group_name": null,
+      "closed": null,
+      "files": {
+        "shp": {"path": "files/domain_D.shp", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}, "origin": {"path": "originals/domain_D.shp", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}},
+        "shx": {"path": "files/domain_D.shx", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}, "origin": {"path": "originals/domain_D.shx", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}},
+        "prj": {"path": "files/domain_D.prj", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}, "origin": {"path": "originals/domain_D.prj", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}},
+        "dbf": {"path": "files/domain_D.dbf", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}, "origin": {"path": "originals/domain_D.dbf", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}},
+        "cpg": {"path": "files/domain_D.cpg", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}, "origin": {"path": "originals/domain_D.cpg", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}}
+      }
+    },
+    {
+      "component_id": "S",
+      "source_kind": "file",
+      "role": "security_S",
+      "format": "polygon_geojson",
+      "source_crs": "EPSG:4548",
+      "source_version": "synthetic-S-v1",
+      "group_name": null,
+      "closed": null,
+      "files": {
+        "geometry": {"path": "files/security_S.geojson", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}, "origin": {"path": "originals/security_S.geojson", "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "expected_stat_identity": {"size_bytes": 0, "mtime_ns": 0, "ctime_ns": 0, "device": 0, "file_id": 0}}}
+      }
+    },
+    {
+      "component_id": "D-exterior",
+      "source_kind": "derived",
+      "role": "boundary_line",
+      "format": "derived_domain_D_exterior_line_v1",
+      "parent_component_id": "D",
+      "group_name": "synthetic_D_exterior",
+      "closed": true,
+      "geometry_only": true,
+      "q_binding": "NONE"
+    }
+  ]
+}
+

@@ -684,9 +684,17 @@ def test_domain_mesh_only_quality_and_face_caps_refuse_without_mesh_ready(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="mesh-only writer failure uses the restricted worker")
-def test_domain_mesh_only_writer_failure_has_no_mesh_ready(experiment_root: Path) -> None:
+@pytest.mark.parametrize("derived_domain_exterior", [False, True])
+def test_domain_mesh_only_writer_failure_has_no_mesh_ready(
+        experiment_root: Path, derived_domain_exterior: bool) -> None:
+    derived_kwargs = ({"derived_domain_exterior": True, "include_constraint": False}
+                      if derived_domain_exterior else {})
     config_path, config, _manifest_path, _manifest = _make_case(
-        experiment_root, run_id="mesh-only-writer-failure")
+        experiment_root,
+        run_id=("mesh-only-writer-failure-derived" if derived_domain_exterior
+                else "mesh-only-writer-failure-file"),
+        **derived_kwargs,
+    )
 
     def fail_before_commit(_stage: Path) -> None:
         raise OSError("synthetic mesh-only commit failure")
@@ -697,9 +705,17 @@ def test_domain_mesh_only_writer_failure_has_no_mesh_ready(experiment_root: Path
 
 
 @pytest.mark.skipif(os.name != "nt", reason="mesh-only cancellation uses the restricted worker Job")
-def test_domain_mesh_only_cancel_after_gmsh_marker_has_no_mesh_ready(experiment_root: Path) -> None:
+@pytest.mark.parametrize("derived_domain_exterior", [False, True])
+def test_domain_mesh_only_cancel_after_gmsh_marker_has_no_mesh_ready(
+        experiment_root: Path, derived_domain_exterior: bool) -> None:
+    derived_kwargs = ({"derived_domain_exterior": True, "include_constraint": False}
+                      if derived_domain_exterior else {})
     config_path, config, _manifest_path, _manifest = _make_case(
-        experiment_root, run_id="mesh-only-cancel-after-gmsh")
+        experiment_root,
+        run_id=("mesh-only-cancel-after-gmsh-derived" if derived_domain_exterior
+                else "mesh-only-cancel-after-gmsh-file"),
+        **derived_kwargs,
+    )
     output = ROOT / config["output_root"]
     cancel = threading.Event()
     marker_seen = threading.Event()

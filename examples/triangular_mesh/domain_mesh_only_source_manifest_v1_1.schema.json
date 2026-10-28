@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/triangle-domain-mesh-only-source-manifest-v1.1.schema.json",
+  "title": "Trusted D/S/file-or-derived-line component identity manifest 1.1",
+  "description": "Schema 1.1 preserves the minimum of three components and explicitly distinguishes file-backed inputs from a parent-D derived exterior line. Runtime validation additionally binds parent IDs and verifies original-to-staged identities.",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?![\\s\\S])"
+    },
+    "groupName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?!(?:outer_boundary|security_exclusion_boundary|hole_[0-9]+)$)[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?![\\s\\S])"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "manifestRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?![\\s\\S]*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|(?![\\s\\S])))[\\s\\S]+(?![\\s\\S])",
+      "description": "Path relative to the source manifest directory; absolute paths and parent traversal are rejected."
+    },
+    "statIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "mtime_ns": {"type": "integer", "minimum": 0},
+        "ctime_ns": {"type": "integer", "minimum": 0},
+        "device": {"type": "integer", "minimum": 0},
+        "file_id": {"type": "integer", "minimum": 0}
+      },
+      "required": ["size_bytes", "mtime_ns", "ctime_ns", "device", "file_id"]
+    },
+    "originIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The original-source identity must resolve to a regular file physically distinct from its staged copy; runtime checks device/file_id and verifies identical SHA-256 bytes.",
+      "properties": {
+        "path": {"$ref": "#/$defs/manifestRelativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "expected_stat_identity": {"$ref": "#/$defs/statIdentity"}
+      },
+      "required": ["path", "sha256", "expected_stat_identity"]
+    },
+    "fileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Runtime binds the staged file to origin, rejects physical aliases across all components, and counts both physical files against the fixed limits.",
+      "properties": {
+        "path": {"$ref": "#/$defs/manifestRelativePath", "description": "Staged path relative to the source manifest directory."},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "expected_stat_identity": {"$ref": "#/$defs/statIdentity"},
+        "origin": {"$ref": "#/$defs/originIdentity"}
+      },
+      "required": ["path", "sha256", "expected_stat_identity", "origin"]
+    },
+    "fileBackedComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "For schema 1.1 domain_D, runtime inspects raw Shapefile header and every record before geometry decoding, or raw GeoJSON positions, and admits XY only. The JSON Schema cannot inspect file bytes.",
+      "properties": {
+        "component_id": {"$ref": "#/$defs/safeId"},
+        "source_kind": {"const": "file"},
+        "role": {"enum": ["domain_D", "security_S", "boundary_line", "constraint_line"]},
+        "format": {"enum": ["polygon_geojson", "polygon_shapefile", "line_geojson", "line_shapefile"]},
+        "source_crs": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "source_version": {"$ref": "#/$defs/safeId"},
+        "files": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "geometry": {"$ref": "#/$defs/fileIdentity"},
+            "shp": {"$ref": "#/$defs/fileIdentity"},
+            "shx": {"$ref": "#/$defs/fileIdentity"},
+            "prj": {"$ref": "#/$defs/fileIdentity"},
+            "dbf": {"$ref": "#/$defs/fileIdentity"},
+            "cpg": {"$ref": "#/$defs/fileIdentity"}
+          }
+        },
+        "group_name": {"oneOf": [{"$ref": "#/$defs/groupName"}, {"type": "null"}]},
+        "closed": {"type": ["boolean", "null"]}
+      },
+      "required": ["component_id", "source_kind", "role", "format", "source_crs", "source_version", "files", "group_name", "closed"],
+      "allOf": [
+        {
+          "if": {"properties": {"format": {"const": "polygon_geojson"}}, "required": ["format"]},
+          "then": {"properties": {"role": {"enum": ["domain_D", "security_S"]}, "files": {"required": ["geometry"], "minProperties": 1, "maxProperties": 1}, "group_name": {"const": null}, "closed": {"const": null}}}
+        },
+        {
+          "if": {"properties": {"format": {"const": "polygon_shapefile"}}, "required": ["format"]},
+          "then": {"properties": {"role": {"enum": ["domain_D", "security_S"]}, "files": {"required": ["shp", "shx", "prj"], "minProperties": 3, "maxProperties": 5}, "group_name": {"const": null}, "closed": {"const": null}}}
+        },
+        {
+          "if": {"properties": {"format": {"const": "line_geojson"}}, "required": ["format"]},
+          "then": {"properties": {"role": {"enum": ["boundary_line", "constraint_line"]}, "files": {"required": ["geometry"], "minProperties": 1, "maxProperties": 1}, "group_name": {"$ref": "#/$defs/groupName"}, "closed": {"type": "boolean"}}}
+        },
+        {
+          "if": {"properties": {"format": {"const": "line_shapefile"}}, "required": ["format"]},
+          "then": {"properties": {"role": {"enum": ["boundary_line", "constraint_line"]}, "files": {"required": ["shp", "shx", "prj"], "minProperties": 3, "maxProperties": 5}, "group_name": {"$ref": "#/$defs/groupName"}, "closed": {"type": "boolean"}}}
+        },
+        {
+          "if": {"properties": {"role": {"const": "constraint_line"}}, "required": ["role"]},
+          "then": {"properties": {"closed": {"const": false}}}
+        }
+      ]
+    },
+    "derivedDomainExteriorComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "component_id": {"$ref": "#/$defs/safeId"},
+        "source_kind": {"const": "derived"},
+        "role": {"const": "boundary_line"},
+        "format": {"const": "derived_domain_D_exterior_line_v1"},
+        "parent_component_id": {"$ref": "#/$defs/safeId"},
+        "group_name": {"$ref": "#/$defs/groupName"},
+        "closed": {"const": true},
+        "geometry_only": {"const": true},
+        "q_binding": {"const": "NONE"}
+      },
+      "required": ["component_id", "source_kind", "role", "format", "parent_component_id", "group_name", "closed", "geometry_only", "q_binding"]
+    },
+    "component": {
+      "oneOf": [
+        {"$ref": "#/$defs/fileBackedComponent"},
+        {"$ref": "#/$defs/derivedDomainExteriorComponent"}
+      ]
+    }
+  },
+  "properties": {
+    "format": {"const": "triangle-domain-mesh-source-manifest-v1"},
+    "schema_version": {"const": "1.1"},
+    "source_set_id": {"$ref": "#/$defs/safeId"},
+    "target_coordinate_system": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "components": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 8,
+      "items": {"$ref": "#/$defs/component"},
+      "allOf": [
+        {"contains": {"properties": {"role": {"const": "domain_D"}}, "required": ["role"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"role": {"const": "security_S"}}, "required": ["role"]}, "minContains": 1, "maxContains": 1},
+        {"contains": {"properties": {"role": {"enum": ["boundary_line", "constraint_line"]}}, "required": ["role"]}, "minContains": 1}
+      ],
+      "description": "At least three components: exactly one file-backed D, exactly one file-backed S, and at least one file-backed or explicitly derived line. Parent ID uniqueness and line-group uniqueness are enforced at runtime."
+    }
+  },
+  "required": ["format", "schema_version", "source_set_id", "target_coordinate_system", "components"]
+}
+
