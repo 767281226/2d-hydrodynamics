@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import heapq
 import importlib.metadata
 import json
 import math
@@ -44,6 +45,17 @@ MAX_COMPONENT_FILE_BYTES = 4 * 1024 * 1024
 MAX_COMPONENT_TOTAL_BYTES = 16 * 1024 * 1024
 MAX_COMPONENT_COUNT = 8
 MAX_SOURCE_FILE_COUNT = 40
+QUALITY_FAILURE_PRIMARY_FORMAT = "triangle-mesh-quality-failure-primary-v1"
+QUALITY_FAILURE_DIAGNOSTIC_FORMAT = "triangle-mesh-quality-failure-diagnostic-v1"
+QUALITY_FAILURE_DIAGNOSTIC_SCHEMA_VERSION = "1.0"
+QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH = "diagnostics/domain-mesh-quality-failure.json"
+QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES = 64 * 1024
+QUALITY_FAILURE_DIAGNOSTIC_TOP_K = 16
+QUALITY_FAILURE_HISTOGRAM_BIN_COUNT = 1024
+QUALITY_FAILURE_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90, 0.99)
+QUALITY_FAILURE_PENDING_RELATIVE_PATH = "scratch/quality-failure-pending.json"
+QUALITY_FAILURE_PENDING_MAX_BYTES = 4096
+QUALITY_FAILURE_METRIC_ID = "triangle-face-quality-q4sqrt3-area-over-edge-square-sum-v1"
 MAX_OUTPUT_RECEIPT_BYTES = 64 * 1024
 OUTPUT_RESERVE_BYTES = 96 * 1024
 GMSH_VERSION_PATTERN = r"^4\.(?:1[1-9]|[2-9][0-9]|[1-9][0-9]{2,})\.(?:0|[1-9][0-9]*)$"
@@ -1885,6 +1897,370 @@ def validate_domain_mesh_bundle_semantics(
             "security_audit": security_audit}
 
 
+class _QualityFailureDiagnosticError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _quality_failure_code_identity_sha256(code_hashes: Mapping[str, str]) -> str:
+    return hashlib.sha256(_canonical_json_bytes(dict(code_hashes))).hexdigest()
+
+
+def _quality_failure_primary_record(
+    mesh: Any,
+    quality: Mapping[str, Any],
+    *,
+    run_id: str,
+    config_sha256: str,
+    source_manifest_sha256: str,
+    route_code_sha256: str,
+    mesh_sha256: str,
+    canonical_mesh_bytes: int,
+) -> dict[str, Any]:
+    bad_rows = quality.get("faces_below_quality_threshold")
+    if not isinstance(bad_rows, list) or not bad_rows:
+        raise _QualityFailureDiagnosticError(
+            "QUALITY_FAILURE_PRIMARY_RECORD_INVALID",
+            "quality failure receipt requires a non-empty strict-below-threshold face row list",
+        )
+    threshold = float(quality["minimum_quality_threshold"])
+    return {
+        "format": QUALITY_FAILURE_PRIMARY_FORMAT,
+        "attempt_id": run_id,
+        "run_id": run_id,
+        "worker_exit_code": 53,
+        "failure_code": "MINIMUM_FACE_QUALITY_FAILED",
+        "message": f"generated mesh has faces below minimum_face_quality={threshold}",
+        "diagnostic_only": True,
+        "config_sha256": config_sha256,
+        "source_manifest_sha256": source_manifest_sha256,
+        "route_code_sha256": route_code_sha256,
+        "metric_id": QUALITY_FAILURE_METRIC_ID,
+        "quality_threshold": threshold,
+        "comparison": "strict_lt",
+        "node_count": int(mesh.n_node),
+        "face_count": int(mesh.n_face),
+        "bad_face_count": len(bad_rows),
+        "mesh_sha256": mesh_sha256,
+        "canonical_mesh_bytes": canonical_mesh_bytes,
+    }
+
+
+def _quality_failure_quantile_intervals(
+    histogram: Sequence[int],
+    *,
+    face_count: int,
+    underflow_count: int,
+    minimum_quality: float,
+    maximum_quality: float,
+) -> list[dict[str, Any]]:
+    bins = QUALITY_FAILURE_HISTOGRAM_BIN_COUNT
+    intervals: list[dict[str, Any]] = []
+    for percentile in QUALITY_FAILURE_QUANTILES:
+        rank = max(1, math.ceil(percentile * face_count))
+        if rank <= underflow_count:
+            lower, upper = minimum_quality, 0.0
+        else:
+            cumulative = underflow_count
+            lower = upper = 0.0
+            found = False
+            for index, count in enumerate(histogram):
+                cumulative += count
+                if cumulative >= rank:
+                    lower = index / bins
+                    upper = (index + 1) / bins
+                    found = True
+                    break
+            if not found:
+                lower, upper = 1.0, maximum_quality
+        intervals.append({
+            "percentile": percentile,
+            "rank_one_based": rank,
+            "lower_bound": float(lower),
+            "upper_bound": float(upper),
+            "interval_width": float(upper - lower),
+            "exact_value_reported": False,
+        })
+    return intervals
+
+
+def _build_quality_failure_diagnostic(
+    mesh: Any,
+    quality: Mapping[str, Any],
+    primary: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build a bounded failure report from the in-Job mesh without full sorting/copying."""
+    face_quality = mesh.face_quality
+    face_count = int(mesh.n_face)
+    if face_count < 1 or len(face_quality) != face_count:
+        raise _QualityFailureDiagnosticError(
+            "QUALITY_DIAGNOSTIC_MESH_SHAPE_INVALID",
+            "face quality count differs from mesh face count",
+        )
+    histogram = [0] * QUALITY_FAILURE_HISTOGRAM_BIN_COUNT
+    underflow_count = 0
+    overflow_count = 0
+    measured_bad_face_count = 0
+    minimum_quality = math.inf
+    maximum_quality = -math.inf
+    worst_heap: list[tuple[float, int, int, int]] = []
+    threshold = float(quality["minimum_quality_threshold"])
+    for row, raw_quality in enumerate(face_quality):
+        value = float(raw_quality)
+        if not math.isfinite(value):
+            raise _QualityFailureDiagnosticError(
+                "QUALITY_DIAGNOSTIC_NONFINITE_VALUE",
+                f"face_quality[{row}] is not finite",
+            )
+        if value < threshold:
+            measured_bad_face_count += 1
+        minimum_quality = min(minimum_quality, value)
+        maximum_quality = max(maximum_quality, value)
+        if value < 0.0:
+            underflow_count += 1
+        elif value > 1.0:
+            overflow_count += 1
+        else:
+            index = min(QUALITY_FAILURE_HISTOGRAM_BIN_COUNT - 1,
+                        int(value * QUALITY_FAILURE_HISTOGRAM_BIN_COUNT))
+            histogram[index] += 1
+        face_id = int(mesh.face_id[row])
+        entry = (-value, -face_id, -row, row)
+        if len(worst_heap) < QUALITY_FAILURE_DIAGNOSTIC_TOP_K:
+            heapq.heappush(worst_heap, entry)
+        elif entry > worst_heap[0]:
+            heapq.heapreplace(worst_heap, entry)
+
+    bad_rows = quality.get("faces_below_quality_threshold")
+    if (not isinstance(bad_rows, list)
+            or len(bad_rows) != int(primary["bad_face_count"])
+            or measured_bad_face_count != int(primary["bad_face_count"])):
+        raise _QualityFailureDiagnosticError(
+            "QUALITY_DIAGNOSTIC_BAD_FACE_COUNT_MISMATCH",
+            "strict-below-threshold rows differ from the primary quality failure count",
+        )
+    worst_rows = sorted(
+        (item[3] for item in worst_heap),
+        key=lambda row: (float(face_quality[row]), int(mesh.face_id[row]), row),
+    )
+    edge_to_worst_rows: dict[int, list[int]] = {}
+    for row in worst_rows:
+        for edge_index in mesh.face_edges[row]:
+            edge_to_worst_rows.setdefault(int(edge_index), []).append(row)
+    groups_by_row = {
+        row: {"boundary": set(), "constraint": set()}
+        for row in worst_rows
+    }
+    for group_name, edge_indices in sorted(mesh.boundary_groups.items()):
+        for edge_index in edge_indices:
+            for row in edge_to_worst_rows.get(int(edge_index), ()):
+                groups_by_row[row]["boundary"].add(group_name)
+    for group_name, edge_indices in sorted(mesh.constraint_groups.items()):
+        for edge_index in edge_indices:
+            for row in edge_to_worst_rows.get(int(edge_index), ()):
+                groups_by_row[row]["constraint"].add(group_name)
+
+    worst_faces: list[dict[str, Any]] = []
+    for row in worst_rows:
+        node_indices = tuple(int(index) for index in mesh.face_nodes[row])
+        points = tuple(mesh.node_xy[index] for index in node_indices)
+        xs = tuple(float(point[0]) for point in points)
+        ys = tuple(float(point[1]) for point in points)
+        edge_indices = tuple(int(index) for index in mesh.face_edges[row])
+        worst_faces.append({
+            "face_row_zero_based": row,
+            "face_id_decimal": str(int(mesh.face_id[row])),
+            "quality": float(face_quality[row]),
+            "minimum_angle_deg": float(mesh.minimum_angle_deg[row]),
+            "face_area_m2": float(mesh.face_area[row]),
+            "centroid_xy_m": [float(value) for value in mesh.face_centroid[row]],
+            "bounds_xy_m": [min(xs), min(ys), max(xs), max(ys)],
+            "node_indices_zero_based": list(node_indices),
+            "edge_indices_zero_based": list(edge_indices),
+            "edge_node_indices_zero_based": [
+                [int(node) for node in mesh.edge_nodes[index]]
+                for index in edge_indices
+            ],
+            "edge_lengths_m": [float(mesh.edge_length[index]) for index in edge_indices],
+            "boundary_group_names": sorted(groups_by_row[row]["boundary"]),
+            "constraint_group_names": sorted(groups_by_row[row]["constraint"]),
+        })
+
+    quantile_intervals = _quality_failure_quantile_intervals(
+        histogram,
+        face_count=face_count,
+        underflow_count=underflow_count,
+        minimum_quality=minimum_quality,
+        maximum_quality=maximum_quality,
+    )
+    return {
+        "format": QUALITY_FAILURE_DIAGNOSTIC_FORMAT,
+        "schema_version": QUALITY_FAILURE_DIAGNOSTIC_SCHEMA_VERSION,
+        "diagnostic_only": True,
+        "preparation_only": True,
+        "mesh_ready": False,
+        "ready": False,
+        "latest_published": False,
+        "simulation_result": False,
+        "production_approved": False,
+        "engineering_ready": False,
+        "attempt_id": primary["attempt_id"],
+        "run_id": primary["run_id"],
+        "config_sha256": primary["config_sha256"],
+        "source_manifest_sha256": primary["source_manifest_sha256"],
+        "route_code_sha256": primary["route_code_sha256"],
+        "failure_code": primary["failure_code"],
+        "worker_exit_code": int(primary["worker_exit_code"]),
+        "failure_message": primary["message"],
+        "metric": {
+            "id": QUALITY_FAILURE_METRIC_ID,
+            "version": QUALITY_FAILURE_METRIC_ID,
+            "definition": "q = 4*sqrt(3)*A/(a^2+b^2+c^2)",
+            "unit": "1",
+            "area_source": "validated positive mesh.face_area in m2",
+            "edge_length_source": "validated mesh edge lengths in m",
+            "threshold": float(primary["quality_threshold"]),
+            "comparison": "strict_lt",
+        },
+        "mesh": {
+            "mesh_id": str(mesh.mesh_id),
+            "mesh_sha256": primary["mesh_sha256"],
+            "canonical_mesh_bytes": int(primary["canonical_mesh_bytes"]),
+            "node_count": int(mesh.n_node),
+            "face_count": face_count,
+        },
+        "quality_summary": {
+            "minimum_quality_exact": float(minimum_quality),
+            "maximum_quality_exact": float(maximum_quality),
+            "bad_face_count_exact": int(primary["bad_face_count"]),
+            "comparison": "strict_lt",
+            "histogram": {
+                "method": "fixed_equal_width_histogram_approximate_v1",
+                "domain_lower": 0.0,
+                "domain_upper": 1.0,
+                "bin_count": QUALITY_FAILURE_HISTOGRAM_BIN_COUNT,
+                "bin_width": 1.0 / QUALITY_FAILURE_HISTOGRAM_BIN_COUNT,
+                "counts": histogram,
+                "underflow_count": underflow_count,
+                "overflow_count": overflow_count,
+            },
+            "quantile_rule": "nearest-rank: rank=ceil(p*N), one-based; return the containing histogram bin interval; equal values share a bin and are not ordered for quantiles",
+            "quantiles_approximate": True,
+            "maximum_quantile_interval_width": max(
+                (float(item["interval_width"]) for item in quantile_intervals), default=0.0,
+            ),
+            "quantile_intervals": quantile_intervals,
+        },
+        "worst_face_selection": {
+            "population": "all faces",
+            "limit": QUALITY_FAILURE_DIAGNOSTIC_TOP_K,
+            "selected_count": len(worst_faces),
+            "exact": True,
+            "order": "quality ascending, then numeric face_id ascending, then zero-based row ascending",
+            "faces": worst_faces,
+        },
+    }
+
+
+def _quality_failure_error_record(exc: Exception, *, phase: str) -> dict[str, str]:
+    if isinstance(exc, InterruptedError):
+        code = "DIAGNOSTIC_INTERRUPTED"
+    elif isinstance(exc, FileExistsError):
+        code = "DIAGNOSTIC_NO_CLOBBER_CONFLICT"
+    elif type(exc).__name__ == "ResourceBudgetError":
+        code = "DIAGNOSTIC_BUDGET_REJECTED"
+    elif isinstance(exc, _QualityFailureDiagnosticError):
+        code = exc.code
+    else:
+        code = "DIAGNOSTIC_WRITE_FAILED"
+    return {
+        "phase": phase,
+        "code": code,
+        "type": type(exc).__name__,
+        "message": str(exc)[:512],
+    }
+
+
+def _persist_quality_failure_primary(
+    stage: Path,
+    primary: Mapping[str, Any],
+    *,
+    scratch_budget_bytes: int,
+) -> dict[str, str] | None:
+    try:
+        payload = _canonical_json_bytes(dict(primary))
+        if len(payload) > QUALITY_FAILURE_PENDING_MAX_BYTES:
+            raise _QualityFailureDiagnosticError(
+                "QUALITY_FAILURE_PRIMARY_RECEIPT_CAP_EXCEEDED",
+                f"quality failure primary record exceeds {QUALITY_FAILURE_PENDING_MAX_BYTES} bytes",
+            )
+        from .restricted_worker import _write_no_clobber_bytes
+
+        scratch = stage / "scratch"
+        path = stage / QUALITY_FAILURE_PENDING_RELATIVE_PATH
+        _write_no_clobber_bytes(
+            path,
+            payload,
+            output_budget=scratch_budget_bytes,
+            root=scratch,
+            reserve_bytes=4096,
+        )
+        return None
+    except Exception as exc:
+        return _quality_failure_error_record(exc, phase="quality_failure_primary_receipt")
+
+
+def _persist_quality_failure_diagnostic(
+    stage: Path,
+    diagnostic: Mapping[str, Any],
+    *,
+    output_budget_bytes: int,
+) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    try:
+        payload = _canonical_json_bytes(dict(diagnostic))
+        if len(payload) > QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES:
+            raise _QualityFailureDiagnosticError(
+                "DIAGNOSTIC_BYTE_CAP_EXCEEDED",
+                f"quality failure diagnostic is {len(payload)} bytes; cap is {QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES}",
+            )
+        relative_path = QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH
+        path = stage / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        from .restricted_worker import _write_no_clobber_bytes
+
+        _write_no_clobber_bytes(
+            path,
+            payload,
+            output_budget=output_budget_bytes,
+            root=stage,
+            reserve_bytes=OUTPUT_RESERVE_BYTES,
+        )
+        return {
+            "path": relative_path,
+            "format": QUALITY_FAILURE_DIAGNOSTIC_FORMAT,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "bytes": len(payload),
+            "diagnostic_only": True,
+        }, None
+    except Exception as exc:
+        return None, _quality_failure_error_record(exc, phase="quality_failure_diagnostic")
+
+
+def _make_quality_failure_exception(
+    primary: Mapping[str, Any],
+    diagnostic_reference: Mapping[str, Any] | None,
+    diagnostic_errors: Sequence[Mapping[str, str]],
+) -> DomainMeshOnlyError:
+    error = DomainMeshOnlyError(str(primary["message"]))
+    error.quality_failure = dict(primary)
+    error.failure_diagnostic = None if diagnostic_reference is None else dict(diagnostic_reference)
+    error.failure_diagnostic_error = (
+        {"errors": [dict(item) for item in diagnostic_errors]} if diagnostic_errors else None
+    )
+    return error
+
+
 def run_domain_mesh_only_worker(control: Mapping[str, Any], config: dict[str, Any], root: Path) -> dict[str, Any]:
     """Generate and semantically read back one D−S mesh; terrain APIs are never imported."""
     if not _current_process_in_job():
@@ -1932,7 +2308,38 @@ def run_domain_mesh_only_worker(control: Mapping[str, Any], config: dict[str, An
         raise DomainMeshOnlyError(f"generated mesh exceeds configured cap: {mesh.n_node} nodes/{mesh.n_face} faces")
     quality=mesh.quality_report(minimum_quality=float(settings["minimum_face_quality"]))
     if quality["faces_below_quality_threshold"]:
-        raise DomainMeshOnlyError(f"generated mesh has faces below minimum_face_quality={settings['minimum_face_quality']}")
+        route_code_sha256 = _quality_failure_code_identity_sha256(control["code_hashes"])
+        quality_failure = _quality_failure_primary_record(
+            mesh,
+            quality,
+            run_id=str(config["run_id"]),
+            config_sha256=str(control["config_sha256"]),
+            source_manifest_sha256=context.manifest_sha256,
+            route_code_sha256=route_code_sha256,
+            mesh_sha256=mesh_sha,
+            canonical_mesh_bytes=len(mesh_bytes),
+        )
+        diagnostic_errors: list[dict[str, str]] = []
+        pending_error = _persist_quality_failure_primary(
+            stage, quality_failure,
+            scratch_budget_bytes=int(resources["scratch_budget_bytes"]),
+        )
+        if pending_error is not None:
+            diagnostic_errors.append(pending_error)
+        diagnostic_reference: dict[str, Any] | None = None
+        try:
+            diagnostic = _build_quality_failure_diagnostic(mesh, quality, quality_failure)
+            diagnostic_reference, diagnostic_error = _persist_quality_failure_diagnostic(
+                stage, diagnostic,
+                output_budget_bytes=int(resources["output_budget_bytes"]),
+            )
+        except Exception as exc:
+            diagnostic_error = _quality_failure_error_record(exc, phase="quality_failure_diagnostic_build")
+        if diagnostic_error is not None:
+            diagnostic_errors.append(diagnostic_error)
+        raise _make_quality_failure_exception(
+            quality_failure, diagnostic_reference, diagnostic_errors,
+        )
     mesh_without_security=mesh
     from .b1_synthetic_pilot import _audit_g0_mesh
     generation=_generation_audit_settings(config,context.gmsh_config)

@@ -69,6 +69,16 @@ This check is limited to boundary groups. The active-domain type, source validat
 
 The CLI summary is ASCII-safe JSON, so Unicode diagnostics remain recoverable on GBK and UTF-8 consoles and the process returns the worker's original exit code.
 
+If the generated mesh fails the existing minimum-face-quality gate, the failed bundle may contain a bounded diagnostic-only report. Its metric, summary, geometry sample, source/config/code binding, cap, and failure behavior are defined in [Mesh-quality failure diagnostics](mesh_quality_failure_diagnostics_v1.md). The diagnostic is not a mesh or audit artifact and cannot be consumed as MESH_READY.
+
+## Quality failure diagnostics
+
+When Gmsh returns a mesh that fails the existing minimum-face-quality check, the worker may write a capped diagnostic-only report before returning the same quality failure. It does not write a mesh artifact or pass the attempt. See [Mesh-quality failure diagnostic v1](mesh_quality_failure_diagnostics_v1.md) for the metric, approximate quantile intervals, exact worst-face ordering, parent status references, byte cap, and writer-failure behavior.
+
+## Mesh quality failure diagnostics
+
+When generated faces fail the configured minimum quality gate, the worker writes a separate capped diagnostic-only report if it can do so within the existing budgets. The report, its failed-bundle references, and diagnostic-write errors are defined in [Mesh-quality failure diagnostic v1](mesh_quality_failure_diagnostics_v1.md). It does not create MESH_READY or a normal mesh/audit artifact.
+
 ## Synthetic usage
 
 Install the bounded mesh-only dependencies with:

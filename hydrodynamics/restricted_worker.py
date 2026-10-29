@@ -1328,6 +1328,9 @@ def _worker_child(control_path: Path) -> int:
     """Entry point called only after the supervisor has resumed a job member."""
     control: dict[str, Any] = {}
     response_path: Path | None = None
+    quality_failure: Mapping[str, Any] | None = None
+    failure_diagnostic: Mapping[str, Any] | None = None
+    failure_diagnostic_error: Mapping[str, Any] | None = None
     try:
         control = json.loads(control_path.read_text(encoding="utf-8"))
         if not isinstance(control, dict) or set(control) != {"format", "config_path", "config_sha256", "config_base",
@@ -1405,6 +1408,9 @@ def _worker_child(control_path: Path) -> int:
                     else "failed_write" if write_error else "failed_read" if dem_read_error else "worker_failed")
         code = {"resource_rejected": 41, "failed_write": 52, "failed_read": 51, "worker_failed": 53}[category]
         message = f"{type(exc).__name__}: {exc}"
+        quality_failure = getattr(exc, "quality_failure", None)
+        failure_diagnostic = getattr(exc, "failure_diagnostic", None)
+        failure_diagnostic_error = getattr(exc, "failure_diagnostic_error", None)
     try:
         stage_value = Path(control["attempt_root"])
         response_path = stage_value / "artifacts" / "worker-result.json"
@@ -1413,6 +1419,12 @@ def _worker_child(control_path: Path) -> int:
             response = {"format": "triangle-preparation-worker-result-v1", "status": "failed",
                         "category": category, "message": message[:2048], "finished_at": _now(),
                         "worker_exit_code": code, "process_id": os.getpid()}
+            if quality_failure is not None:
+                response["quality_failure"] = dict(quality_failure)
+            if failure_diagnostic is not None:
+                response["failure_diagnostic"] = dict(failure_diagnostic)
+            if failure_diagnostic_error is not None:
+                response["failure_diagnostic_error"] = dict(failure_diagnostic_error)
             try:
                 _write_no_clobber_bytes(response_path, _json_bytes(response),
                                         output_budget=resources.output_budget_bytes,
@@ -1429,6 +1441,12 @@ def _worker_child(control_path: Path) -> int:
                             "worker_result_write_failed": True,
                             "worker_result_write_error": f"{type(receipt_error).__name__}: {receipt_error}"[:1024],
                             "message": message[:1024], "process_id": os.getpid()}
+                if quality_failure is not None:
+                    fallback["quality_failure"] = dict(quality_failure)
+                if failure_diagnostic is not None:
+                    fallback["failure_diagnostic"] = dict(failure_diagnostic)
+                if failure_diagnostic_error is not None:
+                    fallback["failure_diagnostic_error"] = dict(failure_diagnostic_error)
                 fallback_bytes = _json_bytes(fallback)
                 if len(fallback_bytes) <= 4096 and _tree_bytes(stage_value / "scratch") + len(fallback_bytes) <= resources.scratch_budget_bytes:
                     temporary = _short_temp_path(fallback_path, prefix=".err-")
@@ -1565,9 +1583,225 @@ def _read_worker_resumed_journal(stage: Path, *, expected_process_id: int | None
     return value
 
 
+def _quality_failure_runtime_bindings(stage: Path) -> dict[str, str] | None:
+    control_path = stage / "scratch" / "worker-control.json"
+    config_path = stage / "scratch" / "worker-config.json"
+    if any(path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_RECEIPT_BYTES
+           for path in (control_path, config_path)):
+        return None
+    try:
+        control = json.loads(control_path.read_text(encoding="utf-8"))
+        config_bytes = config_path.read_bytes()
+        if hashlib.sha256(config_bytes).hexdigest() != control.get("config_sha256"):
+            return None
+        config = json.loads(config_bytes.decode("utf-8"))
+        code_hashes = control["code_hashes"]
+        source_manifest_sha256 = config["source_manifest"]["sha256"]
+        if (control.get("format") != "triangle-preparation-worker-control-v1"
+                or not isinstance(code_hashes, dict) or not isinstance(source_manifest_sha256, str)
+                or not isinstance(config.get("run_id"), str)
+                or not isinstance(control.get("config_sha256"), str)):
+            return None
+        return {
+            "run_id": config["run_id"],
+            "config_sha256": control["config_sha256"],
+            "source_manifest_sha256": source_manifest_sha256,
+            "route_code_sha256": hashlib.sha256(_json_bytes(code_hashes)).hexdigest(),
+            "minimum_face_quality": float(config["mesh_generation"]["minimum_face_quality"]),
+            "maximum_nodes": int(config["mesh_generation"]["maximum_nodes"]),
+            "maximum_faces": int(config["mesh_generation"]["maximum_faces"]),
+        }
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+
+
+def _quality_failure_primary_is_bound(
+    value: Any,
+    *,
+    bindings: Mapping[str, str],
+    expected_run_id: str,
+    expected_config_sha256: str | None,
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    try:
+        from .domain_mesh_only import QUALITY_FAILURE_METRIC_ID, QUALITY_FAILURE_PRIMARY_FORMAT
+    except Exception:
+        return False
+    return (
+        value.get("format") == QUALITY_FAILURE_PRIMARY_FORMAT
+        and value.get("attempt_id") == expected_run_id
+        and value.get("run_id") == expected_run_id == bindings["run_id"]
+        and value.get("config_sha256") == bindings["config_sha256"] == expected_config_sha256
+        and value.get("source_manifest_sha256") == bindings["source_manifest_sha256"]
+        and value.get("route_code_sha256") == bindings["route_code_sha256"]
+        and value.get("failure_code") == "MINIMUM_FACE_QUALITY_FAILED"
+        and value.get("worker_exit_code") == 53
+        and value.get("diagnostic_only") is True
+        and value.get("metric_id") == QUALITY_FAILURE_METRIC_ID
+        and value.get("comparison") == "strict_lt"
+        and value.get("quality_threshold") == bindings["minimum_face_quality"]
+        and type(value.get("node_count")) is int
+        and 3 <= value["node_count"] <= bindings["maximum_nodes"]
+        and type(value.get("face_count")) is int
+        and 1 <= value["face_count"] <= bindings["maximum_faces"]
+        and type(value.get("bad_face_count")) is int
+        and 1 <= value["bad_face_count"] <= value["face_count"]
+        and type(value.get("canonical_mesh_bytes")) is int
+        and value["canonical_mesh_bytes"] > 0
+        and isinstance(value.get("mesh_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["mesh_sha256"]) is not None
+    )
+
+
+def _quality_failure_diagnostic_reference(
+    stage: Path,
+    primary: Mapping[str, Any],
+    candidate: Any,
+) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    try:
+        from .domain_mesh_only import (
+            QUALITY_FAILURE_DIAGNOSTIC_FORMAT,
+            QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES,
+            QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH,
+        )
+        relative_path = QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH
+        path = stage / relative_path
+        if not path.exists():
+            if candidate is not None:
+                raise FileNotFoundError("worker receipt references a missing quality diagnostic")
+            return None, None
+        if path.is_symlink() or not path.is_file():
+            raise OSError("quality diagnostic must be a regular file")
+        size = path.stat().st_size
+        if size > QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES:
+            raise ValueError("quality diagnostic exceeds the fixed 64 KiB cap")
+        payload = path.read_bytes()
+        if len(payload) != size or len(payload) > QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES:
+            raise OSError("quality diagnostic size changed while validating its receipt")
+        digest = hashlib.sha256(payload).hexdigest()
+        if candidate is not None and (
+            not isinstance(candidate, dict)
+            or candidate.get("path") != relative_path
+            or candidate.get("format") != QUALITY_FAILURE_DIAGNOSTIC_FORMAT
+            or candidate.get("sha256") != digest
+            or candidate.get("bytes") != size
+            or candidate.get("diagnostic_only") is not True
+        ):
+            raise ValueError("worker quality diagnostic reference differs from the committed file")
+        diagnostic = json.loads(payload.decode("utf-8"))
+        if (not isinstance(diagnostic, dict)
+                or diagnostic.get("format") != QUALITY_FAILURE_DIAGNOSTIC_FORMAT
+                or diagnostic.get("diagnostic_only") is not True
+                or diagnostic.get("mesh_ready") is not False
+                or diagnostic.get("ready") is not False
+                or diagnostic.get("latest_published") is not False
+                or diagnostic.get("simulation_result") is not False
+                or diagnostic.get("worker_exit_code") != 53
+                or diagnostic.get("failure_code") != primary.get("failure_code")
+                or diagnostic.get("attempt_id") != primary.get("attempt_id")
+                or diagnostic.get("run_id") != primary.get("run_id")
+                or diagnostic.get("config_sha256") != primary.get("config_sha256")
+                or diagnostic.get("source_manifest_sha256") != primary.get("source_manifest_sha256")
+                or diagnostic.get("route_code_sha256") != primary.get("route_code_sha256")
+                or diagnostic.get("mesh", {}).get("mesh_sha256") != primary.get("mesh_sha256")
+                or diagnostic.get("mesh", {}).get("canonical_mesh_bytes") != primary.get("canonical_mesh_bytes")
+                or diagnostic.get("mesh", {}).get("node_count") != primary.get("node_count")
+                or diagnostic.get("mesh", {}).get("face_count") != primary.get("face_count")
+                or diagnostic.get("metric", {}).get("threshold") != primary.get("quality_threshold")
+                or diagnostic.get("quality_summary", {}).get("bad_face_count_exact") != primary.get("bad_face_count")):
+            raise ValueError("quality diagnostic does not bind its primary failure/config/source/code/mesh identity")
+        return {
+            "path": relative_path,
+            "format": QUALITY_FAILURE_DIAGNOSTIC_FORMAT,
+            "sha256": digest,
+            "bytes": size,
+            "diagnostic_only": True,
+        }, None
+    except Exception as exc:
+        return None, {"phase": "parent_diagnostic_receipt", "code": "DIAGNOSTIC_REFERENCE_INVALID",
+                      "type": type(exc).__name__, "message": str(exc)[:512]}
+
+
+def _quality_failure_bundle_fields(
+    stage: Path,
+    *,
+    run_id: str,
+    config_sha256: str | None,
+    status: str,
+    worker_result: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    pending_path = stage / "scratch" / "quality-failure-pending.json"
+    pending: Any = None
+    pending_error: dict[str, str] | None = None
+    if pending_path.exists():
+        try:
+            if pending_path.is_symlink() or not pending_path.is_file() or pending_path.stat().st_size > 4096:
+                raise ValueError("quality failure primary scratch record is unsafe or oversized")
+            pending = json.loads(pending_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            pending_error = {"phase": "parent_primary_receipt", "code": "QUALITY_FAILURE_PRIMARY_UNREADABLE",
+                             "type": type(exc).__name__, "message": str(exc)[:512]}
+    result_primary = None if worker_result is None else worker_result.get("quality_failure")
+    if pending is None and result_primary is None:
+        if pending_error is not None:
+            return {
+                "quality_failure": None,
+                "failure_diagnostic": None,
+                "failure_diagnostic_error": {"errors": [pending_error]},
+            }
+        return None
+    bindings = _quality_failure_runtime_bindings(stage)
+    primary = pending if pending is not None else result_primary
+    if (bindings is None or not _quality_failure_primary_is_bound(
+            primary, bindings=bindings, expected_run_id=run_id, expected_config_sha256=config_sha256)):
+        return {
+            "quality_failure": None,
+            "failure_diagnostic": None,
+            "failure_diagnostic_error": {
+                "errors": [x for x in (pending_error, {
+                    "phase": "parent_primary_receipt", "code": "QUALITY_FAILURE_PRIMARY_UNBOUND",
+                    "type": "ReceiptValidationError",
+                    "message": "quality failure primary receipt did not match attempt/config/source/code bindings",
+                }) if x is not None],
+            },
+        }
+    if pending is not None and result_primary is not None and pending != result_primary:
+        pending_error = {"phase": "parent_primary_receipt", "code": "QUALITY_FAILURE_PRIMARY_MISMATCH",
+                         "type": "ReceiptValidationError",
+                         "message": "scratch and worker-result quality failure records differ"}
+    candidate = None if worker_result is None else worker_result.get("failure_diagnostic")
+    diagnostic_ref, reference_error = _quality_failure_diagnostic_reference(stage, primary, candidate)
+    errors: list[dict[str, Any]] = []
+    if pending_error is not None:
+        errors.append(pending_error)
+    worker_error = None if worker_result is None else worker_result.get("failure_diagnostic_error")
+    if isinstance(worker_error, dict):
+        nested = worker_error.get("errors")
+        if isinstance(nested, list):
+            errors.extend(item for item in nested if isinstance(item, dict))
+        else:
+            errors.append(worker_error)
+    if reference_error is not None:
+        errors.append(reference_error)
+    if diagnostic_ref is None and not errors:
+        errors.append({
+            "phase": "parent_diagnostic_receipt",
+            "code": "DIAGNOSTIC_INTERRUPTED" if status in {"cancelled", "timed_out"} else "DIAGNOSTIC_NOT_COMMITTED",
+            "type": "DiagnosticReceiptUnavailable",
+            "message": "quality failure is recorded, but a complete bounded diagnostic file was not committed",
+        })
+    return {
+        "quality_failure": primary,
+        "failure_diagnostic": diagnostic_ref,
+        "failure_diagnostic_error": {"errors": errors} if errors else None,
+    }
+
+
 def _finish_failure(stage: Path, final_failure: Path, *, run_id: str, status: str, exit_code: int,
                     message: str, worker_start_state: _WorkerStartState, config_sha256: str | None,
-                    worker_receipt: Mapping[str, Any] | None, output_budget: int | None) -> WorkerRunResult:
+                    worker_receipt: Mapping[str, Any] | None, output_budget: int | None,
+                    worker_result: Mapping[str, Any] | None = None) -> WorkerRunResult:
     worker_started = worker_start_state.ever_started
     (stage / "READY").unlink(missing_ok=True)
     (stage / "READY.pending").unlink(missing_ok=True)
@@ -1610,6 +1844,17 @@ def _finish_failure(stage: Path, final_failure: Path, *, run_id: str, status: st
         "config_sha256": config_sha256, "message": message[:2048],
         "worker": None if worker_receipt is None else dict(worker_receipt),
     })
+    if worker_start_state.mesh_only_route:
+        quality_fields = _quality_failure_bundle_fields(
+            stage,
+            run_id=run_id,
+            config_sha256=config_sha256,
+            status=status,
+            worker_result=worker_result,
+        )
+        if quality_fields is not None:
+            status_record.update(quality_fields)
+            failure_manifest.update(quality_fields)
     try:
         if output_budget is None:
             _write_atomic_json(stage / "manifest.json", failure_manifest)
@@ -2058,7 +2303,8 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                             + (f"; worker-result receipt write failed: {worker_result.get('worker_result_write_error')}"
                                                if worker_result.get("worker_result_write_failed") else "")),
                                    worker_start_state=worker_start_state, config_sha256=config_sha,
-                                   worker_receipt=job_receipt, output_budget=resources.output_budget_bytes)
+                                   worker_receipt=job_receipt, output_budget=resources.output_budget_bytes,
+                                   worker_result=worker_result)
         elapsed_wall = job_receipt["elapsed_seconds"]
         if elapsed_wall > resources.wall_clock_limit_s:
             return _finish_failure(stage, failed_path, run_id=run_id, status="timed_out", exit_code=43,
@@ -2101,7 +2347,8 @@ def run_restricted_preparation(config_path: str | Path, *, project_root: str | P
                                             + (f"; worker-result receipt write failed: {worker_result.get('worker_result_write_error')}"
                                                if worker_result.get("worker_result_write_failed") else "")),
                                    worker_start_state=worker_start_state, config_sha256=config_sha,
-                                   worker_receipt=job_receipt, output_budget=resources.output_budget_bytes)
+                                   worker_receipt=job_receipt, output_budget=resources.output_budget_bytes,
+                                   worker_result=worker_result)
 
         if mesh_only_route:
             if mesh_source_identity is None:
@@ -2292,11 +2539,15 @@ def _read_worker_result(stage: Path, *, abort_check: Callable[[], str | None] | 
                 if (isinstance(fallback, dict)
                         and fallback.get("format") == "triangle-preparation-worker-failure-v1"
                         and type(fallback.get("worker_exit_code")) is int):
-                    return {"status": "failed", "category": fallback.get("category", "worker_failed"),
-                            "message": fallback.get("message", "worker failed"),
-                            "worker_exit_code": fallback["worker_exit_code"],
-                            "worker_result_write_failed": True,
-                            "worker_result_write_error": fallback.get("worker_result_write_error")}
+                    result = {"status": "failed", "category": fallback.get("category", "worker_failed"),
+                              "message": fallback.get("message", "worker failed"),
+                              "worker_exit_code": fallback["worker_exit_code"],
+                              "worker_result_write_failed": True,
+                              "worker_result_write_error": fallback.get("worker_result_write_error")}
+                    for key in ("quality_failure", "failure_diagnostic", "failure_diagnostic_error"):
+                        if key in fallback:
+                            result[key] = fallback[key]
+                    return result
             except (OSError, UnicodeDecodeError, json.JSONDecodeError):
                 pass
         return {"status": "failed", "category": "worker_failed",
