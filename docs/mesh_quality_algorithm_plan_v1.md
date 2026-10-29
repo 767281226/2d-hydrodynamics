@@ -1,0 +1,21 @@
+# Versioned Gmsh 2-D algorithm plan / 网格算法计划
+
+The existing `triangle-domain-mesh-only-config-v1` / schema 1.0 remains byte-for-byte unchanged and keeps its previous implicit Gmsh behavior. Schema 1.1 adds one required `mesh_algorithm_plan`; it has no defaults and does not reinterpret any v1 config. The standalone plan contract is [`mesh_algorithm_plan_v1.schema.json`](../examples/triangular_mesh/mesh_algorithm_plan_v1.schema.json). The checked-in examples show Frontal-Delaunay 6 (`mesh_algorithm_plan_v1.example.json`), Delaunay 5 (`mesh_algorithm_plan_v1_delaunay.example.json`), and the optional one-round relocation (`mesh_algorithm_plan_v1_relocate2d.example.json`).
+
+`algorithm_2d` is a strict integer enum with unit `1`: `5` selects Delaunay and `6` Frontal-Delaunay. The plan explicitly fixes `Mesh.Smoothing=1` and `Mesh.AlgorithmSwitchOnFailure=0`. `optimizer` is required as `none` or `Relocate2D`; the required `iterations` must be 0 or 1 respectively. `force` is fixed to false, and `entity_scope` is fixed to the one internally bound active surface. Callers cannot supply Gmsh dimension/tag pairs. The v1.1 config loader rejects booleans, floats such as `5.0`, unknown keys, arbitrary entities, mismatched iteration counts and any implicit fallback.
+
+The Gmsh reference manual documents 2-D algorithms 5 and 6, `Mesh.AlgorithmSwitchOnFailure`, `Relocate2D`, and the `force`/`niter`/`dimTags` parameters. API availability does not guarantee a quality improvement. If selected, the implementation calls `gmsh.model.mesh.optimize("Relocate2D", force=False, niter=1, dimTags=[(2, active_surface_tag)])` before finalization. The active surface tag comes from the worker's validated geometry. [Gmsh 4.15.2 reference manual](https://gmsh.info/doc/texinfo/)
+
+For every v1.1 generation, the worker records actual SDK option values before generation, after generation and after any optimizer call. It hashes all model 0-D and 1-D entity identities, node tags/XYZ/classifications, point and line elements, physical-group membership, and named boundary/constraint membership before and after optimization. Any difference rejects the candidate before quality checking or publication; there is no fallback. The snapshot is bounded to 500,000 fixed-boundary nodes and remains under the existing 16 MiB scratch cap.
+
+When a v1.1 run fails the unchanged strict `minimum_face_quality=0.1` gate, it emits diagnostic v2 at most 64 KiB and still selects at most 16 faces. The sample records at most 48 nodes directly queried with `gmsh.model.mesh.getNode` while the SDK model is alive: exact Gmsh tag, XYZ and entity dimension/tag, bound to mesh and code hashes. It stores neither the full mesh nor inferred classifications. V1 failures keep the existing v1 diagnostic schema unchanged.
+
+The A/B evidence uses only small synthetic D/S geometry under the existing Windows Job limits. The analytic four-vertex edge-flip example is a topology gold, not evidence that Gmsh will choose that connection. No result authorizes a real D−S retry; any future real attempt needs its own coordinator work order and still must pass the full quality, domain, line, resource, audit and semantic-readback gates.
+
+现有 `triangle-domain-mesh-only-config-v1` / schema 1.0 保持原字节和既有隐式 Gmsh 行为。Schema 1.1 新增一个必填 `mesh_algorithm_plan`；计划没有默认值，也不重解释任何 v1 配置。独立计划合同见 [`mesh_algorithm_plan_v1.schema.json`](../examples/triangular_mesh/mesh_algorithm_plan_v1.schema.json)。示例分别展示 Frontal-Delaunay 6 (`mesh_algorithm_plan_v1.example.json`)、Delaunay 5 (`mesh_algorithm_plan_v1_delaunay.example.json`) 和可选的一轮 Relocate2D (`mesh_algorithm_plan_v1_relocate2d.example.json`)。
+
+`algorithm_2d` 是严格整数枚举，单位为 `1`：`5` 表示 Delaunay，`6` 表示 Frontal-Delaunay。计划明确固定 `Mesh.Smoothing=1`、`Mesh.AlgorithmSwitchOnFailure=0`。`optimizer` 必填为 `none` 或 `Relocate2D`；`iterations` 必须分别为0或1。`force` 固定为 false，`entity_scope` 固定为内部绑定的唯一有效面；调用方不能传任意 Gmsh 实体标签。v1.1 loader 拒绝布尔值、`5.0` 这类浮点、未知字段、任意实体、迭代数不匹配和隐式fallback。
+
+每次 v1.1 生成都会记录生成前、生成后和优化后的实际 SDK 选项。优化前后对全部 0D/1D 实体、节点标签/XYZ/分类、点与线单元、物理组成员关系及具名边界/约束关系计算哈希。任何差异都会在质量检查或发布前拒绝，不做fallback。快照限制为最多500,000个固定边界节点，并计入原有16 MiB scratch预算。
+
+v1.1 运行若触发原有严格 `minimum_face_quality=0.1` 门槛，会生成最多64 KiB、最多16面的诊断v2；最多采样48个节点，使用 Gmsh 生命周期内的 `gmsh.model.mesh.getNode` 记录精确标签、XYZ和实体维度/标签，并绑定mesh/code hash。不存完整网格、不推断实体分类。v1失败仍使用原诊断v1 schema。

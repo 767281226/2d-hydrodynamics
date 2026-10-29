@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/triangle-mesh-algorithm-plan-v1.schema.json",
+  "title": "Strict 2-D Gmsh mesh algorithm plan v1",
+  "description": "A versioned, explicit mesh-only plan. It has no algorithm or optimizer defaults and cannot request arbitrary entities.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "type": "string",
+      "const": "triangle-mesh-algorithm-plan-v1"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "algorithm_2d": {
+      "type": "integer",
+      "enum": [
+        5,
+        6
+      ],
+      "description": "Required Gmsh SDK enum; unit 1 (dimensionless): 5=Delaunay, 6=Frontal-Delaunay. No default."
+    },
+    "smoothing": {
+      "type": "integer",
+      "const": 1,
+      "description": "Required fixed Gmsh Mesh.Smoothing option, one smoothing pass. No default."
+    },
+    "algorithm_switch_on_failure": {
+      "type": "integer",
+      "const": 0,
+      "description": "Required fixed Gmsh Mesh.AlgorithmSwitchOnFailure option. Disables hidden algorithm fallback. No default."
+    },
+    "optimizer": {
+      "type": "string",
+      "enum": [
+        "none",
+        "Relocate2D"
+      ],
+      "description": "Required post-generation operation. No default or fallback."
+    },
+    "iterations": {
+      "type": "integer",
+      "enum": [
+        0,
+        1
+      ],
+      "description": "Required iteration count; 0 for none and 1 for Relocate2D. No default."
+    },
+    "force": {
+      "type": "boolean",
+      "const": false,
+      "description": "Fixed false so discrete entities are not force-optimized."
+    },
+    "entity_scope": {
+      "type": "string",
+      "const": "active_surface",
+      "description": "The active surface tag is bound internally; callers cannot supply entity tags."
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "algorithm_2d",
+    "smoothing",
+    "algorithm_switch_on_failure",
+    "optimizer",
+    "iterations",
+    "force",
+    "entity_scope"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "optimizer": {
+            "const": "none"
+          }
+        },
+        "required": [
+          "optimizer"
+        ]
+      },
+      "then": {
+        "properties": {
+          "iterations": {
+            "const": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "optimizer": {
+            "const": "Relocate2D"
+          }
+        },
+        "required": [
+          "optimizer"
+        ]
+      },
+      "then": {
+        "properties": {
+          "iterations": {
+            "const": 1
+          }
+        }
+      }
+    }
+  ]
+}

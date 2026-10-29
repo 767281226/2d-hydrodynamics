@@ -140,16 +140,19 @@ def create_synthetic_domain_mesh_case(
     derived_domain_exterior: bool = False,
     maximum_faces: int = 500_000,
     minimum_face_quality: float = 0.1,
+    mesh_algorithm_plan: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any], Path, dict[str, Any]]:
     """Create a fresh experiment tree. Inputs contain only small synthetic vectors."""
     root = Path(project_root).resolve()
     _install_namespace_package(root)
     from hydrodynamics.domain_mesh_only import (
         DOMAIN_MESH_ONLY_FORMAT, DOMAIN_MESH_ONLY_VERSION,
+        DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION,
         DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION, DOMAIN_SOURCE_MANIFEST_FORMAT, DOMAIN_SOURCE_MANIFEST_VERSION,
         RESOURCE_LIMITS as MESH_ONLY_RESOURCE_LIMITS,
         validate_domain_mesh_only_config_shape, validate_source_manifest_shape,
     )
+    from hydrodynamics.mesh_algorithm_plan import validate_mesh_algorithm_plan_shape
     from hydrodynamics.restricted_worker import _stat_identity
     from hydrodynamics.b1_synthetic_pilot import _gmsh_runtime_identity
 
@@ -263,7 +266,9 @@ def create_synthetic_domain_mesh_case(
     manifest_bytes = _write_json(manifest_path, source_manifest)
     gmsh_identity = _gmsh_runtime_identity()
     config = {
-        "format": DOMAIN_MESH_ONLY_FORMAT, "schema_version": DOMAIN_MESH_ONLY_VERSION,
+        "format": DOMAIN_MESH_ONLY_FORMAT,
+        "schema_version": (DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION
+                           if mesh_algorithm_plan is not None else DOMAIN_MESH_ONLY_VERSION),
         "run_id": run_id, "output_root": (experiment_path / "output").relative_to(root).as_posix(),
         "resources": dict(MESH_ONLY_RESOURCE_LIMITS),
         "source_manifest": {
@@ -280,6 +285,8 @@ def create_synthetic_domain_mesh_case(
         "expected_gmsh_version": gmsh_identity["python_binding_version"],
         "expected_gmsh_library_sha256": gmsh_identity["native_library_sha256"],
     }
+    if mesh_algorithm_plan is not None:
+        config["mesh_algorithm_plan"] = validate_mesh_algorithm_plan_shape(mesh_algorithm_plan)
     validate_domain_mesh_only_config_shape(config)
     config_path = experiment_path / "configs" / f"{run_id}.json"
     _write_json(config_path, config)
@@ -302,14 +309,27 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--experiment-dir", required=True)
+    parser.add_argument("--algorithm-plan", help="Project-relative v1 algorithm plan; selects mesh-only config schema 1.1")
     parser.add_argument("--derived-domain-exterior", action="store_true",
                         help="use schema 1.1 and derive a geometry-only D exterior inside the worker Job")
     args = parser.parse_args(argv)
     root = args.project_root.resolve()
     _install_namespace_package(root)
+    algorithm_plan = None
+    if args.algorithm_plan is not None:
+        plan_path = Path(args.algorithm_plan)
+        if (plan_path.is_absolute() or PureWindowsPath(args.algorithm_plan).is_absolute()
+                or PureWindowsPath(args.algorithm_plan).drive or ".." in plan_path.parts):
+            raise ValueError("--algorithm-plan must be a project-relative path without parent traversal")
+        plan_file = (root / plan_path).resolve()
+        if (not plan_file.is_relative_to(root) or plan_file.is_symlink() or not plan_file.is_file()
+                or plan_file.stat().st_size > 64 * 1024):
+            raise ValueError("--algorithm-plan must be a bounded regular project file")
+        from hydrodynamics.mesh_algorithm_plan import validate_mesh_algorithm_plan_shape
+        algorithm_plan = validate_mesh_algorithm_plan_shape(json.loads(plan_file.read_text(encoding="utf-8")))
     config_path, _config, _manifest_path, _manifest = create_synthetic_domain_mesh_case(
         root, args.experiment_dir, derived_domain_exterior=args.derived_domain_exterior,
-        include_constraint=not args.derived_domain_exterior)
+        include_constraint=not args.derived_domain_exterior, mesh_algorithm_plan=algorithm_plan)
     completed = dispatch_restricted_worker_cli(config_path, root)
     if completed.stdout:
         sys.stdout.write(completed.stdout)

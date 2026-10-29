@@ -1,0 +1,11 @@
+{
+  "format": "triangle-mesh-algorithm-plan-v1",
+  "schema_version": "1.0",
+  "algorithm_2d": 6,
+  "smoothing": 1,
+  "algorithm_switch_on_failure": 0,
+  "optimizer": "none",
+  "iterations": 0,
+  "force": false,
+  "entity_scope": "active_surface"
+}

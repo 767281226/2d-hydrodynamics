@@ -1664,8 +1664,26 @@ def _quality_failure_diagnostic_reference(
             QUALITY_FAILURE_DIAGNOSTIC_FORMAT,
             QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES,
             QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH,
+            QUALITY_FAILURE_DIAGNOSTIC_V2_FORMAT,
+            QUALITY_FAILURE_DIAGNOSTIC_V2_RELATIVE_PATH,
         )
-        relative_path = QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH
+        choices = {
+            QUALITY_FAILURE_DIAGNOSTIC_FORMAT: QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH,
+            QUALITY_FAILURE_DIAGNOSTIC_V2_FORMAT: QUALITY_FAILURE_DIAGNOSTIC_V2_RELATIVE_PATH,
+        }
+        if candidate is None:
+            present = [relative for relative in choices.values() if (stage / relative).exists()]
+            if len(present) > 1:
+                raise ValueError("multiple quality diagnostic versions exist in one attempt")
+            if not present:
+                return None, None
+            relative_path = present[0]
+        else:
+            if not isinstance(candidate, dict) or candidate.get("format") not in choices:
+                raise ValueError("worker diagnostic reference has an unsupported format")
+            relative_path = choices[candidate["format"]]
+        expected_format = next(format_name for format_name, relative in choices.items()
+                               if relative == relative_path)
         path = stage / relative_path
         if not path.exists():
             if candidate is not None:
@@ -1683,15 +1701,63 @@ def _quality_failure_diagnostic_reference(
         if candidate is not None and (
             not isinstance(candidate, dict)
             or candidate.get("path") != relative_path
-            or candidate.get("format") != QUALITY_FAILURE_DIAGNOSTIC_FORMAT
+            or candidate.get("format") != expected_format
             or candidate.get("sha256") != digest
             or candidate.get("bytes") != size
             or candidate.get("diagnostic_only") is not True
         ):
             raise ValueError("worker quality diagnostic reference differs from the committed file")
         diagnostic = json.loads(payload.decode("utf-8"))
+        diagnostic_format = diagnostic.get("format") if isinstance(diagnostic, dict) else None
+        if diagnostic_format == QUALITY_FAILURE_DIAGNOSTIC_V2_FORMAT:
+            node_provenance = diagnostic.get("sampled_node_provenance")
+            if not isinstance(node_provenance, dict):
+                raise ValueError("v2 quality diagnostic is missing sampled Gmsh node provenance")
+            nodes = node_provenance.get("nodes")
+            if (node_provenance.get("mesh_sha256") != primary.get("mesh_sha256")
+                    or node_provenance.get("route_code_sha256") != primary.get("route_code_sha256")
+                    or node_provenance.get("node_classification_source") != "gmsh.model.mesh.getNode before gmsh.finalize"
+                    or node_provenance.get("node_limit") != 48
+                    or type(node_provenance.get("selected_node_count")) is not int
+                    or not isinstance(nodes, list) or not 3 <= len(nodes) <= 48
+                    or node_provenance["selected_node_count"] != len(nodes)):
+                raise ValueError("v2 sampled node provenance does not bind the mesh/code or bounded contract")
+            nodes_by_index: dict[int, dict[str, Any]] = {}
+            node_tag_pattern = r"[1-9][0-9]{0,18}"
+            for node in nodes:
+                if not isinstance(node, dict):
+                    raise ValueError("v2 sampled node must be an object")
+                index = node.get("mesh_node_index_zero_based")
+                tag = node.get("gmsh_node_tag_decimal")
+                xyz = node.get("xyz_m")
+                dim = node.get("entity_dim")
+                entity_tag = node.get("entity_tag_decimal")
+                if (type(index) is not int or not 0 <= index < int(primary["node_count"])
+                        or not isinstance(tag, str) or re.fullmatch(node_tag_pattern, tag) is None
+                        or not isinstance(xyz, list) or len(xyz) != 3
+                        or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                               or not math.isfinite(float(value)) for value in xyz)
+                        or type(dim) is not int or dim not in (0, 1, 2)
+                        or not isinstance(entity_tag, str) or re.fullmatch(node_tag_pattern, entity_tag) is None
+                        or index in nodes_by_index):
+                    raise ValueError("v2 sampled node has invalid index/tag/XYZ/entity classification")
+                nodes_by_index[index] = node
+            if len({node["gmsh_node_tag_decimal"] for node in nodes}) != len(nodes):
+                raise ValueError("v2 sampled Gmsh node tags are not unique")
+            worst = diagnostic.get("worst_face_selection", {}).get("faces")
+            if not isinstance(worst, list) or not 1 <= len(worst) <= 16:
+                raise ValueError("v2 diagnostic has an invalid bounded worst-face selection")
+            for face in worst:
+                indices = face.get("node_indices_zero_based")
+                tags = face.get("gmsh_node_tags_decimal")
+                if (not isinstance(indices, list) or len(indices) != 3
+                        or not isinstance(tags, list) or len(tags) != 3
+                        or any(type(index) is not int or index not in nodes_by_index for index in indices)
+                        or tags != [nodes_by_index[index]["gmsh_node_tag_decimal"] for index in indices]):
+                    raise ValueError("v2 worst-face tags do not resolve to the exact sampled Gmsh node records")
         if (not isinstance(diagnostic, dict)
-                or diagnostic.get("format") != QUALITY_FAILURE_DIAGNOSTIC_FORMAT
+                or diagnostic.get("format") not in choices
+                or diagnostic.get("format") != (candidate or {}).get("format", diagnostic_format)
                 or diagnostic.get("diagnostic_only") is not True
                 or diagnostic.get("mesh_ready") is not False
                 or diagnostic.get("ready") is not False
@@ -1713,7 +1779,7 @@ def _quality_failure_diagnostic_reference(
             raise ValueError("quality diagnostic does not bind its primary failure/config/source/code/mesh identity")
         return {
             "path": relative_path,
-            "format": QUALITY_FAILURE_DIAGNOSTIC_FORMAT,
+            "format": diagnostic["format"],
             "sha256": digest,
             "bytes": size,
             "diagnostic_only": True,

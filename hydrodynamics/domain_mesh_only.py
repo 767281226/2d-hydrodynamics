@@ -24,6 +24,7 @@ from typing import Any, Mapping, Sequence
 
 DOMAIN_MESH_ONLY_FORMAT = "triangle-domain-mesh-only-config-v1"
 DOMAIN_MESH_ONLY_VERSION = "1.0"
+DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION = "1.1"
 DOMAIN_MESH_ONLY_ROUTE = "triangle-domain-mesh-only-generate-v1"
 DOMAIN_SOURCE_MANIFEST_FORMAT = "triangle-domain-mesh-source-manifest-v1"
 DOMAIN_SOURCE_MANIFEST_VERSION = "1.0"
@@ -49,6 +50,9 @@ QUALITY_FAILURE_PRIMARY_FORMAT = "triangle-mesh-quality-failure-primary-v1"
 QUALITY_FAILURE_DIAGNOSTIC_FORMAT = "triangle-mesh-quality-failure-diagnostic-v1"
 QUALITY_FAILURE_DIAGNOSTIC_SCHEMA_VERSION = "1.0"
 QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH = "diagnostics/domain-mesh-quality-failure.json"
+QUALITY_FAILURE_DIAGNOSTIC_V2_FORMAT = "triangle-mesh-quality-failure-diagnostic-v2"
+QUALITY_FAILURE_DIAGNOSTIC_V2_SCHEMA_VERSION = "2.0"
+QUALITY_FAILURE_DIAGNOSTIC_V2_RELATIVE_PATH = "diagnostics/domain-mesh-quality-failure-v2.json"
 QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES = 64 * 1024
 QUALITY_FAILURE_DIAGNOSTIC_TOP_K = 16
 QUALITY_FAILURE_HISTOGRAM_BIN_COUNT = 1024
@@ -272,13 +276,23 @@ def validate_domain_mesh_only_config_shape(config: Any) -> dict[str, Any]:
     """Strict input gate for the separate D−S generate-only route."""
     if not isinstance(config, dict):
         raise ValueError("domain mesh-only config root must be an object")
-    fields = {"format", "schema_version", "run_id", "output_root", "resources",
-              "source_manifest", "target_coordinate_system", "mesh_generation",
-              "expected_gmsh_version", "expected_gmsh_library_sha256"}
+    base_fields = {"format", "schema_version", "run_id", "output_root", "resources",
+                   "source_manifest", "target_coordinate_system", "mesh_generation",
+                   "expected_gmsh_version", "expected_gmsh_library_sha256"}
+    schema_version = config.get("schema_version")
+    if schema_version == DOMAIN_MESH_ONLY_VERSION:
+        fields = base_fields
+    elif schema_version == DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION:
+        fields = base_fields | {"mesh_algorithm_plan"}
+    else:
+        raise ValueError("unsupported domain mesh-only config schema_version")
     if set(config) != fields:
         raise ValueError("domain mesh-only config fields differ from its frozen contract")
-    if config["format"] != DOMAIN_MESH_ONLY_FORMAT or config["schema_version"] != DOMAIN_MESH_ONLY_VERSION:
+    if config["format"] != DOMAIN_MESH_ONLY_FORMAT:
         raise ValueError("unsupported domain mesh-only config format/version")
+    if schema_version == DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION:
+        from .mesh_algorithm_plan import validate_mesh_algorithm_plan_shape
+        validate_mesh_algorithm_plan_shape(config["mesh_algorithm_plan"])
     if (not isinstance(config["run_id"], str)
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", config["run_id"]) is None):
         raise ValueError("run_id must be a 1–64 character safe identifier")
@@ -1300,6 +1314,33 @@ def _canonical_json_bytes(value: Any) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
 
 
+def _persist_mesh_algorithm_execution_receipt(
+    stage: Path,
+    receipt: Mapping[str, Any],
+    *,
+    scratch_budget_bytes: int,
+) -> dict[str, Any]:
+    payload = _canonical_json_bytes(dict(receipt))
+    if len(payload) > MAX_OUTPUT_RECEIPT_BYTES:
+        raise DomainMeshOnlyError(
+            f"MESH_ALGORITHM_EXECUTION_RECEIPT_CAP: receipt exceeds {MAX_OUTPUT_RECEIPT_BYTES} bytes"
+        )
+    from .restricted_worker import _write_no_clobber_bytes
+
+    relative = "scratch/mesh-algorithm-execution.json"
+    path = stage / relative
+    _write_no_clobber_bytes(
+        path, payload, output_budget=scratch_budget_bytes,
+        root=stage / "scratch", reserve_bytes=4096,
+    )
+    return {
+        "path": relative,
+        "format": str(receipt.get("format", "gmsh-mesh-algorithm-plan-execution-v1")),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+
 def _canonical_domain_exterior_sha256(points: Sequence[tuple[float, float]]) -> str:
     point_count = len(points)
     if not 4 <= point_count <= MAX_DERIVED_LINE_POINTS:
@@ -1989,6 +2030,8 @@ def _build_quality_failure_diagnostic(
     mesh: Any,
     quality: Mapping[str, Any],
     primary: Mapping[str, Any],
+    *,
+    node_provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a bounded failure report from the in-Job mesh without full sorting/copying."""
     face_quality = mesh.face_quality
@@ -2087,6 +2130,84 @@ def _build_quality_failure_diagnostic(
             "constraint_group_names": sorted(groups_by_row[row]["constraint"]),
         })
 
+    diagnostic_format = QUALITY_FAILURE_DIAGNOSTIC_FORMAT
+    diagnostic_schema_version = QUALITY_FAILURE_DIAGNOSTIC_SCHEMA_VERSION
+    if node_provenance is not None:
+        nodes = node_provenance.get("nodes")
+        faces = node_provenance.get("faces")
+        if (not isinstance(nodes, list) or not isinstance(faces, list)
+                or node_provenance.get("node_limit") != 48
+                or node_provenance.get("selected_node_count") != len(nodes)
+                or node_provenance.get("selected_face_limit") != 16
+                or node_provenance.get("selected_face_count") != len(faces)
+                or len(nodes) > 48 or len(faces) != len(worst_faces)
+                or node_provenance.get("node_classification_source") != "gmsh.model.mesh.getNode before gmsh.finalize"):
+            raise _QualityFailureDiagnosticError(
+                "QUALITY_DIAGNOSTIC_GMSH_NODE_PROVENANCE_INVALID",
+                "bounded Gmsh node classification does not match the top-face selection",
+            )
+        nodes_by_index = {
+            int(item["mesh_node_index_zero_based"]): item for item in nodes
+            if isinstance(item, Mapping) and isinstance(item.get("mesh_node_index_zero_based"), int)
+        }
+        if len(nodes_by_index) != len(nodes):
+            raise _QualityFailureDiagnosticError(
+                "QUALITY_DIAGNOSTIC_GMSH_NODE_PROVENANCE_INVALID",
+                "sampled Gmsh node indices must be unique",
+            )
+        node_tags_by_index: dict[int, str] = {}
+        for index, item in nodes_by_index.items():
+            tag = item.get("gmsh_node_tag_decimal")
+            xyz = item.get("xyz_m")
+            entity_dim = item.get("entity_dim")
+            entity_tag = item.get("entity_tag_decimal")
+            if (not isinstance(tag, str) or re.fullmatch(r"[1-9][0-9]{0,18}", tag) is None
+                    or not isinstance(xyz, list) or len(xyz) != 3
+                    or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                           or not math.isfinite(float(value)) for value in xyz)
+                    or type(entity_dim) is not int or entity_dim not in (0, 1, 2)
+                    or not isinstance(entity_tag, str)
+                    or re.fullmatch(r"[1-9][0-9]{0,18}", entity_tag) is None):
+                raise _QualityFailureDiagnosticError(
+                    "QUALITY_DIAGNOSTIC_GMSH_NODE_PROVENANCE_INVALID",
+                    "sampled Gmsh node has malformed tag, coordinate, or entity classification",
+                )
+            node_tags_by_index[index] = tag
+        if len(set(node_tags_by_index.values())) != len(node_tags_by_index):
+            raise _QualityFailureDiagnosticError(
+                "QUALITY_DIAGNOSTIC_GMSH_NODE_PROVENANCE_INVALID",
+                "sampled Gmsh node tags must be unique",
+            )
+        faces_by_row = {
+            int(item["face_row_zero_based"]): item for item in faces
+            if isinstance(item, Mapping) and isinstance(item.get("face_row_zero_based"), int)
+        }
+        if len(faces_by_row) != len(faces):
+            raise _QualityFailureDiagnosticError(
+                "QUALITY_DIAGNOSTIC_GMSH_NODE_PROVENANCE_INVALID",
+                "sampled Gmsh face rows must be unique",
+            )
+        for face in worst_faces:
+            sampled = faces_by_row.get(face["face_row_zero_based"])
+            if sampled is None or sampled.get("face_id_decimal") != face["face_id_decimal"]:
+                raise _QualityFailureDiagnosticError(
+                    "QUALITY_DIAGNOSTIC_GMSH_NODE_PROVENANCE_INVALID",
+                    "sampled Gmsh face identity differs from the trusted quality selection",
+                )
+            expected_indices = face["node_indices_zero_based"]
+            indices = sampled.get("mesh_node_indices_zero_based")
+            tags = sampled.get("gmsh_node_tags_decimal")
+            if (indices != expected_indices or not isinstance(tags, list) or len(tags) != 3
+                    or any(index not in nodes_by_index for index in expected_indices)
+                    or tags != [node_tags_by_index[index] for index in expected_indices]):
+                raise _QualityFailureDiagnosticError(
+                    "QUALITY_DIAGNOSTIC_GMSH_NODE_PROVENANCE_INVALID",
+                    "sampled Gmsh node references do not cover a selected face",
+                )
+            face["gmsh_node_tags_decimal"] = tags
+        diagnostic_format = QUALITY_FAILURE_DIAGNOSTIC_V2_FORMAT
+        diagnostic_schema_version = QUALITY_FAILURE_DIAGNOSTIC_V2_SCHEMA_VERSION
+
     quantile_intervals = _quality_failure_quantile_intervals(
         histogram,
         face_count=face_count,
@@ -2094,9 +2215,9 @@ def _build_quality_failure_diagnostic(
         minimum_quality=minimum_quality,
         maximum_quality=maximum_quality,
     )
-    return {
-        "format": QUALITY_FAILURE_DIAGNOSTIC_FORMAT,
-        "schema_version": QUALITY_FAILURE_DIAGNOSTIC_SCHEMA_VERSION,
+    diagnostic = {
+        "format": diagnostic_format,
+        "schema_version": diagnostic_schema_version,
         "diagnostic_only": True,
         "preparation_only": True,
         "mesh_ready": False,
@@ -2161,6 +2282,16 @@ def _build_quality_failure_diagnostic(
             "faces": worst_faces,
         },
     }
+    if node_provenance is not None:
+        diagnostic["sampled_node_provenance"] = {
+            "mesh_sha256": primary["mesh_sha256"],
+            "route_code_sha256": primary["route_code_sha256"],
+            "node_classification_source": node_provenance["node_classification_source"],
+            "node_limit": 48,
+            "selected_node_count": len(node_provenance["nodes"]),
+            "nodes": [dict(item) for item in node_provenance["nodes"]],
+        }
+    return diagnostic
 
 
 def _quality_failure_error_record(exc: Exception, *, phase: str) -> dict[str, str]:
@@ -2224,7 +2355,10 @@ def _persist_quality_failure_diagnostic(
                 "DIAGNOSTIC_BYTE_CAP_EXCEEDED",
                 f"quality failure diagnostic is {len(payload)} bytes; cap is {QUALITY_FAILURE_DIAGNOSTIC_MAX_BYTES}",
             )
-        relative_path = QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH
+        if diagnostic.get("format") == QUALITY_FAILURE_DIAGNOSTIC_V2_FORMAT:
+            relative_path = QUALITY_FAILURE_DIAGNOSTIC_V2_RELATIVE_PATH
+        else:
+            relative_path = QUALITY_FAILURE_DIAGNOSTIC_RELATIVE_PATH
         path = stage / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         from .restricted_worker import _write_no_clobber_bytes
@@ -2238,7 +2372,7 @@ def _persist_quality_failure_diagnostic(
         )
         return {
             "path": relative_path,
-            "format": QUALITY_FAILURE_DIAGNOSTIC_FORMAT,
+            "format": diagnostic["format"],
             "sha256": hashlib.sha256(payload).hexdigest(),
             "bytes": len(payload),
             "diagnostic_only": True,
@@ -2279,12 +2413,42 @@ def run_domain_mesh_only_worker(control: Mapping[str, Any], config: dict[str, An
             or gmsh_identity_before["native_library_sha256"] != config["expected_gmsh_library_sha256"]):
         from .restricted_worker import SourceIdentityError
         raise SourceIdentityError("Gmsh binding/DLL differs from the trusted mesh-only config")
+    stage=Path(control["attempt_root"]); scratch=stage/"scratch"; artifacts=stage/"artifacts"
+    resources=config["resources"]
+    mesh_algorithm_plan=config.get("mesh_algorithm_plan")
+    generation_receipt: dict[str, Any] | None = {} if mesh_algorithm_plan is not None else None
     started=time.perf_counter()
-    mesh=mesh_generation.generate_gmsh_mesh(
-        context.gmsh_config,coordinate_system=config["target_coordinate_system"],
-        geometry_tolerance_m=float(settings["geometry_tolerance_m"]),
-        minimum_face_area_m2=float(settings["minimum_face_area_m2"]),
-    )
+    try:
+        mesh=mesh_generation.generate_gmsh_mesh(
+            context.gmsh_config,coordinate_system=config["target_coordinate_system"],
+            geometry_tolerance_m=float(settings["geometry_tolerance_m"]),
+            minimum_face_area_m2=float(settings["minimum_face_area_m2"]),
+            mesh_algorithm_plan=mesh_algorithm_plan,
+            generation_receipt=generation_receipt,
+        )
+    except Exception as exc:
+        if generation_receipt is not None:
+            generation_receipt.update({
+                "attempt_id": str(config["run_id"]),
+                "config_sha256": str(control["config_sha256"]),
+                "source_manifest_sha256": context.manifest_sha256,
+                "route_code_sha256": _quality_failure_code_identity_sha256(control["code_hashes"]),
+                "gmsh_identity": dict(gmsh_identity_before),
+                "generation_error": {"type": type(exc).__name__, "message": str(exc)[:512]},
+            })
+            try:
+                _persist_mesh_algorithm_execution_receipt(
+                    stage, generation_receipt,
+                    scratch_budget_bytes=int(resources["scratch_budget_bytes"]),
+                )
+            except Exception as receipt_exc:
+                raise DomainMeshOnlyError(
+                    f"{exc}; mesh algorithm execution receipt also failed: {type(receipt_exc).__name__}: {receipt_exc}"
+                ) from exc
+        from .mesh_preparation import MeshPreparationError
+        if isinstance(exc, MeshPreparationError):
+            raise DomainMeshOnlyError(str(exc)) from exc
+        raise
     gmsh_seconds=time.perf_counter()-started
     gmsh_identity_after = _gmsh_runtime_identity()
     if any(gmsh_identity_after[key] != gmsh_identity_before[key] for key in (
@@ -2292,17 +2456,37 @@ def run_domain_mesh_only_worker(control: Mapping[str, Any], config: dict[str, An
         from .restricted_worker import SourceIdentityError
         raise SourceIdentityError("Gmsh binding/DLL identity changed during mesh generation")
     gmsh_identity=_seal_gmsh_worker_identity(gmsh_identity_after)
-    stage=Path(control["attempt_root"]); scratch=stage/"scratch"; artifacts=stage/"artifacts"
-    resources=config["resources"]
     mesh_payload=_mesh_payload(mesh,full=True)
     mesh_payload["format"]=DOMAIN_MESH_ARTIFACT_FORMAT
     mesh_payload["mesh_only"]=True
     mesh_bytes=_canonical_json_bytes(mesh_payload); mesh_sha=hashlib.sha256(mesh_bytes).hexdigest()
+    algorithm_execution_reference = None
+    if generation_receipt is not None:
+        generation_receipt.update({
+            "attempt_id": str(config["run_id"]),
+            "config_sha256": str(control["config_sha256"]),
+            "source_manifest_sha256": context.manifest_sha256,
+            "route_code_sha256": _quality_failure_code_identity_sha256(control["code_hashes"]),
+            "gmsh_identity": dict(gmsh_identity),
+            "gmsh_generation_seconds": gmsh_seconds,
+            "mesh_identity": {
+                "mesh_id": str(mesh.mesh_id), "mesh_sha256": mesh_sha,
+                "canonical_mesh_bytes": len(mesh_bytes),
+                "node_count": mesh.n_node, "face_count": mesh.n_face,
+            },
+        })
+        algorithm_execution_reference = _persist_mesh_algorithm_execution_receipt(
+            stage, generation_receipt,
+            scratch_budget_bytes=int(resources["scratch_budget_bytes"]),
+        )
     from .restricted_worker import _write_no_clobber_bytes
+    generated_record={"format":"triangle-domain-mesh-only-generated-v1","worker_pid":os.getpid(),
+                      "process_in_job":True,"gmsh_native_library_loaded":gmsh_identity["native_library_loaded_in_worker"],
+                      "mesh_sha256":mesh_sha,"node_count":mesh.n_node,"face_count":mesh.n_face}
+    if algorithm_execution_reference is not None:
+        generated_record["mesh_algorithm_execution"] = algorithm_execution_reference
     _write_no_clobber_bytes(scratch/"domain-mesh-generated.json",
-        _canonical_json_bytes({"format":"triangle-domain-mesh-only-generated-v1","worker_pid":os.getpid(),
-                               "process_in_job":True,"gmsh_native_library_loaded":gmsh_identity["native_library_loaded_in_worker"],
-                               "mesh_sha256":mesh_sha,"node_count":mesh.n_node,"face_count":mesh.n_face}),
+        _canonical_json_bytes(generated_record),
         output_budget=resources["scratch_budget_bytes"],root=scratch)
     if mesh.n_node>settings["maximum_nodes"] or mesh.n_face>settings["maximum_faces"]:
         raise DomainMeshOnlyError(f"generated mesh exceeds configured cap: {mesh.n_node} nodes/{mesh.n_face} faces")
@@ -2328,7 +2512,10 @@ def run_domain_mesh_only_worker(control: Mapping[str, Any], config: dict[str, An
             diagnostic_errors.append(pending_error)
         diagnostic_reference: dict[str, Any] | None = None
         try:
-            diagnostic = _build_quality_failure_diagnostic(mesh, quality, quality_failure)
+            diagnostic = _build_quality_failure_diagnostic(
+                mesh, quality, quality_failure,
+                node_provenance=(generation_receipt or {}).get("quality_node_provenance"),
+            )
             diagnostic_reference, diagnostic_error = _persist_quality_failure_diagnostic(
                 stage, diagnostic,
                 output_budget_bytes=int(resources["output_budget_bytes"]),
@@ -2398,6 +2585,8 @@ def run_domain_mesh_only_worker(control: Mapping[str, Any], config: dict[str, An
         "source_components_before":list(context.components_before),"source_components_after":list(context.components_after),
         "source_manifest_stat_identity":dict(context.manifest_stat),
         "output_bytes_written":mesh_file["bytes"]+audit_file["bytes"],
+        **({"mesh_algorithm_execution": dict(generation_receipt)}
+           if generation_receipt is not None else {}),
     }
 
 

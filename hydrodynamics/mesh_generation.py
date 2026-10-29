@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import heapq
+import json
 import os
 import platform
 from importlib import metadata, util
 from pathlib import Path
 import shutil
-from typing import Sequence
+from typing import Any, Mapping, MutableMapping, Sequence
 
 from .mesh_preparation import GmshMeshConfig, MeshPreparationError
 from .triangular_mesh import TriangularMesh
@@ -242,12 +245,154 @@ def _gmsh_native_library_path() -> Path | None:
     return None
 
 
+_MAX_ALGORITHM_PLAN_BOUNDARY_NODES = 500_000
+
+
+def _gmsh_fixed_boundary_snapshot(
+    gmsh: Any,
+    boundary_curve_by_name: dict[str, list[int]],
+    constraint_curve_by_name: dict[str, list[int]],
+) -> dict[str, Any]:
+    """Hash all model 0D/1D identities while the Gmsh model is still alive."""
+    entities_0 = sorted((int(dim), int(tag)) for dim, tag in gmsh.model.getEntities(0))
+    entities_1 = sorted((int(dim), int(tag)) for dim, tag in gmsh.model.getEntities(1))
+    entity_pairs = [*entities_0, *entities_1]
+    node_tags: set[int] = set()
+    for dim, tag in entity_pairs:
+        raw_tags, _coords, _params = gmsh.model.mesh.getNodes(dim, tag, dim == 1, False)
+        node_tags.update(int(value) for value in raw_tags)
+        if len(node_tags) > _MAX_ALGORITHM_PLAN_BOUNDARY_NODES:
+            raise MeshPreparationError(
+                f"mesh algorithm plan fixed-boundary node snapshot exceeds {_MAX_ALGORITHM_PLAN_BOUNDARY_NODES} nodes"
+            )
+
+    node_records: list[list[Any]] = []
+    for node_tag in sorted(node_tags):
+        coords, _params, entity_dim, entity_tag = gmsh.model.mesh.getNode(node_tag)
+        xyz = tuple(float(value) for value in coords)
+        if len(xyz) != 3 or any(not math.isfinite(value) for value in xyz):
+            raise MeshPreparationError("mesh algorithm plan found a non-finite or non-XYZ fixed-boundary node")
+        node_records.append([
+            str(node_tag), [value.hex() for value in xyz], int(entity_dim), int(entity_tag),
+        ])
+
+    element_records: list[list[Any]] = []
+    for dim, entity_tag in entity_pairs:
+        element_types, element_tag_arrays, element_node_arrays = gmsh.model.mesh.getElements(dim, entity_tag)
+        for element_type, tags, flat_nodes in zip(element_types, element_tag_arrays, element_node_arrays):
+            props = gmsh.model.mesh.getElementProperties(int(element_type))
+            node_count = int(props[3])
+            if node_count < 1 or len(flat_nodes) != len(tags) * node_count:
+                raise MeshPreparationError("mesh algorithm plan found malformed fixed-boundary element connectivity")
+            for offset, element_tag in enumerate(tags):
+                start = offset * node_count
+                connectivity = [str(int(value)) for value in flat_nodes[start:start + node_count]]
+                element_records.append([
+                    dim, entity_tag, int(element_type), str(int(element_tag)), connectivity,
+                ])
+    element_records.sort(key=lambda row: (row[0], row[1], row[2], int(row[3])))
+
+    physical_groups = []
+    for dim, tag in sorted((int(d), int(t)) for d, t in gmsh.model.getPhysicalGroups()):
+        physical_groups.append([
+            dim, tag, str(gmsh.model.getPhysicalName(dim, tag)),
+            sorted(int(value) for value in gmsh.model.getEntitiesForPhysicalGroup(dim, tag)),
+        ])
+    logical_groups = {
+        "boundary": [[name, [int(tag) for tag in curves]]
+                     for name, curves in sorted(boundary_curve_by_name.items())],
+        "constraint": [[name, [int(tag) for tag in curves]]
+                       for name, curves in sorted(constraint_curve_by_name.items())],
+    }
+    canonical = {
+        "format": "gmsh-fixed-0d-1d-boundary-snapshot-v1",
+        "entities_0d": [[dim, tag] for dim, tag in entities_0],
+        "entities_1d": [[dim, tag] for dim, tag in entities_1],
+        "nodes": node_records,
+        "elements": element_records,
+        "physical_groups": physical_groups,
+        "logical_groups": logical_groups,
+    }
+    payload = json.dumps(canonical, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return {
+        "sha256": hashlib.sha256((payload + "\n").encode("ascii")).hexdigest(),
+        "node_count": len(node_records),
+        "element_count_0d_1d": len(element_records),
+        "entity_count_0d": len(entities_0),
+        "entity_count_1d": len(entities_1),
+        "physical_group_count": len(physical_groups),
+        "logical_boundary_group_count": len(logical_groups["boundary"]),
+        "logical_constraint_group_count": len(logical_groups["constraint"]),
+    }
+
+
+def _fixed_boundary_snapshot_unchanged(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
+    """Require the exact 0D/1D node, line-element and group identity to remain unchanged."""
+    fields = (
+        "sha256", "node_count", "element_count_0d_1d", "entity_count_0d", "entity_count_1d",
+        "physical_group_count", "logical_boundary_group_count", "logical_constraint_group_count",
+    )
+    return all(before.get(field) == after.get(field) for field in fields)
+
+
+def _top_face_node_provenance(gmsh: Any, mesh: TriangularMesh, node_tags: Sequence[int]) -> dict[str, Any]:
+    """Capture the exact Gmsh tag, XYZ and entity classification for at most 48 nodes."""
+    if len(node_tags) != mesh.n_node:
+        raise MeshPreparationError("Gmsh node tag count differs from the generated triangular mesh")
+    worst_heap: list[tuple[float, int, int, int]] = []
+    for row, raw_quality in enumerate(mesh.face_quality):
+        entry = (-float(raw_quality), -int(mesh.face_id[row]), -row, row)
+        if len(worst_heap) < 16:
+            heapq.heappush(worst_heap, entry)
+        elif entry > worst_heap[0]:
+            heapq.heapreplace(worst_heap, entry)
+    rows = sorted((item[3] for item in worst_heap),
+                  key=lambda row: (float(mesh.face_quality[row]), int(mesh.face_id[row]), row))
+    sampled_indices = sorted({int(index) for row in rows for index in mesh.face_nodes[row]})
+    if len(sampled_indices) > 48:
+        raise MeshPreparationError("mesh algorithm plan quality-node sample exceeds 48 nodes")
+    nodes: list[dict[str, Any]] = []
+    for mesh_index in sampled_indices:
+        gmsh_tag = int(node_tags[mesh_index])
+        coords, _params, entity_dim, entity_tag = gmsh.model.mesh.getNode(gmsh_tag)
+        xyz = [float(value) for value in coords]
+        if (len(xyz) != 3 or any(not math.isfinite(value) for value in xyz)
+                or xyz[0] != float(mesh.node_xy[mesh_index][0])
+                or xyz[1] != float(mesh.node_xy[mesh_index][1])):
+            raise MeshPreparationError("Gmsh classified node coordinates differ from the extracted mesh nodes")
+        nodes.append({
+            "mesh_node_index_zero_based": mesh_index,
+            "gmsh_node_tag_decimal": str(gmsh_tag),
+            "xyz_m": xyz,
+            "entity_dim": int(entity_dim),
+            "entity_tag_decimal": str(int(entity_tag)),
+        })
+    node_tags_by_index = {row["mesh_node_index_zero_based"]: row["gmsh_node_tag_decimal"] for row in nodes}
+    faces = [{
+        "face_row_zero_based": row,
+        "face_id_decimal": str(int(mesh.face_id[row])),
+        "mesh_node_indices_zero_based": [int(value) for value in mesh.face_nodes[row]],
+        "gmsh_node_tags_decimal": [node_tags_by_index[int(value)] for value in mesh.face_nodes[row]],
+    } for row in rows]
+    return {
+        "node_classification_source": "gmsh.model.mesh.getNode before gmsh.finalize",
+        "node_limit": 48,
+        "selected_node_count": len(nodes),
+        "selected_face_limit": 16,
+        "selected_face_count": len(faces),
+        "nodes": nodes,
+        "faces": faces,
+    }
+
+
 def generate_gmsh_mesh(
     config: GmshMeshConfig,
     *,
     coordinate_system: str,
     geometry_tolerance_m: float = 1e-8,
     minimum_face_area_m2: float = 1e-12,
+    mesh_algorithm_plan: Mapping[str, Any] | None = None,
+    generation_receipt: MutableMapping[str, Any] | None = None,
 ) -> TriangularMesh:
     """Generate a constrained triangle mesh; raises a clear error if Gmsh is absent."""
     if isinstance(geometry_tolerance_m, bool) or not isinstance(geometry_tolerance_m, (int, float)) or not math.isfinite(geometry_tolerance_m) or not 0.0 < geometry_tolerance_m <= 1.0:
@@ -257,6 +402,27 @@ def generate_gmsh_mesh(
     if config.minimum_size_m <= geometry_tolerance_m or any(not config.minimum_size_m <= point.size_m <= config.default_size_m for point in config.refinement_points):
         raise MeshPreparationError("Gmsh refinement sizes must be between minimum_size_m and default_size_m, and above geometry_tolerance_m")
     _validate_geometry(config, geometry_tolerance_m=geometry_tolerance_m, minimum_face_area_m2=minimum_face_area_m2)
+    plan: dict[str, Any] | None = None
+    plan_digest: str | None = None
+    if mesh_algorithm_plan is not None:
+        if generation_receipt is None:
+            raise MeshPreparationError("mesh_algorithm_plan requires a generation_receipt sink")
+        from .mesh_algorithm_plan import mesh_algorithm_plan_sha256, validate_mesh_algorithm_plan_shape
+        try:
+            plan = validate_mesh_algorithm_plan_shape(dict(mesh_algorithm_plan))
+            plan_digest = mesh_algorithm_plan_sha256(plan)
+        except (TypeError, ValueError) as exc:
+            raise MeshPreparationError(f"invalid mesh_algorithm_plan: {exc}") from exc
+        generation_receipt.clear()
+        generation_receipt.update({
+            "format": "gmsh-mesh-algorithm-plan-execution-v1",
+            "plan": dict(plan),
+            "plan_sha256": plan_digest,
+            "sdk_binding_version": metadata.version("gmsh"),
+            "mesh_generation_entered": False,
+            "optimizer_call": None,
+            "fixed_boundary_guard": None,
+        })
     from .mesh_preparation import _validate_projected_metric_crs
     _validate_projected_metric_crs(coordinate_system)
     if util.find_spec("gmsh") is None:
@@ -294,6 +460,30 @@ def generate_gmsh_mesh(
         gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
         gmsh.option.setNumber("Mesh.ElementOrder", 1)
         gmsh.option.setNumber("Mesh.RecombineAll", 0)
+        plan_option_names = (
+            "General.Terminal", "General.NumThreads", "Mesh.MeshSizeMin", "Mesh.MeshSizeMax",
+            "Mesh.MeshSizeFromPoints", "Mesh.MeshSizeExtendFromBoundary", "Mesh.MeshSizeFromCurvature",
+            "Mesh.ElementOrder", "Mesh.RecombineAll",
+        )
+        if plan is not None:
+            gmsh.option.setNumber("Mesh.Algorithm", plan["algorithm_2d"])
+            gmsh.option.setNumber("Mesh.Smoothing", plan["smoothing"])
+            gmsh.option.setNumber("Mesh.AlgorithmSwitchOnFailure", plan["algorithm_switch_on_failure"])
+            plan_option_names += (
+                "Mesh.Algorithm", "Mesh.Smoothing", "Mesh.AlgorithmSwitchOnFailure",
+            )
+            generation_receipt["sdk_options_before_generate"] = {
+                name: float(gmsh.option.getNumber(name)) for name in plan_option_names
+            }
+            generation_receipt["mesh_generation_entered"] = True
+            generation_receipt["optimizer_call"] = {
+                "method": plan["optimizer"],
+                "force": plan["force"],
+                "iterations": plan["iterations"],
+                "entity_scope": plan["entity_scope"],
+                "dim_tags": None,
+                "status": "not_requested" if plan["optimizer"] == "none" else "pending",
+            }
         gmsh.model.add("triangular_mesh_preparation")
 
         point_tags: dict[tuple[float, float], int] = {}
@@ -379,6 +569,45 @@ def generate_gmsh_mesh(
             gmsh.model.mesh.field.setAsBackgroundMesh(minimum)
 
         gmsh.model.mesh.generate(2)
+        if plan is not None:
+            generation_receipt["active_surface_dim_tag"] = [2, int(surface)]
+            generation_receipt["sdk_options_after_generate"] = {
+                name: float(gmsh.option.getNumber(name)) for name in plan_option_names
+            }
+            generation_receipt["fixed_boundary_before_optimizer"] = _gmsh_fixed_boundary_snapshot(
+                gmsh, boundary_curve_by_name, constraint_curve_by_name,
+            )
+            if plan["optimizer"] == "Relocate2D":
+                dim_tags = [(2, int(surface))]
+                generation_receipt["optimizer_call"]["dim_tags"] = [[2, int(surface)]]
+                try:
+                    gmsh.model.mesh.optimize(
+                        "Relocate2D", force=False, niter=1, dimTags=dim_tags,
+                    )
+                except Exception as exc:
+                    generation_receipt["optimizer_call"]["status"] = "failed"
+                    generation_receipt["optimizer_call"]["error"] = f"{type(exc).__name__}: {exc}"[:512]
+                    raise MeshPreparationError(
+                        f"GMSH_ALGORITHM_PLAN_OPTIMIZER_FAILED: Relocate2D failed without fallback: {exc}"
+                    ) from exc
+                generation_receipt["optimizer_call"]["status"] = "completed"
+            generation_receipt["sdk_options_after_optimizer"] = {
+                name: float(gmsh.option.getNumber(name)) for name in plan_option_names
+            }
+            generation_receipt["fixed_boundary_after_optimizer"] = _gmsh_fixed_boundary_snapshot(
+                gmsh, boundary_curve_by_name, constraint_curve_by_name,
+            )
+            before_boundary = generation_receipt["fixed_boundary_before_optimizer"]
+            after_boundary = generation_receipt["fixed_boundary_after_optimizer"]
+            unchanged = _fixed_boundary_snapshot_unchanged(before_boundary, after_boundary)
+            generation_receipt["fixed_boundary_guard"] = {
+                "status": "passed" if unchanged else "rejected",
+                "exact_identity_preserved": unchanged,
+            }
+            if not unchanged:
+                raise MeshPreparationError(
+                    "GMSH_ALGORITHM_PLAN_BOUNDARY_CHANGED: optimizer altered fixed 0D/1D node, element, or group identity"
+                )
         node_tags, xyz, _ = gmsh.model.mesh.getNodes()
         if len(node_tags) > config.maximum_nodes:
             raise MeshPreparationError(f"Gmsh generated {len(node_tags)} nodes, exceeding maximum_nodes={config.maximum_nodes}")
@@ -427,7 +656,13 @@ def generate_gmsh_mesh(
             raise MeshPreparationError(f"Gmsh did not preserve boundary groups: {', '.join(sorted(missing_boundary))}")
         if missing_constraints:
             raise MeshPreparationError(f"Gmsh did not preserve constraint groups: {', '.join(sorted(missing_constraints))}")
-        return TriangularMesh(nodes, tuple(raw_faces), coordinate_system, boundary_groups=boundary_groups, constraint_groups=constraint_groups, geometry_tolerance_m=geometry_tolerance_m, minimum_face_area_m2=minimum_face_area_m2)
+        mesh = TriangularMesh(nodes, tuple(raw_faces), coordinate_system,
+                              boundary_groups=boundary_groups, constraint_groups=constraint_groups,
+                              geometry_tolerance_m=geometry_tolerance_m,
+                              minimum_face_area_m2=minimum_face_area_m2)
+        if plan is not None:
+            generation_receipt["quality_node_provenance"] = _top_face_node_provenance(gmsh, mesh, node_tags)
+        return mesh
     except MeshPreparationError:
         raise
     except Exception as exc:
