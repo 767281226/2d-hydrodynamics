@@ -165,7 +165,7 @@ def test_viewer_server_binds_ports_exclusively():
 
 def test_m1_schemas_examples_and_domain_selection_are_synchronized():
     example_dir=ROOT/"examples/native_triangle_shp"
-    native_schema=json.loads((example_dir/"native_web_manifest.schema.json").read_text(encoding="utf-8"))
+    native_schema=json.loads((example_dir/"native_web_manifest_v1_0_1.schema.json").read_text(encoding="utf-8"))
     grid_schema=json.loads((example_dir/"compatibility_grid.schema.json").read_text(encoding="utf-8"))
     nc_schema=json.loads((example_dir/"nc2web_v1_manifest.schema.json").read_text(encoding="utf-8"))
     step_schema=json.loads((example_dir/"stepjson_v1_schema.json").read_text(encoding="utf-8"))
@@ -177,6 +177,10 @@ def test_m1_schemas_examples_and_domain_selection_are_synchronized():
     step=json.loads((example_dir/"stepjson_v1_frame.example.json").read_text(encoding="utf-8"))
     bundle=json.loads((example_dir/"m1_output_bundle.example.json").read_text(encoding="utf-8"))
     assert native_schema["properties"]["format"]["const"]==native["format"]=="native-triangle-web"
+    assert native_schema["$id"]=="native-triangle-web-manifest-v1.0.1"
+    assert native_schema["properties"]["version"]["const"]==native["version"]=="1.0"
+    assert "data_origin" not in native_schema["required"]
+    assert native_schema["properties"]["data_origin"]["enum"]==["SYNTHETIC_SMALL_NATIVE_FIXTURE"]
     assert set(native_schema["required"]).issubset(native)
     assert grid_schema["properties"]["format"]["const"]==grid["format"]=="hydrodynamics-legacy-grid-compatibility-v1"
     assert set(grid_schema["required"]).issubset(grid)

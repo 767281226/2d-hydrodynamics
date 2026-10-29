@@ -17,6 +17,12 @@ hydrodynamics-triangle-shp validate --request examples/native_triangle_shp/expor
 
 受控 selector 有两种。`FRAME` 要求 `frame_index` 和 `time_s` 与原生保存时间轴逐项严格一致。`MAX_OVER_WINDOW` 的窗口端点必须是原生保存时刻，端点均计入，不插值；每面并列最大值取最早原生时刻。范围可以是 `FULL_DOMAIN` 或 `MAXIMUM_WET_SURFACE`；后者按选定深度严格执行 `depth > wet_depth_threshold_m`（有限非负，默认0 m）。选择结果为空时仍写出有效的零 feature Polygon 图层。
 
+## Native-web manifest schema / native-web manifest schema
+
+Native-web wire `version` 保持 `1.0`。当前 JSON Schema 修订为 1.0.1，路径为 [`native_web_manifest_v1_0_1.schema.json`](../../examples/native_triangle_shp/native_web_manifest_v1_0_1.schema.json)，`$id` 为 `native-triangle-web-manifest-v1.0.1`。旧的 [`native_web_manifest.schema.json`](../../examples/native_triangle_shp/native_web_manifest.schema.json) 保留原 v1 身份，供历史消费者使用。
+
+`data_origin` 对旧版 v1 manifest 保持可选。出现时只允许 `SYNTHETIC_SMALL_NATIVE_FIXTURE`，并要求 `qa_fixture=true`、`live_solver_ran=false`、`status=qa_fixture_ready`。缺失表示未声明；schema 不设置默认值，也不推断为 live 或 production。
+
 每个 feature 的几何直接来自原生 `face_nodes` 中的三个节点；不转换矩形、不重网格、不拆分、不合并、不重采样。`face_id` 在 DBF 中以精确十进制文本保存，避免超过 `2**53` 时浮点身份损失。`FRAME` 字段是 `time_s`、`depth_m`、`water_lvl`、`ux_m_s`、`uy_m_s` 和 `area_m2`；`MAX_OVER_WINDOW` 字段是 `max_depth`、`max_time` 和 `area_m2`。版本化 manifest 保存字段语义和单位。水位要求当前 P3-A 垂直基准；速度分量由原生动量除以水深计算，仍采用原始投影 CRS 轴方向。
 
 默认输出原生投影 CRS；可选 `EPSG:4490` 仅转换导出的坐标。`area_m2` 始终取自 P4 原生 `face_area`，并与源投影 CRS 中的三角形面积核对；不会将经纬度面积当作平方米。manifest 记录 request/config/P2/P3-A/result 摘要、case/mesh/topology/terrain 身份、selector/时间轴、CRS、垂直基准、原生 face ID 集合摘要和组件 SHA256/字节数。P4-1 不含平台 attempt/script ID，manifest 会准确声明其缺失，不伪造身份。所有产物固定为 `experimental=true`、`engineering_validated=false`、`production_approved=false`、`can_publish=false`。

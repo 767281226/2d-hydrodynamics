@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "native-triangle-web-manifest-v1.0.1",
+  "title": "Native triangle web manifest schema 1.0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "status",
+    "run_id",
+    "qa_fixture",
+    "live_solver_ran",
+    "topology",
+    "source_profile",
+    "source_native_result_sha256",
+    "coordinate_system",
+    "vertical_datum",
+    "time_origin",
+    "times_s",
+    "dry_depth_threshold_m",
+    "node_count",
+    "face_count",
+    "face_id_sha256",
+    "mesh_file",
+    "variables",
+    "extrema",
+    "frames",
+    "database_status",
+    "social_economy_status"
+  ],
+  "properties": {
+    "format": {
+      "const": "native-triangle-web"
+    },
+    "version": {
+      "const": "1.0"
+    },
+    "status": {
+      "enum": [
+        "ready",
+        "qa_fixture_ready"
+      ]
+    },
+    "data_origin": {
+      "type": "string",
+      "enum": [
+        "SYNTHETIC_SMALL_NATIVE_FIXTURE"
+      ],
+      "description": "Optional legacy-compatible declaration. Absence means undeclared; it does not imply live or production data."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "qa_fixture": {
+      "type": "boolean"
+    },
+    "live_solver_ran": {
+      "type": "boolean"
+    },
+    "topology": {
+      "const": "native_triangular_mesh"
+    },
+    "source_profile": {
+      "const": "authoritative_native_faces"
+    },
+    "source_native_result_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_native_result_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "source_request_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_graph": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/sha256"
+      }
+    },
+    "coordinate_system": {
+      "type": "string",
+      "minLength": 1
+    },
+    "vertical_datum": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "time_origin": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "times_s": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "number"
+      }
+    },
+    "dry_depth_threshold_m": {
+      "type": "number",
+      "minimum": 0
+    },
+    "node_count": {
+      "type": "integer",
+      "minimum": 3
+    },
+    "face_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "face_ids_encoding": {
+      "const": "decimal ASCII strings, fixed 32-byte records; never parsed as JavaScript Number"
+    },
+    "face_id_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "mesh_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "sha256",
+        "bytes",
+        "layout"
+      ],
+      "properties": {
+        "name": {
+          "const": "mesh.bin"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "layout": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "variables": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "dtype",
+          "units",
+          "availability"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "dtype": {
+            "const": "float64-le"
+          },
+          "units": {
+            "type": "string"
+          },
+          "availability": {
+            "enum": [
+              "available",
+              "not_available_datum_unspecified"
+            ]
+          }
+        }
+      }
+    },
+    "extrema": {
+      "type": "object"
+    },
+    "frame_magic": {
+      "const": "NTW3F01\n"
+    },
+    "frame_header": {
+      "type": "string"
+    },
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "time_s",
+          "file",
+          "sha256",
+          "bytes"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "time_s": {
+            "type": "number"
+          },
+          "file": {
+            "type": "string",
+            "pattern": "^frame_[0-9]{6}\\.bin$"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "wet_area_rule": {
+      "type": "string"
+    },
+    "security_exclusion": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "database_status": {
+      "const": "DISABLED_NOT_REQUESTED"
+    },
+    "social_economy_status": {
+      "const": "NOT_READ_NOT_REQUESTED"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "data_origin"
+        ]
+      },
+      "then": {
+        "properties": {
+          "qa_fixture": {
+            "const": true
+          },
+          "live_solver_ran": {
+            "const": false
+          },
+          "status": {
+            "const": "qa_fixture_ready"
+          }
+        }
+      }
+    }
+  ]
+}
