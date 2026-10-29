@@ -30,3 +30,4 @@ examples/security_exclusion/*.geojson text eol=lf
 tests/acceptance/source_fixture.py text eol=lf
 tests/acceptance/test_native_source_shp_independent.py text eol=lf
 tests/acceptance/native_batch/*.py text eol=lf
+examples/native_triangle_shp/native_web_manifest_v1_0_1.schema.json -text
