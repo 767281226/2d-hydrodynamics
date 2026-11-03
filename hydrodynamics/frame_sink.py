@@ -39,6 +39,14 @@ unlimited ``time`` dimension in a NETCDF4 UGRID file and the running
 saved-frame maxima/arrival are updated in place. The file is written as
 ``<name>.partial`` and atomically linked to its final name only on a
 successful ``close``. No solver equations live here.
+
+Resume: ``sink.reopen(mesh, metadata)`` (instead of ``open``) reopens an
+existing ``<name>.partial`` -- or the ``<name>.failed`` left by ``abort`` --
+in append mode, checks that mesh, metadata and profile are identical, and
+returns the number of frames already present (the ``frames_written`` global
+attribute, updated after every complete frame). The caller then continues with
+``write_frame(frames_present, ...)``; earlier frames are never rewritten. The
+saved-frame maxima are rebuilt from the stored float64 depth/momentum fields.
 """
 from __future__ import annotations
 
@@ -396,6 +404,105 @@ class NativeUgridNetcdfSink:
         ds["wet_area"].long_name = "sum(face_area where water_depth > dry_depth_threshold_m)"
         self._level_var = None
 
+    # ---------------------------------------------------------------- reopen
+    def reopen(self, mesh: Any, metadata: Any) -> int:
+        """Reopen ``<name>.partial`` (or ``<name>.failed``) for appending; return the frames already present.
+
+        Mesh, metadata and profile must be identical to the original ``open``
+        call. The frames counted by the ``frames_written`` attribute are kept
+        verbatim; a trailing incomplete frame (crash between the array writes
+        and the counter update) is overwritten by the next ``write_frame``.
+        """
+        if self._state != "new":
+            raise FrameSinkError("sink.reopen may be called once, instead of open")
+        meta = parse_metadata(metadata)
+        mesh_value = SinkMesh.coerce(mesh, max_faces=self.profile.max_face_count, max_nodes=self.profile.max_node_count)
+        if self.path.exists():
+            raise FrameSinkError(f"native result is already complete; nothing to resume: {self.path}")
+        failed = self.path.with_name(self.path.name + ".failed")
+        if not self.partial.exists():
+            if not failed.exists():
+                raise FrameSinkError(f"no partial native result to resume: {self.partial}")
+            os.replace(failed, self.partial)
+        try:
+            import netCDF4
+        except ImportError as exc:
+            raise FrameSinkError("large-run sink requires netCDF4") from exc
+        try:
+            ds = netCDF4.Dataset(str(self.partial), "a", format="NETCDF4")
+        except OSError as exc:
+            raise FrameSinkError(f"cannot reopen partial native result {self.partial}: {exc}") from exc
+        try:
+            ds.set_auto_mask(False)
+            if getattr(ds, "format", None) != NATIVE_LARGE_FORMAT or getattr(ds, "result_schema_version", None) != NATIVE_LARGE_VERSION:
+                raise FrameSinkError("partial file is not a native-triangle-ugrid-large-result v1.0 file")
+            previous_status = str(getattr(ds, "status", "UNKNOWN"))
+            if previous_status == "COMPLETE":
+                raise FrameSinkError("partial file is already COMPLETE; refusing to append")
+            if json.loads(ds.run_metadata_json) != meta.model_dump(mode="json"):
+                raise FrameSinkError("resume metadata differs from the metadata stored in the partial native result")
+            if json.loads(ds.output_profile_json) != self.profile.model_dump(mode="json"):
+                raise FrameSinkError("resume output profile differs from the profile stored in the partial native result")
+            n = mesh_value.n_face
+            if (len(ds.dimensions["face"]) != n or len(ds.dimensions["node"]) != mesh_value.n_node
+                    or not np.array_equal(np.asarray(ds["face_id"][:], dtype=np.int64), mesh_value.face_id)
+                    or not np.array_equal(np.asarray(ds["face_nodes"][:], dtype=np.int64), mesh_value.face_nodes)
+                    or not np.array_equal(np.asarray(ds["node_x"][:]), mesh_value.node_xy_m[:, 0])
+                    or not np.array_equal(np.asarray(ds["node_y"][:]), mesh_value.node_xy_m[:, 1])
+                    or not np.array_equal(np.asarray(ds["bed_elevation"][:]), mesh_value.bed_elevation_m)):
+                raise FrameSinkError("resume mesh differs from the mesh stored in the partial native result")
+            present = int(getattr(ds, "frames_written", 0))
+            on_disk = len(ds.dimensions["time"])
+            if present < 0 or present > on_disk:
+                raise FrameSinkError(f"partial native result counts {present} written frames but holds {on_disk}")
+            if meta.expected_times_s is not None and present > len(meta.expected_times_s):
+                raise FrameSinkError("partial native result holds more frames than expected_times_s")
+            threshold = float(meta.dry_depth_threshold_m)
+            self._max_h = np.full(n, -np.inf); self._max_h_t = np.full(n, np.nan)
+            self._max_speed = np.full(n, -np.inf); self._arrival = np.full(n, np.nan)
+            self._max_level = np.full(n, -np.inf)
+            has_level = "water_level" in ds.variables
+            last_time = -math.inf
+            for i in range(present):
+                t = float(ds["time"][i])
+                if not math.isfinite(t) or t <= last_time:
+                    raise FrameSinkError(f"partial native result frame {i} has a non-increasing time")
+                if meta.expected_times_s is not None and t != float(meta.expected_times_s[i]):
+                    raise FrameSinkError(f"partial native result frame {i} time {t} differs from expected_times_s")
+                h = np.asarray(ds["water_depth"][i, :], dtype=np.float64)
+                qx = np.asarray(ds["momentum_x"][i, :], dtype=np.float64); qy = np.asarray(ds["momentum_y"][i, :], dtype=np.float64)
+                if not (np.isfinite(h).all() and np.isfinite(qx).all() and np.isfinite(qy).all()) or np.any(h < 0):
+                    raise FrameSinkError(f"partial native result frame {i} holds non-finite or negative values")
+                wet = h > threshold
+                ux = np.zeros(n); uy = np.zeros(n)
+                np.divide(qx, h, out=ux, where=wet); np.divide(qy, h, out=uy, where=wet)
+                level = np.asarray(ds["water_level"][i, :], dtype=np.float64) if has_level else mesh_value.bed_elevation_m + h
+                better = h > self._max_h
+                self._max_h_t[better] = t; self._max_h[better] = h[better]
+                np.maximum(self._max_speed, np.hypot(ux, uy), out=self._max_speed)
+                np.maximum(self._max_level, level, out=self._max_level)
+                arrived = np.isnan(self._arrival) & wet
+                self._arrival[arrived] = t
+                last_time = t
+            self._ledger_keys = tuple(sorted(name[len("mass_budget_"):] for name in ds.variables if name.startswith("mass_budget_")))
+            self._level_var = ds["water_level"] if has_level else None
+            history = json.loads(getattr(ds, "resume_history_json", "[]"))
+            history.append({"frames_present": present, "frames_on_disk": on_disk, "previous_status": previous_status,
+                            "failure_reason": str(getattr(ds, "failure_reason", "")) or None})
+            ds.setncattr("resume_history_json", json.dumps(history, ensure_ascii=False, separators=(",", ":")))
+            ds.setncattr("status", "INCOMPLETE")
+            ds.setncattr("frames_written", np.int32(present))
+            ds.sync()
+        except BaseException:
+            ds.close()
+            raise
+        self._ds = ds
+        self.mesh, self.metadata = mesh_value, meta
+        self._next = present
+        self._last_time = last_time
+        self._state = "open"
+        return present
+
     # ----------------------------------------------------------- write_frame
     def write_frame(self, index: int, time_s: float, arrays: Mapping[str, Any], ledger: Mapping[str, float] | None = None) -> None:
         if self._state != "open":
@@ -493,6 +600,7 @@ class NativeUgridNetcdfSink:
         np.maximum(self._max_level, level_values, out=self._max_level)
         arrived = np.isnan(self._arrival) & wet
         self._arrival[arrived] = t
+        ds.setncattr("frames_written", np.int32(i + 1))
         ds.sync()
         self._next += 1
         self._last_time = t

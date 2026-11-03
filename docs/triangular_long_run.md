@@ -116,6 +116,10 @@ output times are aligned with the samples.
 
 ## Python API
 
+For a complete real case (mesh artifact + per-face terrain + assumed sections +
+discharge CSV, streamed into the large-run native sink and exported), use the
+glue driver `hydrodynamics.large_run_driver` (`docs/large_run_driver.md`).
+
 ```python
 from hydrodynamics.triangular_long_run import (
     TriangularLongRunInputs, TriangularLongRunOptions, OpenBoundaryGroupSpec,

@@ -218,10 +218,19 @@ class SparseCompatibilityGrid:
 
 
 def _flux_source(ledger_keys: tuple[str, ...], kind: str) -> str | None:
+    """Per-frame ledger key feeding the compatibility ``inflow``/``outflow`` columns.
+
+    Rate keys win over preceding-interval volume keys. The long-run solver
+    ledger names (``interval_inflow_volume_m3``, ``interval_outflow_delivered_volume_m3``)
+    are accepted as interval volumes.
+    """
     if f"{kind}_m3_s" in ledger_keys:
         return f"{kind}_m3_s"
     if f"{kind}_volume_m3" in ledger_keys:
         return f"{kind}_volume_m3"
+    long_run = f"interval_{kind}_volume_m3" if kind == "inflow" else "interval_outflow_delivered_volume_m3"
+    if long_run in ledger_keys:
+        return long_run
     return None
 
 

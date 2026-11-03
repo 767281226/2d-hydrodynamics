@@ -113,6 +113,9 @@ manifest 的 run_id、时间轴、帧列表与文件大小；兼容格 v2 identi
 每次只请求当前帧并预取下一帧（缓存 ≤2 帧、≤32 MiB），每帧载入时校验 SHA-256。大网格按颜色桶批量填充 Path2D，
 兼容格用 ImageData 绘制；侧栏显示 forcing 标签、范围、面数、帧数与时间起点；悬停显示精确 face_id。
 
+真实求解器接入（网格 artifact + 逐面地形 + 假定断面 + 流量 CSV → 本 sink → 导出/校验）与 `reopen` 续算见
+`docs/large_run_driver.md`（`python -m hydrodynamics.large_run_driver`）。
+
 ## 6. 测试
 
 - 仓库：`tests/test_large_run_output.py`（小网格、两种 forcing、拒绝路径、面积守恒、stepjson 格式一致、viewer 校验）。
