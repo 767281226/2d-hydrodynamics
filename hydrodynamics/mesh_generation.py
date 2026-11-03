@@ -393,6 +393,7 @@ def generate_gmsh_mesh(
     minimum_face_area_m2: float = 1e-12,
     mesh_algorithm_plan: Mapping[str, Any] | None = None,
     generation_receipt: MutableMapping[str, Any] | None = None,
+    boundary_adaptive_sizing: Mapping[str, Any] | None = None,
 ) -> TriangularMesh:
     """Generate a constrained triangle mesh; raises a clear error if Gmsh is absent."""
     if isinstance(geometry_tolerance_m, bool) or not isinstance(geometry_tolerance_m, (int, float)) or not math.isfinite(geometry_tolerance_m) or not 0.0 < geometry_tolerance_m <= 1.0:
@@ -423,6 +424,52 @@ def generate_gmsh_mesh(
             "optimizer_call": None,
             "fixed_boundary_guard": None,
         })
+    sizing: dict[str, Any] | None = None
+    local_sizes: dict[tuple[float, float], float] = {}
+    sizing_bins: dict[float, list[tuple[float, float]]] = {}
+    if boundary_adaptive_sizing is not None:
+        from .mesh_boundary_sizing import (
+            BIN_RULE, BOUNDARY_ADAPTIVE_SIZING_RECEIPT_FORMAT, LOCAL_SIZE_RULE,
+            boundary_local_sizes, size_bins, threshold_dist_max_m, validate_boundary_adaptive_sizing_shape,
+        )
+        try:
+            sizing = validate_boundary_adaptive_sizing_shape(dict(boundary_adaptive_sizing))
+        except (TypeError, ValueError) as exc:
+            raise MeshPreparationError(f"invalid boundary_adaptive_sizing: {exc}") from exc
+        sizing_receipt: dict[str, Any] = {
+            "format": BOUNDARY_ADAPTIVE_SIZING_RECEIPT_FORMAT,
+            "enabled": sizing["enabled"],
+            "grading_ratio": sizing["grading_ratio"],
+            "default_size_m": float(config.default_size_m),
+            "minimum_size_m": float(config.minimum_size_m),
+        }
+        if sizing["enabled"]:
+            local_sizes = boundary_local_sizes(
+                [config.outer_boundary, *config.holes],
+                [group.points for group in config.constraints],
+                default_size_m=float(config.default_size_m), minimum_size_m=float(config.minimum_size_m),
+            )
+            sizing_bins = size_bins(local_sizes, default_size_m=float(config.default_size_m),
+                                    minimum_size_m=float(config.minimum_size_m))
+            sizing_receipt.update({
+                "local_size_rule": LOCAL_SIZE_RULE,
+                "bin_rule": BIN_RULE,
+                "configured_vertex_count": len(local_sizes),
+                "refined_vertex_count": sum(len(points) for points in sizing_bins.values()),
+                "minimum_local_size_m": min(local_sizes.values()) if local_sizes else None,
+                "threshold_field_count": len(sizing_bins),
+                "bins": [{
+                    "bin_floor_m": bin_size,
+                    "size_min_m": min(local_sizes[point] for point in points),
+                    "vertex_count": len(points),
+                    "dist_min_m": 0.0,
+                    "dist_max_m": threshold_dist_max_m(
+                        min(local_sizes[point] for point in points),
+                        default_size_m=float(config.default_size_m), grading_ratio=sizing["grading_ratio"]),
+                } for bin_size, points in sizing_bins.items()],
+            })
+        if generation_receipt is not None:
+            generation_receipt["boundary_adaptive_sizing"] = sizing_receipt
     from .mesh_preparation import _validate_projected_metric_crs
     _validate_projected_metric_crs(coordinate_system)
     if util.find_spec("gmsh") is None:
@@ -490,7 +537,8 @@ def generate_gmsh_mesh(
         def point_tag(point: Sequence[float], size: float | None = None) -> int:
             key = (float(point[0]), float(point[1]))
             if key not in point_tags:
-                point_tags[key] = gmsh.model.geo.addPoint(key[0], key[1], 0.0, size or config.default_size_m)
+                point_tags[key] = gmsh.model.geo.addPoint(
+                    key[0], key[1], 0.0, size or local_sizes.get(key) or config.default_size_m)
             return point_tags[key]
 
         curve_tags: dict[tuple[tuple[float, float], tuple[float, float]], int] = {}
@@ -563,6 +611,22 @@ def generate_gmsh_mesh(
             gmsh.model.mesh.field.setNumber(threshold, "DistMin", 0.0)
             gmsh.model.mesh.field.setNumber(threshold, "DistMax", refinement.radius_m)
             fields.append(threshold)
+        if sizing_bins:
+            from .mesh_boundary_sizing import threshold_dist_max_m
+            for points in sizing_bins.values():
+                # Each bin's target is its smallest member size, so grading never goes below the
+                # shortest configured adjacent segment (clamped to minimum_size_m).
+                bin_size = min(local_sizes[point] for point in points)
+                distance = gmsh.model.mesh.field.add("Distance")
+                gmsh.model.mesh.field.setNumbers(distance, "PointsList", sorted(point_tags[point] for point in points))
+                threshold = gmsh.model.mesh.field.add("Threshold")
+                gmsh.model.mesh.field.setNumber(threshold, "InField", distance)
+                gmsh.model.mesh.field.setNumber(threshold, "SizeMin", bin_size)
+                gmsh.model.mesh.field.setNumber(threshold, "SizeMax", config.default_size_m)
+                gmsh.model.mesh.field.setNumber(threshold, "DistMin", 0.0)
+                gmsh.model.mesh.field.setNumber(threshold, "DistMax", threshold_dist_max_m(
+                    bin_size, default_size_m=float(config.default_size_m), grading_ratio=sizing["grading_ratio"]))
+                fields.append(threshold)
         if fields:
             minimum = gmsh.model.mesh.field.add("Min")
             gmsh.model.mesh.field.setNumbers(minimum, "FieldsList", fields)

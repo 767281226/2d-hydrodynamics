@@ -1,0 +1,22 @@
+# Opt-in large-run output profile (all values shown are the defaults).
+# The derived 50 m display grid is a legacy-compatibility view, not the computing mesh.
+format: hydrodynamics-large-run-output-profile
+schema_version: "1.0"
+max_face_count: 2000000
+max_node_count: 4000000
+max_frame_count: 10000
+native_nc_complevel: 4
+native_nc_face_chunk: 65536
+display_grid_cell_size_m: 50.0
+display_grid_anchor_x_m: 474150.0
+display_grid_anchor_y_m: 4299600.0
+max_display_grid_cells: 4000000
+compat_nc_complevel: 4
+native_web_value_dtype: float32
+stepjson_min_depth_m: 0.0
+stepjson_still_direction_deg: 180.0
+write_stepjson_native: true
+shp_wet_depth_threshold_m: null
+volume_check_rel_tol: 1.0e-06
+disk_safety_factor: 1.2
+disk_preflight: true

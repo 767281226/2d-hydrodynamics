@@ -613,22 +613,46 @@ def check_mesh_against_security(
         )
 
     expected_security_boundary = assessment.active_geometry.boundary.intersection(assessment.security_inside_geometry.boundary)
+    # Match wall edges per expected straight segment with point-segment distances.
+    # A nanometre buffer of a multi-segment line, and overlays of nearly
+    # coincident lines, collapse at large projected coordinates (GEOS 3.14 at
+    # ~4e6 m), which would reject every oblique real wall edge.  The distance to
+    # one straight segment is convex along an edge, so both endpoints within the
+    # tolerance of the same segment place the whole edge within it.
+    expected_segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    for line in _line_parts(expected_security_boundary):
+        coords = [(float(x), float(y)) for x, y, *_ in line.coords]
+        expected_segments.extend((coords[i], coords[i + 1]) for i in range(len(coords) - 1)
+                                 if coords[i] != coords[i + 1])
+    segment_tree = STRtree([LineString(segment) for segment in expected_segments]) if expected_segments else None
+    covered_length = [0.0] * len(expected_segments)
+
+    def _distance_to_segment(point: Sequence[float], start: Sequence[float], end: Sequence[float]) -> float:
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        length2 = dx * dx + dy * dy
+        t = 0.0 if length2 == 0.0 else max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length2))
+        return math.hypot(point[0] - (start[0] + t * dx), point[1] - (start[1] + t * dy))
+
     edge_indices: list[int] = []
-    edge_lines: list[Any] = []
     for edge_index, (left_face, right_face) in enumerate(mesh.edge_faces):
         if right_face != -1:
             continue
         node_a, node_b = mesh.edge_nodes[edge_index]
-        edge = LineString((mesh.node_xy[node_a], mesh.node_xy[node_b]))
-        if edge.length <= effective_tolerance_m:
+        point_a, point_b = mesh.node_xy[node_a], mesh.node_xy[node_b]
+        edge = LineString((point_a, point_b))
+        if edge.length <= effective_tolerance_m or segment_tree is None:
             continue
-        if edge.difference(expected_security_boundary.buffer(effective_tolerance_m)).length <= effective_tolerance_m:
-            if edge.intersection(expected_security_boundary.buffer(effective_tolerance_m)).length >= edge.length - effective_tolerance_m:
+        for segment_index in sorted(int(value) for value in segment_tree.query(edge, predicate="dwithin", distance=effective_tolerance_m * 2.0)):
+            start, end = expected_segments[segment_index]
+            if (_distance_to_segment(point_a, start, end) <= effective_tolerance_m
+                    and _distance_to_segment(point_b, start, end) <= effective_tolerance_m):
                 edge_indices.append(edge_index)
-                edge_lines.append(edge)
+                covered_length[segment_index] += float(edge.length)
+                break
     expected_length = math.fsum(float(line.length) for line in _line_parts(expected_security_boundary))
-    observed = unary_union(edge_lines) if edge_lines else LineString()
-    boundary_residual = float(observed.symmetric_difference(expected_security_boundary).length) if not observed.is_empty else expected_length
+    boundary_residual = math.fsum(
+        abs(math.dist(start, end) - covered) for (start, end), covered in zip(expected_segments, covered_length)
+    )
     length_tolerance = max(effective_tolerance_m * 10.0, expected_length * 1e-9)
     if boundary_residual > length_tolerance:
         raise SecurityExclusionError(

@@ -27,4 +27,11 @@ DEM 不直接进入 Solver。当前可选流程为 `GeoTIFFDEMReader → DEMMeta
 `TerrainMapper → TerrainField → Solver`；Solver 只接收与 V1.0 cell-centered 计算网格对应的
 `TerrainField`。垂直基准必须在运行前确认，`model.vertical_datum_required` 默认
 为 true，但当前不指定具体基准。详细字段和错误语义见
-[dem_data_contract.md](dem_data_contract.md)。
+[dem_data_contract.md](dem_data_contract.md)。初始条件字段的 depth/level 语义见 [initial_conditions.md](initial_conditions.md)。
+
+## 实验性三角网格长时段运行
+
+三角网格浅水格式（一阶 HLL、Audusse 静水重构、SSPRK2、闭边界反射）的大网格、长时段运行入口是
+`hydrodynamics.triangular_long_run`。它用向量化/可选 numba 内核，逐输出时刻把帧交给 sink
+而不保留在内存中，并支持检查点续算、点隐式 Manning 摩阻和按流量过程给定的入流/出流边界组。
+旧的 P4 运行入口保持原行为。选项契约和单位见 [triangular_long_run.md](triangular_long_run.md)。

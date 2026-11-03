@@ -88,6 +88,59 @@ def _legacy_workflow_bootstrap(root:Path,metadata:dict,report:dict,*,explicit:bo
         "viewer":{"default_profile":"compatibility_grid","profiles":{"compatibility_grid":"nc2web/manifest.json"}}}
 
 
+LARGE_BUNDLE_FORMAT="large-run-output-bundle-v1"
+_LARGE_HASHED_SUFFIXES=(".json",".html",".bin",".npz",".prj",".cpg")
+
+
+def _validate_large_bundle(root:Path,run:dict,*,explicit:bool)->tuple[Path,dict]:
+    """Large-run bundle: every listed file must exist with its size; metadata,
+    meshes and the coverage sidecar are SHA-256 checked here, per-frame files are
+    SHA-256 checked by the page on load (each manifest row carries its hash)."""
+    report=_strict_json(root/"run_report.json")
+    published=run.get("production_approved") is True and report.get("can_publish") is True and report.get("status")=="complete"
+    if not explicit and not published:
+        raise ViewerBundleError("large-run bundle is not production approved; open it with an explicit directory argument")
+    if report.get("complete") is not True or report.get("run_id")!=run.get("run_id"):
+        raise ViewerBundleError("large-run report is incomplete or belongs to another run")
+    if not isinstance(run.get("forcing_notice"),str) or not run["forcing_notice"].strip():
+        raise ViewerBundleError("large-run bundle must carry an explicit forcing label")
+    checks=_strict_json(root/"checksums.json",max_bytes=16*1024*1024)
+    rows=checks.get("files")
+    if not isinstance(rows,list) or checks.get("file_count")!=len(rows) or checks.get("run_id")!=run.get("run_id"):
+        raise ViewerBundleError("large-run checksums.json is incomplete or belongs to another run")
+    expected=set()
+    for row in rows:
+        if not isinstance(row,dict):raise ViewerBundleError("large-run checksums row is malformed")
+        path=_safe_child(root,row.get("path",""));rel=path.relative_to(root).as_posix();expected.add(rel)
+        if path.stat().st_size!=row.get("bytes"):raise ViewerBundleError(f"large-run artifact size differs: {rel}")
+        small_meta=path.suffix in _LARGE_HASHED_SUFFIXES and not path.name.startswith(("frame_","step_"))
+        if small_meta and _sha_file(path)!=row.get("sha256"):raise ViewerBundleError(f"large-run artifact hash differs: {rel}")
+    actual={path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file() and path.name!="checksums.json"}
+    if actual!=expected:raise ViewerBundleError("large-run bundle file list differs from checksums.json")
+    profiles=run.get("viewer",{}).get("profiles",{})
+    native_path=_safe_child(root,profiles.get("native_web",""))
+    manifest=_strict_json(native_path)
+    times=run.get("time_s")
+    if (manifest.get("format")!="native-triangle-web" or manifest.get("version")!="2.0" or manifest.get("run_id")!=run.get("run_id") or
+            manifest.get("face_count")!=run.get("native_result",{}).get("face_count") or not isinstance(times,list) or
+            manifest.get("times_s")!=times or len(manifest.get("frames",[]))!=len(times)):
+        raise ViewerBundleError("large-run native web manifest identity/version/frames differ from run.json")
+    for index,frame in enumerate(manifest["frames"]):
+        if frame.get("index")!=index or not str(frame.get("file","")).startswith("frame_") or not isinstance(frame.get("sha256"),str):
+            raise ViewerBundleError("large-run native web frame list is malformed")
+        if _safe_child(native_path.parent,frame["file"]).stat().st_size!=frame.get("bytes"):
+            raise ViewerBundleError("large-run native web frame size differs from manifest")
+    compat_path=_safe_child(root,profiles.get("compatibility_grid",""))
+    compat=_strict_json(compat_path)
+    grid=_strict_json(_safe_child(root,"compatibility_grid.json"))
+    if (compat.get("format")!="nc2web" or compat.get("version")!="1.0" or len(compat.get("frames",[]))!=len(times) or
+            grid.get("format")!="hydrodynamics-legacy-grid-compatibility-v2" or grid.get("run_id")!=run.get("run_id") or
+            grid.get("grid_id_digest")!=run.get("compatibility",{}).get("grid_id_digest") or
+            len(grid.get("nc2web_frame_files",[]))!=len(times)):
+        raise ViewerBundleError("large-run compatibility grid/nc2web identity is inconsistent")
+    return root,run
+
+
 def validate_bundle(root_value:str|Path,*,explicit:bool)->tuple[Path,dict]:
     root=Path(root_value).expanduser().resolve()
     if not root.is_dir() or root.is_symlink():raise ViewerBundleError(f"bundle directory is missing or symlinked: {root}")
@@ -97,6 +150,8 @@ def validate_bundle(root_value:str|Path,*,explicit:bool)->tuple[Path,dict]:
     if run_path.is_symlink():raise ViewerBundleError("run.json must not be a symlink")
     if run_path.is_file():
         run=_strict_json(run_path)
+        if run.get("format")==LARGE_BUNDLE_FORMAT:
+            return _validate_large_bundle(root,run,explicit=explicit)
         if any(key in run for key in ("id","script_id","out_dir","bundle_dir","engine_mode","grid_topology")):
             legacy_report=_strict_json(root/"run_report.json")
             run=_legacy_workflow_bootstrap(root,run,legacy_report,explicit=explicit)
@@ -281,6 +336,9 @@ def main(argv:list[str]|None=None)->int:
             root,run=validate_bundle(_latest_success(args.project_root),explicit=False)
         print(f"VIEWER_BUNDLE={root}",flush=True)
         if run.get("qa_fixture") is True:print("VIEWER_NOTICE=explicit QA fixture; not a production result and never selected as latest",flush=True)
+        if run.get("format")==LARGE_BUNDLE_FORMAT:
+            print(f"VIEWER_FORCING={run.get('forcing_notice')}",flush=True)
+            print(f"VIEWER_DATA_ORIGIN={run.get('data_origin')} production_approved={run.get('production_approved')}",flush=True)
         return serve(root,run_metadata=run,start_port=args.port,open_browser=not args.no_browser)
     except Exception as exc:
         print(f"[viewer error] {type(exc).__name__}: {exc}",file=sys.stderr,flush=True)

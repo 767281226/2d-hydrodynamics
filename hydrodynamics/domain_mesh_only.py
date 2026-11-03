@@ -25,6 +25,7 @@ from typing import Any, Mapping, Sequence
 DOMAIN_MESH_ONLY_FORMAT = "triangle-domain-mesh-only-config-v1"
 DOMAIN_MESH_ONLY_VERSION = "1.0"
 DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION = "1.1"
+DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION = "1.2"
 DOMAIN_MESH_ONLY_ROUTE = "triangle-domain-mesh-only-generate-v1"
 DOMAIN_SOURCE_MANIFEST_FORMAT = "triangle-domain-mesh-source-manifest-v1"
 DOMAIN_SOURCE_MANIFEST_VERSION = "1.0"
@@ -116,6 +117,11 @@ class _GeometryContext:
     security_assessment: Any
     gmsh_config: Any
     generation_settings: Mapping[str, Any]
+    # Source D/S assessment; identical to security_assessment unless boundary
+    # simplification is enabled, in which case security_assessment is the
+    # simplified (meshed) D-S used by every mesh coverage/exclusion check.
+    source_security_assessment: Any = None
+    boundary_simplification: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -282,7 +288,7 @@ def validate_domain_mesh_only_config_shape(config: Any) -> dict[str, Any]:
     schema_version = config.get("schema_version")
     if schema_version == DOMAIN_MESH_ONLY_VERSION:
         fields = base_fields
-    elif schema_version == DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION:
+    elif schema_version in (DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION, DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION):
         fields = base_fields | {"mesh_algorithm_plan"}
     else:
         raise ValueError("unsupported domain mesh-only config schema_version")
@@ -290,7 +296,7 @@ def validate_domain_mesh_only_config_shape(config: Any) -> dict[str, Any]:
         raise ValueError("domain mesh-only config fields differ from its frozen contract")
     if config["format"] != DOMAIN_MESH_ONLY_FORMAT:
         raise ValueError("unsupported domain mesh-only config format/version")
-    if schema_version == DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION:
+    if schema_version in (DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION, DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION):
         from .mesh_algorithm_plan import validate_mesh_algorithm_plan_shape
         validate_mesh_algorithm_plan_shape(config["mesh_algorithm_plan"])
     if (not isinstance(config["run_id"], str)
@@ -316,8 +322,20 @@ def validate_domain_mesh_only_config_shape(config: Any) -> dict[str, Any]:
     mesh_fields = {"maximum_faces", "maximum_nodes", "minimum_face_quality", "geometry_tolerance_m",
                    "minimum_face_area_m2", "default_size_m", "minimum_size_m",
                    "area_abs_tolerance_m2", "area_rel_tolerance"}
+    if schema_version == DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION:
+        mesh_fields = mesh_fields | {"boundary_adaptive_sizing", "boundary_simplification"}
     if not isinstance(mesh, dict) or set(mesh) != mesh_fields:
-        raise ValueError("mesh_generation fields differ from the frozen domain mesh-only contract")
+        raise ValueError("mesh_generation fields differ from the frozen domain mesh-only contract"
+                         + ("; schema 1.2 requires mesh_generation.boundary_adaptive_sizing and "
+                            "mesh_generation.boundary_simplification"
+                            if schema_version == DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION else ""))
+    if schema_version == DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION:
+        from .boundary_simplification import validate_boundary_simplification_shape
+        from .mesh_boundary_sizing import validate_boundary_adaptive_sizing_shape
+        validate_boundary_adaptive_sizing_shape(
+            mesh["boundary_adaptive_sizing"], label="mesh_generation.boundary_adaptive_sizing")
+        validate_boundary_simplification_shape(
+            mesh["boundary_simplification"], label="mesh_generation.boundary_simplification")
     if not _is_strict_int(mesh["maximum_faces"], 1, 500_000):
         raise ValueError("mesh_generation.maximum_faces must be an integer in [1, 500000]")
     if not _is_strict_int(mesh["maximum_nodes"], 3, 2_000_000):
@@ -340,6 +358,9 @@ def validate_domain_mesh_only_config_shape(config: Any) -> dict[str, Any]:
         raise ValueError("mesh_generation.area_abs_tolerance_m2 must be in [1e-12,1] m2")
     if not _is_finite_number(mesh["area_rel_tolerance"], 1e-12, 1e-3):
         raise ValueError("mesh_generation.area_rel_tolerance must be in [1e-12,1e-3]")
+    if (schema_version == DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION
+            and float(mesh["boundary_simplification"]["minimum_vertex_spacing_m"]) <= float(mesh["geometry_tolerance_m"])):
+        raise ValueError("mesh_generation.boundary_simplification.minimum_vertex_spacing_m must exceed geometry_tolerance_m")
     return config
 
 
@@ -1263,6 +1284,15 @@ def _load_geometry_context(config: Mapping[str, Any], project_root: str | Path, 
         raise DomainMeshOnlyError(
             f"UNSUPPORTED_MULTIPOLYGON_D_MINUS_S: current adapter requires one active Polygon; got {assessment.active_geometry.geom_type}"
         )
+    source_assessment=assessment
+    simplification_audit=None
+    simplification_settings=mesh_settings.get("boundary_simplification")
+    if simplification_settings is not None and simplification_settings["enabled"]:
+        base_config,assessment,simplification_audit=_simplified_geometry(
+            base_config,domain_geometry,security_geometry,security_load,mesh_settings,area_tolerance)
+    elif simplification_settings is not None:
+        simplification_audit={"enabled":False,
+                              "minimum_vertex_spacing_m":float(simplification_settings["minimum_vertex_spacing_m"])}
     try:
         gmsh_config=gmsh_config_for_active_domain(base_config,assessment,tolerance_m=float(mesh_settings["geometry_tolerance_m"]))
     except SecurityExclusionError as exc:
@@ -1286,7 +1316,63 @@ def _load_geometry_context(config: Mapping[str, Any], project_root: str | Path, 
         domain_load=loaded_areas["domain_D"],
         security_geometry=security_geometry,security_load=security_load,
         security_assessment=assessment,gmsh_config=gmsh_config,generation_settings=mesh_settings,
+        source_security_assessment=source_assessment,boundary_simplification=simplification_audit,
     )
+
+
+def _simplified_geometry(base_config: Any, domain_geometry: Any, security_geometry: Any, security_load: Any,
+                         mesh_settings: Mapping[str, Any], area_tolerance: float) -> tuple[Any, Any, dict[str, Any]]:
+    """Collapse short D/S edges and return the config/assessment that Gmsh and all mesh audits use."""
+    import dataclasses
+    from .boundary_simplification import BoundarySimplificationError, simplify_domain_and_security
+    from .mesh_preparation import GmshLineGroup, GmshMeshConfig
+    from .security_exclusion import SecurityExclusionError, assess_security_domain
+
+    ring_vertex_sets = [frozenset(base_config.outer_boundary), *(frozenset(ring) for ring in base_config.holes)]
+    whole_ring_groups = []
+    protected: list[tuple[float, float]] = []
+    for group in base_config.boundary_groups:
+        points = [tuple(map(float, point)) for point in group.points]
+        if group.closed and points[0] == points[-1]:
+            points = points[:-1]
+        if group.closed and len(set(points)) == len(points) and frozenset(points) in ring_vertex_sets:
+            whole_ring_groups.append(points)
+        else:
+            protected.extend(points)
+    for group in base_config.constraints:
+        protected.extend(tuple(map(float, point)) for point in group.points)
+    try:
+        result = simplify_domain_and_security(
+            domain_geometry, security_geometry,
+            minimum_vertex_spacing_m=float(mesh_settings["boundary_simplification"]["minimum_vertex_spacing_m"]),
+            geometry_tolerance_m=float(mesh_settings["geometry_tolerance_m"]),
+            area_tolerance_m2=area_tolerance, protected_points=protected, whole_ring_groups=whole_ring_groups,
+        )
+    except BoundarySimplificationError as exc:
+        raise DomainMeshOnlyError(f"BOUNDARY_SIMPLIFICATION_REJECTED: {exc}") from exc
+    kept = result.kept_source_points
+    groups = []
+    for group in base_config.boundary_groups:
+        points = [tuple(map(float, point)) for point in group.points]
+        closing = group.closed and points[0] == points[-1]
+        retained = [point for point in (points[:-1] if closing else points) if point in kept]
+        if closing:
+            retained.append(retained[0])
+        groups.append(GmshLineGroup(name=group.name, points=retained, closed=group.closed))
+    simplified_config = GmshMeshConfig.model_validate({
+        **base_config.model_dump(mode="python"),
+        "outer_boundary": list(result.exterior),
+        "holes": [list(ring) for ring in result.domain_holes],
+        "boundary_groups": groups,
+    })
+    try:
+        assessment = assess_security_domain(
+            result.domain_geometry, dataclasses.replace(security_load, source_union=result.security_geometry))
+    except (SecurityExclusionError, TypeError) as exc:
+        raise DomainMeshOnlyError(f"BOUNDARY_SIMPLIFICATION_REJECTED: simplified D-S assessment failed: {exc}") from exc
+    if assessment.security_outside_area_m2 > area_tolerance or assessment.active_geometry.geom_type != "Polygon":
+        raise DomainMeshOnlyError("BOUNDARY_SIMPLIFICATION_REJECTED: simplified S leaves D or D-S is not one Polygon")
+    return simplified_config, assessment, dict(result.audit)
 
 
 def _current_process_in_job() -> bool:
@@ -1769,6 +1855,10 @@ def _make_mesh_only_payload(mesh: Any) -> dict[str, Any]:
     return payload
 
 
+def _source_assessment(context: _GeometryContext) -> Any:
+    return context.source_security_assessment if context.source_security_assessment is not None else context.security_assessment
+
+
 def _source_audit_record(context: _GeometryContext, mesh: Any, config: Mapping[str, Any],
                          geometry_audit: Mapping[str, Any], security_audit: Mapping[str, Any],
                          gmsh_identity: Mapping[str, Any], code_hashes: Mapping[str, str],
@@ -1799,9 +1889,9 @@ def _source_audit_record(context: _GeometryContext, mesh: Any, config: Mapping[s
             "geometry_sha256": context.security_load.source_union_geometry_sha256,
             "source_geometry_sha256": context.security_load.source_geometry_sha256,
             "area_m2": float(context.security_geometry.area),
-            "active_inside_area_m2": context.security_assessment.security_inside_area_m2,
-            "outside_D_area_m2": context.security_assessment.security_outside_area_m2,
-            "active_D_minus_S_area_m2": context.security_assessment.active_domain_area_m2,
+            "active_inside_area_m2": _source_assessment(context).security_inside_area_m2,
+            "outside_D_area_m2": _source_assessment(context).security_outside_area_m2,
+            "active_D_minus_S_area_m2": _source_assessment(context).active_domain_area_m2,
             "supported_topology": "Polygon/MultiPolygon union when D−S remains one Polygon",
         },
         "boundary_and_constraint_components": [dict(x) for x in context.line_components],
@@ -1819,6 +1909,10 @@ def _source_audit_record(context: _GeometryContext, mesh: Any, config: Mapping[s
             "minimum_face_area_m2": min(mesh.face_area),
             "mesh_area_m2": math.fsum(float(x) for x in mesh.face_area),
         },
+        **({"boundary_adaptive_sizing": dict(config["mesh_generation"]["boundary_adaptive_sizing"])}
+           if "boundary_adaptive_sizing" in config["mesh_generation"] else {}),
+        **({"boundary_simplification": dict(context.boundary_simplification)}
+           if context.boundary_simplification is not None else {}),
         "gmsh": dict(gmsh_identity),
         "runtime_fingerprint": _runtime_dependency_fingerprint(gmsh_identity),
         "route_code_sha256": dict(code_hashes),
@@ -2425,6 +2519,8 @@ def run_domain_mesh_only_worker(control: Mapping[str, Any], config: dict[str, An
             minimum_face_area_m2=float(settings["minimum_face_area_m2"]),
             mesh_algorithm_plan=mesh_algorithm_plan,
             generation_receipt=generation_receipt,
+            **({"boundary_adaptive_sizing": settings["boundary_adaptive_sizing"]}
+               if "boundary_adaptive_sizing" in settings else {}),
         )
     except Exception as exc:
         if generation_receipt is not None:

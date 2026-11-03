@@ -29,6 +29,13 @@ from .triangular_solver_contract import (
     validate_triangular_run_request,
 )
 from .triangular_business import terrain_fingerprint, topology_fingerprint
+from .triangular_solver_kernels import (
+    EdgeGeometry,
+    edge_geometry_from_edges,
+    empty_manning_diagnostics,
+    manning_explicit,
+    rhs_numpy,
+)
 
 
 SOLVER_VERSION = "triangular-closed-wall-1.0.0"
@@ -95,6 +102,28 @@ class _Sanitized:
     detail: str | None = None
 
 
+class _EdgeSet(tuple):
+    """Tuple of :class:`_Edge` records that also carries vectorised edge arrays."""
+
+    geometry: EdgeGeometry
+
+
+_GEOMETRY_CACHE: list[tuple[Any, Any, EdgeGeometry]] = []
+
+
+def _edge_geometry(edges: Sequence[_Edge], mesh: TriangularMesh) -> EdgeGeometry:
+    """Return cached numpy edge/face arrays for ``edges`` on ``mesh``."""
+    geometry = getattr(edges, "geometry", None)
+    if isinstance(geometry, EdgeGeometry) and geometry.n_face == mesh.n_face and getattr(edges, "_mesh", None) is mesh:
+        return geometry
+    for cached_edges, cached_mesh, cached in _GEOMETRY_CACHE:
+        if cached_edges is edges and cached_mesh is mesh:
+            return cached
+    cached = edge_geometry_from_edges(edges, mesh.face_area)
+    _GEOMETRY_CACHE[:] = [(edges, mesh, cached)]
+    return cached
+
+
 def _edges(mesh: TriangularMesh) -> tuple[_Edge, ...]:
     """Return edges with normals oriented by geometry and stable face IDs."""
     answer: list[_Edge] = []
@@ -123,7 +152,10 @@ def _edges(mesh: TriangularMesh) -> tuple[_Edge, ...]:
         if nx * toward_x + ny * toward_y < 0.0:
             nx, ny = -nx, -ny
         answer.append(_Edge(edge_index, left, right, nx, ny, length))
-    return tuple(answer)
+    edge_set = _EdgeSet(answer)
+    edge_set.geometry = edge_geometry_from_edges(edge_set, mesh.face_area)
+    edge_set._mesh = mesh
+    return edge_set
 
 
 def _sanitize_stage(
@@ -143,9 +175,11 @@ def _sanitize_stage(
         return _Sanitized(state, 0.0, 0, "negative_depth", f"face_id {mesh.face_id[index]} reached h={depth[index]:.17g} m")
     tiny = np.flatnonzero(depth < 0.0)
     correction = 0.0
-    for index in tiny:
-        correction += -float(depth[index]) * float(mesh.face_area[index])
-        clean[index, 0] = 0.0
+    if tiny.size:
+        # Sequential face-order sum, exactly as the original scalar loop.
+        for value in (-depth[tiny] * _face_area_array(mesh)[tiny]).tolist():
+            correction += value
+        clean[tiny, 0] = 0.0
     count = int(tiny.size)
     dry = clean[:, 0] <= dry_depth_m
     clean[dry, 1:] = 0.0
@@ -198,89 +232,39 @@ def _rhs_and_cfl(
     cfl: float,
     dry_depth_m: float,
 ) -> tuple[np.ndarray, float, float]:
-    """Calculate one unique-edge residual and the frozen geometric CFL bound."""
-    derivative = np.zeros_like(state)
-    wave_sums = np.zeros(mesh.n_face, dtype=np.float64)
-    maximum_pair_residual = 0.0
-    for edge in edges:
-        li, ri = edge.left, edge.right
-        h_l = float(state[li, 0])
-        mx_l, my_l = float(state[li, 1]), float(state[li, 2])
-        u_l = mx_l / h_l if h_l > dry_depth_m else 0.0
-        v_l = my_l / h_l if h_l > dry_depth_m else 0.0
-        un_l = u_l * edge.nx + v_l * edge.ny
-        c_l = math.sqrt(gravity * max(h_l, 0.0))
-        if ri is None:
-            h_r = h_l
-            u_r = u_l - 2.0 * un_l * edge.nx
-            v_r = v_l - 2.0 * un_l * edge.ny
-            un_r = -un_l
-            c_r = c_l
-            z_r = float(bed_m[li])
-        else:
-            h_r = float(state[ri, 0])
-            mx_r, my_r = float(state[ri, 1]), float(state[ri, 2])
-            u_r = mx_r / h_r if h_r > dry_depth_m else 0.0
-            v_r = my_r / h_r if h_r > dry_depth_m else 0.0
-            un_r = u_r * edge.nx + v_r * edge.ny
-            c_r = math.sqrt(gravity * max(h_r, 0.0))
-            z_r = float(bed_m[ri])
-        a_edge = max(abs(un_l) + c_l, abs(un_r) + c_r)
-        wave_sums[li] += edge.length * a_edge
-        if ri is not None:
-            wave_sums[ri] += edge.length * a_edge
+    """Calculate one unique-edge residual and the frozen geometric CFL bound.
 
-        bed_star = max(float(bed_m[li]), z_r)
-        h_l_star = max(0.0, h_l + float(bed_m[li]) - bed_star)
-        h_r_star = max(0.0, h_r + z_r - bed_star)
-        left_star = np.array([h_l_star, h_l_star * u_l, h_l_star * v_l], dtype=np.float64)
-        right_star = np.array([h_r_star, h_r_star * u_r, h_r_star * v_r], dtype=np.float64)
-        flux = _hll_flux(left_star, right_star, edge.nx, edge.ny, gravity)
-        if ri is None:
-            # Reflection is exactly impermeable, including in binary64.
-            flux[0] = 0.0
-        correction_l = 0.5 * gravity * (h_l * h_l - h_l_star * h_l_star)
-        flux_l = flux.copy()
-        flux_l[1] += correction_l * edge.nx
-        flux_l[2] += correction_l * edge.ny
-        left_factor = edge.length / mesh.face_area[li]
-        left_mass_increment = -left_factor * flux[0]
-        derivative[li, 0] += left_mass_increment
-        derivative[li, 1] -= left_factor * flux_l[1]
-        derivative[li, 2] -= left_factor * flux_l[2]
-        if ri is not None:
-            correction_r = 0.5 * gravity * (h_r * h_r - h_r_star * h_r_star)
-            flux_r_x = flux[1] + correction_r * edge.nx
-            flux_r_y = flux[2] + correction_r * edge.ny
-            right_factor = edge.length / mesh.face_area[ri]
-            right_mass_increment = right_factor * flux[0]
-            derivative[ri, 0] += right_mass_increment
-            derivative[ri, 1] += right_factor * flux_r_x
-            derivative[ri, 2] += right_factor * flux_r_y
-            # Measure the area-integrated increments actually accumulated into
-            # each face derivative; this captures division/multiplication
-            # roundoff and is not an algebraic pair+(-pair) identity.
-            pair_residual = abs(
-                mesh.face_area[li] * left_mass_increment
-                + mesh.face_area[ri] * right_mass_increment
-            )
-            maximum_pair_residual = max(maximum_pair_residual, pair_residual)
+    Vectorised (see :mod:`triangular_solver_kernels`); operation order matches
+    the original per-edge loop, so results are reproduced in binary64.
+    """
+    geometry = _edge_geometry(edges, mesh)
+    result = rhs_numpy(
+        np.asarray(state, dtype=np.float64), _float_array(bed_m), geometry,
+        gravity=gravity, cfl=cfl, dry_depth_m=dry_depth_m,
+    )
+    return result.derivative, result.cfl_limit_s, result.maximum_pair_residual_m3_s
 
-    ratios = [mesh.face_area[i] / wave_sums[i] for i in range(mesh.n_face) if wave_sums[i] > 0.0]
-    cfl_limit = cfl * min(ratios) if ratios else math.inf
-    return derivative, cfl_limit, maximum_pair_residual
+
+def _float_array(values: Sequence[float] | np.ndarray) -> np.ndarray:
+    if isinstance(values, np.ndarray) and values.dtype == np.float64:
+        return values
+    return np.asarray(values, dtype=np.float64)
+
+
+_AREA_CACHE: list[tuple[Any, np.ndarray]] = []
+
+
+def _face_area_array(mesh: TriangularMesh) -> np.ndarray:
+    for cached_mesh, cached in _AREA_CACHE:
+        if cached_mesh is mesh:
+            return cached
+    area = np.asarray(mesh.face_area, dtype=np.float64)
+    _AREA_CACHE[:] = [(mesh, area)]
+    return area
 
 
 def _empty_manning_diagnostics() -> dict[str, Any]:
-    return {
-        "maximum_manning_gamma_per_s": 0.0,
-        "maximum_manning_source_magnitude_m2_s2": 0.0,
-        "manning_nonzero_face_stage_evaluation_count": 0,
-        "source_cfl_limit_evaluation_count": 0,
-        "minimum_source_cfl_limit_s": None,
-        "maximum_source_cfl_limit_s": None,
-        "minimum_wave_cfl_limit_s": None,
-    }
+    return empty_manning_diagnostics()
 
 
 def _manning_source(
@@ -300,51 +284,12 @@ def _manning_source(
             or not 0.0 < float(source_cfl_fraction) <= 1.0 or len(manning_n_m) != len(state)):
         return source, 0.0, diagnostics, "invalid_manning_source_binding"
 
-    finite_limits: list[float] = []
-    for index, (h_raw, hx_raw, hy_raw, n_raw) in enumerate(zip(state[:, 0], state[:, 1], state[:, 2], manning_n_m)):
-        h, hx, hy, n = float(h_raw), float(hx_raw), float(hy_raw), float(n_raw)
-        if h <= dry_depth_m:
-            continue
-        q_magnitude = math.hypot(hx, hy)
-        if q_magnitude == 0.0:
-            continue
-        try:
-            depth_power = h ** (7.0 / 3.0)
-            gamma = gravity * n * n * q_magnitude / depth_power
-            source_x = -gamma * hx
-            source_y = -gamma * hy
-            source_magnitude = math.hypot(source_x, source_y)
-        except (OverflowError, ZeroDivisionError):
-            return source, 0.0, diagnostics, "non_finite_source"
-        if not all(math.isfinite(value) for value in (depth_power, gamma, source_x, source_y, source_magnitude)):
-            return source, 0.0, diagnostics, "non_finite_source"
-        if gamma < 0.0 or source_magnitude < 0.0:
-            return source, 0.0, diagnostics, "non_finite_source"
-        source[index, 1] = source_x
-        source[index, 2] = source_y
-        diagnostics["maximum_manning_gamma_per_s"] = max(diagnostics["maximum_manning_gamma_per_s"], gamma)
-        diagnostics["maximum_manning_source_magnitude_m2_s2"] = max(
-            diagnostics["maximum_manning_source_magnitude_m2_s2"], source_magnitude,
-        )
-        if gamma > 0.0 and source_magnitude > 0.0:
-            diagnostics["manning_nonzero_face_stage_evaluation_count"] += 1
-        if gamma > 0.0:
-            limit = source_cfl_fraction / gamma
-            if limit == 0.0:
-                return source, 0.0, diagnostics, "source_cfl_limit_underflow"
-            if not math.isfinite(limit):
-                return source, 0.0, diagnostics, "source_cfl_limit_overflow"
-            if limit < 0.0:
-                return source, 0.0, diagnostics, "invalid_source_cfl_limit"
-            finite_limits.append(limit)
-    if finite_limits:
-        diagnostics["source_cfl_limit_evaluation_count"] = len(finite_limits)
-        diagnostics["minimum_source_cfl_limit_s"] = min(finite_limits)
-        diagnostics["maximum_source_cfl_limit_s"] = max(finite_limits)
-        source_limit = min(finite_limits)
-    else:
-        source_limit = math.inf
-    return source, source_limit, diagnostics, None
+    computed = manning_explicit(
+        np.asarray(state, dtype=np.float64), _float_array(manning_n_m),
+        gravity=gravity, source_cfl_fraction=float(source_cfl_fraction), dry_depth_m=dry_depth_m,
+        scalar_hypot=True,
+    )
+    return computed.source, computed.source_limit_s, computed.diagnostics, computed.error
 
 
 def _merge_manning_diagnostics(*items: Mapping[str, Any]) -> dict[str, Any]:
@@ -457,12 +402,16 @@ def _initial_depth(capability: TriangularRunCapability) -> np.ndarray:
 
 
 def _speed_max(state: np.ndarray, dry_depth_m: float) -> float:
-    speeds = [math.hypot(float(mx) / float(h), float(my) / float(h)) for h, mx, my in state if h > dry_depth_m]
+    wet = state[:, 0] > dry_depth_m
+    if not wet.any():
+        return 0.0
+    h = state[wet, 0]
+    speeds = map(math.hypot, (state[wet, 1] / h).tolist(), (state[wet, 2] / h).tolist())
     return max(speeds, default=0.0)
 
 
 def _volume(state: np.ndarray, mesh: TriangularMesh) -> float:
-    return math.fsum(float(h) * float(area) for h, area in zip(state[:, 0], mesh.face_area))
+    return math.fsum((state[:, 0] * _face_area_array(mesh)).tolist())
 
 
 def _compensated_add(total: float, correction: float, value: float) -> tuple[float, float]:
@@ -606,7 +555,7 @@ def _integrate(
                 time_s=0.0, stage="source_preflight", reason="invalid_manning_source_binding",
                 accepted_step_count=0, rejected_step_count=0, rejected_step_reasons={},
             )
-        manning_n_m = tuple(float(value) for value in manning_n_m)
+        manning_n_m = np.asarray([float(value) for value in manning_n_m], dtype=np.float64)
     interval_count = len(config.output_times_s) - 1
     if rainfall_rate_m_s_by_interval is not None:
         if (len(rainfall_rate_m_s_by_interval) != interval_count
@@ -620,7 +569,8 @@ def _integrate(
     rainfall_enabled = rainfall_rate_m_s_by_interval is not None
     total_area_m2 = math.fsum(mesh.face_area)
     manning_enabled = manning_n_m is not None
-    bed = tuple(float(value) for value in business.terrain.elevation_m)
+    bed = np.asarray([float(value) for value in business.terrain.elevation_m], dtype=np.float64)
+    face_area_array = _face_area_array(mesh)
     edges = _edges(mesh)
     initial_h = _initial_depth(capability)
     state = np.zeros((mesh.n_face, 3), dtype=np.float64)
@@ -634,8 +584,13 @@ def _integrate(
     maximum_source_magnitude_by_output: list[float] = []
     correction_by_output = [0.0]
     rejected_reasons: dict[str, int] = {}
-    accepted_steps: list[float] = []
-    cfl_steps: list[float] = []
+    # Bounded step statistics: counters and running extrema, not per-step lists.
+    accepted_step_count = 0
+    accepted_cfl_step_count = 0
+    minimum_accepted_step = math.inf
+    maximum_accepted_step = -math.inf
+    minimum_cfl_step = math.inf
+    maximum_cfl_step = -math.inf
     alignment_steps_by_interval = [0.0] * (len(config.output_times_s) - 1)
     alignment_limits_by_interval = [0.0] * (len(config.output_times_s) - 1)
     max_pair = 0.0
@@ -662,7 +617,7 @@ def _integrate(
             raise TriangularSolverExecutionError(
                 f"saved-time Manning diagnostic failed: {source_error}",
                 time_s=output_time, stage="output_diagnostic", reason=source_error,
-                accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()),
+                accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()),
                 rejected_step_reasons=rejected_reasons,
             )
         maximum_gamma_by_output.append(diagnostics["maximum_manning_gamma_per_s"])
@@ -689,7 +644,7 @@ def _integrate(
                 raise TriangularSolverExecutionError(
                     f"accepted step durations overshot output interval by {-remaining:.17g} s",
                     time_s=time_s, stage="time_accumulation", reason="time_overshoot",
-                    accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
+                    accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
                 )
             _, wave_cfl_now, pair_now = _rhs_and_cfl(state, mesh, bed, edges, gravity=config.gravity_m_s2, cfl=config.cfl_number, dry_depth_m=config.dry_depth_threshold_m)
             max_pair = max(max_pair, pair_now)
@@ -703,7 +658,7 @@ def _integrate(
                         f"Manning source limit evaluation failed: {source_error}", time_s=time_s,
                         stage="step_selection", reason=source_error, last_reason=source_error,
                         step_kind="manning_source_cfl",
-                        accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
+                        accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
                     )
             else:
                 source_cfl_now = math.inf
@@ -742,7 +697,7 @@ def _integrate(
                     raise TriangularSolverExecutionError(
                         f"output-alignment remainder {remaining:.17g} s exceeds current CFL bound {failed_bound:.17g} s",
                         time_s=time_s, stage="output_alignment", reason=alignment_reason, last_reason=alignment_reason,
-                        step_kind="output_alignment", accepted_step_count=len(accepted_steps),
+                        step_kind="output_alignment", accepted_step_count=accepted_step_count,
                         rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
                     )
                 dt = remaining
@@ -758,7 +713,7 @@ def _integrate(
                         f"no legal time step remains: {'Manning source' if source_limited else 'CFL'} bound {dt:.17g} s is below minimum_time_step_s",
                         time_s=time_s, stage="step_selection", reason=failure_reason,
                         last_reason="source_cfl" if source_limited else "wave_cfl", step_kind="cfl_step",
-                        accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
+                        accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
                     )
                 stage_label = "cfl_step"
             source_cfl_constrained_step = (
@@ -818,8 +773,7 @@ def _integrate(
                         if rainfall_rate_m_s is not None:
                             try:
                                 rain_volume_increment = math.fsum(
-                                    0.5 * (rainfall_rate_m_s + rainfall_rate_m_s) * dt * float(area)
-                                    for area in mesh.face_area
+                                    (0.5 * (rainfall_rate_m_s + rainfall_rate_m_s) * dt * face_area_array).tolist()
                                 )
                                 next_rainfall_cumulative = math.fsum((cumulative_rainfall_volume, rain_volume_increment))
                                 next_rainfall_interval_volume = math.fsum((rainfall_volume_by_interval[interval_index], rain_volume_increment))
@@ -827,14 +781,14 @@ def _integrate(
                                 raise TriangularSolverExecutionError(
                                     "accepted rainfall stage produced an unrepresentable mass increment",
                                     time_s=time_s, stage="source_accounting", reason="non_finite_rainfall_volume",
-                                    accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()),
+                                    accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()),
                                     rejected_step_reasons=rejected_reasons,
                                 ) from exc
                             if not all(math.isfinite(value) for value in (rain_volume_increment, next_rainfall_cumulative, next_rainfall_interval_volume)):
                                 raise TriangularSolverExecutionError(
                                     "accepted rainfall stage produced a non-finite mass increment",
                                     time_s=time_s, stage="source_accounting", reason="non_finite_rainfall_volume",
-                                    accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()),
+                                    accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()),
                                     rejected_step_reasons=rejected_reasons,
                                 )
                         reaches_output = abs(dt - remaining) <= _step_tolerance_s(max(dt, remaining))
@@ -855,7 +809,9 @@ def _integrate(
                             rainfall_stage_evaluation_count += 2
                             if rainfall_rate_m_s > 0.0:
                                 rainfall_nonzero_source_stage_evaluation_count += 2
-                        accepted_steps.append(dt)
+                        accepted_step_count += 1
+                        minimum_accepted_step = min(minimum_accepted_step, dt)
+                        maximum_accepted_step = max(maximum_accepted_step, dt)
                         if alignment_only:
                             alignment_steps_by_interval[interval_index] = dt
                             if manning_n_m is None:
@@ -872,7 +828,9 @@ def _integrate(
                                 ]
                                 alignment_limits_by_interval[interval_index] = min(alignment_bounds) if alignment_bounds else config.maximum_time_step_s
                         else:
-                            cfl_steps.append(dt)
+                            accepted_cfl_step_count += 1
+                            minimum_cfl_step = min(minimum_cfl_step, dt)
+                            maximum_cfl_step = max(maximum_cfl_step, dt)
                         correction_total += correction
                         correction_count += corrections
                         break
@@ -891,7 +849,7 @@ def _integrate(
                     raise TriangularSolverExecutionError(
                         detail or "a non-finite stage state was found", time_s=time_s, stage=failure_stage or stage_label, reason=reason,
                         last_reason=reason, step_kind=stage_label,
-                        accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
+                        accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
                     )
                 retry_count += 1
                 if alignment_only:
@@ -899,12 +857,12 @@ def _integrate(
                         detail or f"output-alignment attempt failed: {reason}", time_s=time_s, stage=failure_stage or "output_alignment", reason=reason,
                         last_reason="second_stage_source_cfl" if reason == "source_cfl_alignment" else reason,
                         step_kind="output_alignment",
-                        accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
+                        accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
                     )
                 if retry_count > config.maximum_step_retries:
                     raise TriangularSolverExecutionError(
                         detail or f"step retry limit exhausted after {retry_count - 1} retries", time_s=time_s, stage=failure_stage or stage_label,
-                        reason="retry_exhausted", accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
+                        reason="retry_exhausted", accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
                         last_reason=reason, step_kind=stage_label,
                     )
                 if reason in {"second_stage_cfl", "second_stage_source_cfl"} and math.isfinite(cfl_after_stage):
@@ -920,32 +878,32 @@ def _integrate(
                     raise TriangularSolverExecutionError(
                         f"retry candidate {next_dt:.17g} s is below minimum_time_step_s",
                         time_s=time_s, stage=failure_stage or stage_label, reason=minimum_failure_reason,
-                        accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
+                        accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons,
                         last_reason=reason, step_kind=stage_label,
                     )
                 dt = next_dt
             # Prevent a last-bit roundoff loop without moving an accepted state.
             if time_s == end_time:
                 break
-            if len(accepted_steps) > 10_000_000:
-                raise TriangularSolverExecutionError("accepted-step safety limit exceeded", time_s=time_s, stage="integration", reason="step_safety_limit", accepted_step_count=len(accepted_steps), rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons)
+            if accepted_step_count > 10_000_000:
+                raise TriangularSolverExecutionError("accepted-step safety limit exceeded", time_s=time_s, stage="integration", reason="step_safety_limit", accepted_step_count=accepted_step_count, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons)
         rows.append(state.copy())
         correction_by_output.append(correction_total - output_correction_start)
         cumulative_rainfall_volume_by_output.append(cumulative_rainfall_volume)
         record_output_manning_diagnostics(state, float(end_time))
 
-    if not accepted_steps:
+    if accepted_step_count == 0:
         raise TriangularSolverExecutionError("positive-duration run completed without an accepted step", time_s=time_s, stage="integration", reason="no_accepted_steps", accepted_step_count=0, rejected_step_count=sum(rejected_reasons.values()), rejected_step_reasons=rejected_reasons)
     stats = {
-        "accepted_step_count": len(accepted_steps),
-        "accepted_cfl_step_count": len(cfl_steps),
+        "accepted_step_count": accepted_step_count,
+        "accepted_cfl_step_count": accepted_cfl_step_count,
         "rejected_step_count": sum(rejected_reasons.values()),
         "rejected_reasons": rejected_reasons,
         "mass_correction_count": correction_count,
-        "minimum_cfl_step_s": min(cfl_steps),
-        "maximum_cfl_step_s": max(cfl_steps),
-        "minimum_accepted_step_s": min(accepted_steps),
-        "maximum_accepted_step_s": max(accepted_steps),
+        "minimum_cfl_step_s": minimum_cfl_step if accepted_cfl_step_count else min(()),
+        "maximum_cfl_step_s": maximum_cfl_step if accepted_cfl_step_count else max(()),
+        "minimum_accepted_step_s": minimum_accepted_step,
+        "maximum_accepted_step_s": maximum_accepted_step,
         "alignment_steps": alignment_steps_by_interval,
         "alignment_limits": alignment_limits_by_interval,
         "correction_by_output": correction_by_output,
@@ -957,7 +915,7 @@ def _integrate(
     if manning_enabled:
         stats.update({
             "manning_enabled": True,
-            "manning_n_m": list(manning_n_m),
+            "manning_n_m": manning_n_m.tolist(),
             "source_cfl_fraction": float(source_cfl_fraction),
             "maximum_manning_gamma_per_s": max(
                 accepted_source_diagnostics["maximum_manning_gamma_per_s"],

@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Triangular long-run options and open boundary groups",
+  "$defs": {
+    "TriangularLongRunOptions": {
+      "additionalProperties": false,
+      "description": "Numerical and run-control options for the streaming long-run path.\n\nUnits are SI.  Numerical defaults equal the P4-1 run config defaults; the\nthree new treatment options default to the large-run choices.",
+      "properties": {
+        "format": {
+          "const": "triangular-long-run-options-v1",
+          "default": "triangular-long-run-options-v1",
+          "title": "Format",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "gravity_m_s2": {
+          "default": 9.81,
+          "exclusiveMinimum": 0.0,
+          "maximum": 20.0,
+          "title": "Gravity M S2",
+          "type": "number"
+        },
+        "cfl_number": {
+          "default": 0.25,
+          "exclusiveMinimum": 0.0,
+          "maximum": 0.5,
+          "title": "Cfl Number",
+          "type": "number"
+        },
+        "step_cfl_fraction": {
+          "default": 0.9,
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "title": "Step Cfl Fraction",
+          "type": "number"
+        },
+        "minimum_time_step_s": {
+          "default": 1e-06,
+          "maximum": 1.0,
+          "minimum": 1e-09,
+          "title": "Minimum Time Step S",
+          "type": "number"
+        },
+        "maximum_time_step_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0.0,
+          "maximum": 86400.0,
+          "title": "Maximum Time Step S",
+          "type": "number"
+        },
+        "maximum_step_retries": {
+          "default": 8,
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Maximum Step Retries",
+          "type": "integer"
+        },
+        "dry_depth_threshold_m": {
+          "default": 1e-06,
+          "exclusiveMinimum": 0.0,
+          "maximum": 0.1,
+          "title": "Dry Depth Threshold M",
+          "type": "number"
+        },
+        "negative_depth_tolerance_m": {
+          "default": 1e-12,
+          "maximum": 0.0001,
+          "minimum": 0.0,
+          "title": "Negative Depth Tolerance M",
+          "type": "number"
+        },
+        "volume_correction_budget_fraction": {
+          "default": 1e-10,
+          "maximum": 1e-06,
+          "minimum": 0.0,
+          "title": "Volume Correction Budget Fraction",
+          "type": "number"
+        },
+        "volume_correction_reference": {
+          "default": "initial_state_plus_cumulative_inflow",
+          "enum": [
+            "initial_state",
+            "initial_state_plus_cumulative_inflow"
+          ],
+          "title": "Volume Correction Reference",
+          "type": "string"
+        },
+        "manning_friction": {
+          "default": "point_implicit",
+          "enum": [
+            "none",
+            "explicit_source_cfl",
+            "point_implicit"
+          ],
+          "title": "Manning Friction",
+          "type": "string"
+        },
+        "source_cfl_fraction": {
+          "anyOf": [
+            {
+              "gt": 0.0,
+              "le": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Cfl Fraction"
+        },
+        "outflow_stage_volume_fraction": {
+          "default": 0.5,
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "title": "Outflow Stage Volume Fraction",
+          "type": "number"
+        },
+        "maximum_accepted_step_count": {
+          "default": 1000000000,
+          "maximum": 1000000000000,
+          "minimum": 1,
+          "title": "Maximum Accepted Step Count",
+          "type": "integer"
+        },
+        "checkpoint_interval_s": {
+          "anyOf": [
+            {
+              "gt": 0.0,
+              "le": 31536000.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Interval S"
+        },
+        "checkpoint_keep_count": {
+          "default": 2,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Checkpoint Keep Count",
+          "type": "integer"
+        },
+        "kernel": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "numpy",
+            "numba"
+          ],
+          "title": "Kernel",
+          "type": "string"
+        },
+        "progress_interval_steps": {
+          "default": 1000,
+          "maximum": 1000000000,
+          "minimum": 1,
+          "title": "Progress Interval Steps",
+          "type": "integer"
+        }
+      },
+      "title": "TriangularLongRunOptions",
+      "type": "object"
+    },
+    "OpenBoundaryGroupSpec": {
+      "additionalProperties": false,
+      "description": "Prescribed-discharge open boundary group on exterior mesh edges.\n\n``discharge_m3_s`` are non-negative magnitudes; ``role`` gives the direction\n(inflow enters the domain, outflow leaves it).  Q(t) is linearly\ninterpolated between samples; evaluating outside [time_s[0], time_s[-1]] is\nan error, and the samples must cover the whole run.",
+      "properties": {
+        "format": {
+          "const": "triangular-open-boundary-group-v1",
+          "default": "triangular-open-boundary-group-v1",
+          "title": "Format",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "inflow",
+            "outflow"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "edge_indices": {
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Edge Indices",
+          "type": "array"
+        },
+        "time_s": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 10000000,
+          "minItems": 2,
+          "title": "Time S",
+          "type": "array"
+        },
+        "discharge_m3_s": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 10000000,
+          "minItems": 2,
+          "title": "Discharge M3 S",
+          "type": "array"
+        },
+        "distribution": {
+          "default": "length",
+          "enum": [
+            "length",
+            "conveyance_depth_5_3"
+          ],
+          "title": "Distribution",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "edge_indices",
+        "time_s",
+        "discharge_m3_s"
+      ],
+      "title": "OpenBoundaryGroupSpec",
+      "type": "object"
+    }
+  }
+}

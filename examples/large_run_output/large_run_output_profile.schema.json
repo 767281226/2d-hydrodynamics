@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hydrodynamics-large-run-output-profile-v1.0",
+  "title": "Large-run output profile (opt-in streaming exporter for full-size native triangular runs)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "format": {"const": "hydrodynamics-large-run-output-profile", "default": "hydrodynamics-large-run-output-profile"},
+    "schema_version": {"const": "1.0", "default": "1.0"},
+    "max_face_count": {"type": "integer", "minimum": 1, "maximum": 20000000, "default": 2000000, "description": "count; refuse larger meshes"},
+    "max_node_count": {"type": "integer", "minimum": 3, "maximum": 40000000, "default": 4000000, "description": "count"},
+    "max_frame_count": {"type": "integer", "minimum": 1, "maximum": 100000, "default": 10000, "description": "saved frames"},
+    "native_nc_complevel": {"type": "integer", "minimum": 0, "maximum": 9, "default": 4, "description": "zlib level for (time,face) variables; 0 = uncompressed"},
+    "native_nc_face_chunk": {"type": "integer", "minimum": 1, "maximum": 16777216, "default": 65536, "description": "faces per NetCDF chunk; time chunk is always 1"},
+    "display_grid_cell_size_m": {"type": "number", "minimum": 1.0, "maximum": 10000.0, "default": 50.0, "description": "m; derived legacy display grid spacing (not the computing mesh)"},
+    "display_grid_anchor_x_m": {"type": "number", "default": 474150.0, "description": "m; lower-left cell-edge anchor A_x (historical 50 m grid)"},
+    "display_grid_anchor_y_m": {"type": "number", "default": 4299600.0, "description": "m; lower-left cell-edge anchor A_y"},
+    "max_display_grid_cells": {"type": "integer", "minimum": 1, "maximum": 50000000, "default": 4000000, "description": "count; nx*ny cap"},
+    "compat_nc_complevel": {"type": "integer", "minimum": 0, "maximum": 9, "default": 4},
+    "native_web_value_dtype": {"enum": ["float32", "float64"], "default": "float32", "description": "per-frame native web value encoding"},
+    "stepjson_min_depth_m": {"type": "number", "minimum": 0.0, "maximum": 100.0, "default": 0.0, "description": "m; a record is written iff depth > value (legacy rule: > 0)"},
+    "stepjson_still_direction_deg": {"type": "number", "minimum": 0.0, "exclusiveMaximum": 360.0, "default": 180.0, "description": "deg; direction written for speed <= 1e-12"},
+    "write_stepjson_native": {"type": "boolean", "default": true, "description": "also write stepjson_native/ keyed by exact native face_id"},
+    "shp_wet_depth_threshold_m": {"type": ["number", "null"], "minimum": 0.0, "maximum": 100.0, "default": null, "description": "m; MAXIMUM_WET_SURFACE threshold; null = run dry_depth_threshold_m"},
+    "volume_check_rel_tol": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.1, "default": 1e-06, "description": "|sum(h*A) - ledger volume_m3| <= tol*max(1,|ledger|)"},
+    "disk_safety_factor": {"type": "number", "minimum": 1.0, "maximum": 10.0, "default": 1.2, "description": "free bytes must be >= estimate * factor"},
+    "disk_preflight": {"type": "boolean", "default": true}
+  }
+}

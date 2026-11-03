@@ -141,13 +141,15 @@ def create_synthetic_domain_mesh_case(
     maximum_faces: int = 500_000,
     minimum_face_quality: float = 0.1,
     mesh_algorithm_plan: Mapping[str, Any] | None = None,
+    boundary_adaptive_sizing: Mapping[str, Any] | None = None,
+    boundary_simplification: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any], Path, dict[str, Any]]:
     """Create a fresh experiment tree. Inputs contain only small synthetic vectors."""
     root = Path(project_root).resolve()
     _install_namespace_package(root)
     from hydrodynamics.domain_mesh_only import (
         DOMAIN_MESH_ONLY_FORMAT, DOMAIN_MESH_ONLY_VERSION,
-        DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION,
+        DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION, DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION,
         DOMAIN_SOURCE_MANIFEST_DERIVED_VERSION, DOMAIN_SOURCE_MANIFEST_FORMAT, DOMAIN_SOURCE_MANIFEST_VERSION,
         RESOURCE_LIMITS as MESH_ONLY_RESOURCE_LIMITS,
         validate_domain_mesh_only_config_shape, validate_source_manifest_shape,
@@ -156,6 +158,10 @@ def create_synthetic_domain_mesh_case(
     from hydrodynamics.restricted_worker import _stat_identity
     from hydrodynamics.b1_synthetic_pilot import _gmsh_runtime_identity
 
+    if (boundary_adaptive_sizing is None) != (boundary_simplification is None):
+        raise ValueError("config schema 1.2 requires both boundary_adaptive_sizing and boundary_simplification")
+    if boundary_adaptive_sizing is not None and mesh_algorithm_plan is None:
+        raise ValueError("boundary_adaptive_sizing selects config schema 1.2, which also requires mesh_algorithm_plan")
     experiment = Path(experiment_dir)
     if Path(experiment).is_absolute() or PureWindowsPath(str(experiment)).is_absolute() or PureWindowsPath(str(experiment)).drive:
         raise ValueError("experiment_dir must be project-relative")
@@ -267,8 +273,9 @@ def create_synthetic_domain_mesh_case(
     gmsh_identity = _gmsh_runtime_identity()
     config = {
         "format": DOMAIN_MESH_ONLY_FORMAT,
-        "schema_version": (DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION
-                           if mesh_algorithm_plan is not None else DOMAIN_MESH_ONLY_VERSION),
+        "schema_version": (DOMAIN_MESH_ONLY_BOUNDARY_SIZING_VERSION if boundary_adaptive_sizing is not None
+                           else DOMAIN_MESH_ONLY_ALGORITHM_PLAN_VERSION if mesh_algorithm_plan is not None
+                           else DOMAIN_MESH_ONLY_VERSION),
         "run_id": run_id, "output_root": (experiment_path / "output").relative_to(root).as_posix(),
         "resources": dict(MESH_ONLY_RESOURCE_LIMITS),
         "source_manifest": {
@@ -287,6 +294,9 @@ def create_synthetic_domain_mesh_case(
     }
     if mesh_algorithm_plan is not None:
         config["mesh_algorithm_plan"] = validate_mesh_algorithm_plan_shape(mesh_algorithm_plan)
+    if boundary_adaptive_sizing is not None:
+        config["mesh_generation"]["boundary_adaptive_sizing"] = dict(boundary_adaptive_sizing)
+        config["mesh_generation"]["boundary_simplification"] = dict(boundary_simplification)
     validate_domain_mesh_only_config_shape(config)
     config_path = experiment_path / "configs" / f"{run_id}.json"
     _write_json(config_path, config)

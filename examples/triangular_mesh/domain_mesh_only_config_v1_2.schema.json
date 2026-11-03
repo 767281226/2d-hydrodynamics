@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/triangle-domain-mesh-only-config-v1_2.schema.json",
+  "title": "Restricted D minus S mesh-only generation config with explicit Gmsh algorithm plan, boundary-adaptive sizing and boundary simplification",
+  "description": "Schema 1.2 keeps the required schema 1.1 mesh_algorithm_plan and adds two required, default-free mesh_generation objects: boundary_adaptive_sizing and boundary_simplification. Schemas 1.0 and 1.1 are unchanged: source D/S vertices are meshed as-is with a uniform default_size_m point size.",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}(?![\\s\\S])",
+      "description": "Required lowercase SHA-256 hex digest."
+    },
+    "projectRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?![\\s\\S]*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|(?![\\s\\S])))[\\s\\S]+(?![\\s\\S])",
+      "description": "Required project-relative path; absolute paths and parent traversal are rejected."
+    },
+    "statIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mtime_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ctime_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "device": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "file_id": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "size_bytes",
+        "mtime_ns",
+        "ctime_ns",
+        "device",
+        "file_id"
+      ]
+    },
+    "meshGeneration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maximum_faces": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500000,
+          "description": "Required generated triangle cap, count."
+        },
+        "maximum_nodes": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 2000000,
+          "description": "Required generated node cap, count."
+        },
+        "minimum_face_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Required normalized minimum face quality, unitless."
+        },
+        "geometry_tolerance_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Required geometry/line tolerance, m."
+        },
+        "minimum_face_area_m2": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100,
+          "description": "Required minimum triangle area, m2."
+        },
+        "default_size_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "description": "Required target default mesh size, m."
+        },
+        "minimum_size_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "description": "Required target minimum mesh size, m; must exceed geometry_tolerance_m and not exceed default_size_m."
+        },
+        "area_abs_tolerance_m2": {
+          "type": "number",
+          "minimum": 1e-12,
+          "maximum": 1,
+          "description": "Required absolute D-minus-S closure tolerance, m2."
+        },
+        "area_rel_tolerance": {
+          "type": "number",
+          "minimum": 1e-12,
+          "maximum": 0.001,
+          "description": "Required relative D-minus-S closure tolerance, unitless."
+        },
+        "boundary_adaptive_sizing": {
+          "$ref": "#/$defs/boundaryAdaptiveSizing"
+        },
+        "boundary_simplification": {
+          "$ref": "#/$defs/boundarySimplification"
+        }
+      },
+      "required": [
+        "maximum_faces",
+        "maximum_nodes",
+        "minimum_face_quality",
+        "geometry_tolerance_m",
+        "minimum_face_area_m2",
+        "default_size_m",
+        "minimum_size_m",
+        "area_abs_tolerance_m2",
+        "area_rel_tolerance",
+        "boundary_adaptive_sizing",
+        "boundary_simplification"
+      ]
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_workers": {
+          "type": "integer",
+          "const": 1,
+          "description": "Fixed worker count, count."
+        },
+        "job_memory_limit_mib": {
+          "type": "integer",
+          "const": 2048,
+          "description": "Fixed Job Object commit cap, MiB."
+        },
+        "wall_clock_limit_s": {
+          "type": "number",
+          "const": 900,
+          "description": "Fixed worker-attempt wall cap, seconds."
+        },
+        "output_budget_bytes": {
+          "type": "integer",
+          "const": 1073741824,
+          "description": "Fixed output cap, bytes."
+        },
+        "scratch_budget_bytes": {
+          "type": "integer",
+          "const": 16777216,
+          "description": "Fixed private scratch cap, bytes."
+        },
+        "child_process_policy": {
+          "type": "string",
+          "const": "job_object_inheritance_without_breakaway"
+        }
+      },
+      "required": [
+        "max_workers",
+        "job_memory_limit_mib",
+        "wall_clock_limit_s",
+        "output_budget_bytes",
+        "scratch_budget_bytes",
+        "child_process_policy"
+      ]
+    },
+    "meshAlgorithmPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "triangle-mesh-algorithm-plan-v1"
+        },
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "algorithm_2d": {
+          "type": "integer",
+          "enum": [
+            5,
+            6
+          ],
+          "description": "Required Gmsh SDK enum; unit 1 (dimensionless): 5=Delaunay, 6=Frontal-Delaunay. No default."
+        },
+        "smoothing": {
+          "type": "integer",
+          "const": 1,
+          "description": "Required fixed Gmsh Mesh.Smoothing option, one smoothing pass. No default."
+        },
+        "algorithm_switch_on_failure": {
+          "type": "integer",
+          "const": 0,
+          "description": "Required fixed Gmsh Mesh.AlgorithmSwitchOnFailure option. Disables hidden algorithm fallback. No default."
+        },
+        "optimizer": {
+          "type": "string",
+          "enum": [
+            "none",
+            "Relocate2D"
+          ],
+          "description": "Required post-generation operation. No default or fallback."
+        },
+        "iterations": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ],
+          "description": "Required iteration count; 0 for none and 1 for Relocate2D. No default."
+        },
+        "force": {
+          "type": "boolean",
+          "const": false,
+          "description": "Fixed false so discrete entities are not force-optimized."
+        },
+        "entity_scope": {
+          "type": "string",
+          "const": "active_surface",
+          "description": "The active surface tag is bound internally; callers cannot supply entity tags."
+        }
+      },
+      "required": [
+        "format",
+        "schema_version",
+        "algorithm_2d",
+        "smoothing",
+        "algorithm_switch_on_failure",
+        "optimizer",
+        "iterations",
+        "force",
+        "entity_scope"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "optimizer": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "optimizer"
+            ]
+          },
+          "then": {
+            "properties": {
+              "iterations": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "optimizer": {
+                "const": "Relocate2D"
+              }
+            },
+            "required": [
+              "optimizer"
+            ]
+          },
+          "then": {
+            "properties": {
+              "iterations": {
+                "const": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "boundaryAdaptiveSizing": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Required in schema 1.2; no defaults. When enabled, each outer/hole ring vertex (cyclic) and open constraint vertex gets a local target size equal to its shortest adjacent configured segment, clamped to [minimum_size_m, default_size_m]. Vertices below default_size_m are grouped into power-of-two bins (2^floor(log2(size)), clamped to minimum_size_m); each bin adds one Gmsh Distance+Threshold field growing linearly from the bin size at the vertex to default_size_m at distance (default_size_m - bin)/grading_ratio. Boundary vertices are never moved, added or removed; Mesh.MeshSizeExtendFromBoundary stays 0. When disabled, generation is identical to schema 1.1.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Required opt-in flag; no default."
+        },
+        "grading_ratio": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 1.0,
+          "description": "Required linear size-growth rate away from short boundary segments, m of target size per m of distance (unitless m/m). Legal range [0.05, 1.0]; smaller values give smoother grading and more faces. No default."
+        }
+      },
+      "required": [
+        "enabled",
+        "grading_ratio"
+      ]
+    },
+    "boundarySimplification": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Required in schema 1.2; no defaults. When enabled, ring edges of source D (exterior and holes) and every source S part shorter than minimum_vertex_spacing_m are collapsed shortest-first by dropping one endpoint. A collapse is accepted only if every source vertex it represents stays within minimum_vertex_spacing_m of the new edge, no ring edge is crossed or touched, no other vertex is enclosed, protected open boundary-group/constraint vertices are kept and each ring keeps >= 3 vertices. On S only reflex/collinear vertices may be dropped, or a convex short S edge is merged into the outward corner where its neighbouring edges meet, so simplified S always contains source S. Edges that cannot be collapsed safely are kept. The mesh and all coverage/closed-wall audits use the simplified D-S; the source audit records per-ring vertex counts, area change, Hausdorff offset and the source-S overlap (required 0 within area tolerance). When disabled, geometry is identical to schema 1.1.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Required opt-in flag; no default."
+        },
+        "minimum_vertex_spacing_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 50,
+          "description": "Required edge-length threshold and maximum accepted source-vertex offset, m. Legal range (0, 50] m and greater than geometry_tolerance_m. No default."
+        }
+      },
+      "required": [
+        "enabled",
+        "minimum_vertex_spacing_m"
+      ]
+    }
+  },
+  "properties": {
+    "format": {
+      "type": "string",
+      "const": "triangle-domain-mesh-only-config-v1"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1.2"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?![\\s\\S])"
+    },
+    "output_root": {
+      "$ref": "#/$defs/projectRelativePath"
+    },
+    "resources": {
+      "$ref": "#/$defs/resources"
+    },
+    "source_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/projectRelativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "expected_stat_identity": {
+          "$ref": "#/$defs/statIdentity"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "expected_stat_identity"
+      ],
+      "description": "Dispatcher-retained source-manifest path/hash/stat identity. Component geometry is never trusted from the output bundle."
+    },
+    "target_coordinate_system": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "Required projected target CRS in metres; source CRS declarations are explicit in the source manifest."
+    },
+    "mesh_generation": {
+      "$ref": "#/$defs/meshGeneration"
+    },
+    "expected_gmsh_version": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^4\\.(?:1[1-9]|[2-9][0-9]|[1-9][0-9]{2,})\\.(?:0|[1-9][0-9]*)(?![\\s\\S])",
+      "description": "Required exact installed Gmsh version in canonical 4.minor.patch form, minor >= 11, without leading zeros or suffixes."
+    },
+    "expected_gmsh_library_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "mesh_algorithm_plan": {
+      "$ref": "#/$defs/meshAlgorithmPlan"
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "run_id",
+    "output_root",
+    "resources",
+    "source_manifest",
+    "target_coordinate_system",
+    "mesh_generation",
+    "expected_gmsh_version",
+    "expected_gmsh_library_sha256",
+    "mesh_algorithm_plan"
+  ]
+}

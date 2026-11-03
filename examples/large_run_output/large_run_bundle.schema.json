@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "large-run-output-bundle-v1",
+  "title": "run.json of a large-run output bundle",
+  "type": "object",
+  "required": ["format", "schema_version", "run_id", "case_id", "status", "data_origin", "live_solver_ran", "production_approved",
+               "forcing", "forcing_notice", "river_inflow_outflow_included", "native_result", "time_origin", "time_s", "extent_m",
+               "coordinate_system", "viewer", "compatibility", "native_web", "shp_packages", "large_run_profile"],
+  "properties": {
+    "format": {"const": "large-run-output-bundle-v1"},
+    "schema_version": {"const": "1.0"},
+    "status": {"enum": ["COMPLETE", "COMPLETE_NOT_PRODUCTION_APPROVED"]},
+    "data_origin": {"enum": ["LIVE_SOLVER_RUN", "SYNTHETIC_TEST_FIELDS"]},
+    "forcing_notice": {"type": "string", "minLength": 1},
+    "time_s": {"type": "array", "items": {"type": "number"}, "minItems": 1},
+    "viewer": {"type": "object", "required": ["default_profile", "profiles"],
+               "properties": {"profiles": {"type": "object", "required": ["native_web", "compatibility_grid"]}}},
+    "shp_packages": {"type": "array", "minItems": 4, "maxItems": 4,
+                     "items": {"type": "object", "required": ["role", "scope", "target_crs", "feature_count", "manifest_sha256", "components"],
+                               "properties": {"role": {"enum": ["full_domain", "full_domain_4490", "maximum_wet_surface", "maximum_wet_surface_4490"]}}}}
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "format": "hydrodynamics-large-run-metadata",
+  "schema_version": "1.0",
+  "run_id": "qingbei-river-001",
+  "case_id": "dongdian_qingbei_2023_288h",
+  "time_origin": "2023-08-01T02:00:00+08:00",
+  "coordinate_system": "EPSG:4548",
+  "vertical_datum": null,
+  "dry_depth_threshold_m": 0.001,
+  "expected_times_s": null,
+  "data_origin": "LIVE_SOLVER_RUN",
+  "live_solver_ran": true,
+  "production_approved": false,
+  "forcing": {
+    "scope": "RIVER_ONLY",
+    "boundary_policy": "open",
+    "rainfall_included": false,
+    "river_inflow_outflow_included": true,
+    "river_section_status": "ASSUMED_USER_CONFIRMED_NON_AUTHORITATIVE",
+    "discharge_series_status": "RECONSTRUCTED_NOT_MEASURED",
+    "boundary_groups": [
+      {"group_id": "daqinghe_west", "role": "inflow", "name": "大清河 west section (assumed)", "section_status": "ASSUMED_USER_CONFIRMED_NON_AUTHORITATIVE", "discharge_series_status": "RECONSTRUCTED_NOT_MEASURED"},
+      {"group_id": "duliujianhe", "role": "outflow", "name": "独流减河 section (assumed)", "section_status": "ASSUMED_USER_CONFIRMED_NON_AUTHORITATIVE", "discharge_series_status": "COMPUTED_OUTFLOW"},
+      {"group_id": "xihe", "role": "outflow", "name": "西河 section (assumed)", "section_status": "ASSUMED_USER_CONFIRMED_NON_AUTHORITATIVE", "discharge_series_status": "COMPUTED_OUTFLOW"}
+    ],
+    "notice": "RIVER INFLOW/OUTFLOW AT ASSUMED (USER-CONFIRMED, NON-AUTHORITATIVE) SECTIONS; NO RAINFALL; Q SERIES RECONSTRUCTED, NOT MEASURED (河道入流/出流位于假定断面（用户确认、非权威）；无降雨；流量过程为重建值、非实测)"
+  },
+  "solver": {"name": "native_triangular_solver", "note": "free-form provenance supplied by the solver"},
+  "source_hashes": {}
+}

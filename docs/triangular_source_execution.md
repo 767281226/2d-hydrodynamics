@@ -111,3 +111,17 @@ evaporation, open boundaries, gates, or dynamic dry-front validation.
 # Security-aware rainfall reporting
 
 For a security-enabled P2/P3 mesh, rainfall is integrated over active face area. Native source results separately report the excluded-area potential as `security_rainfall_accounting.security_excluded_unmodeled_rainfall_volume_m3` and by interval. This is unmodeled rainfall, not an accepted-budget loss and not transferred to active faces. P2/P3 identity drift is rejected by the shared P4 source-run guard. See [security_exclusion.md](security_exclusion.md).
+
+Source-enabled native triangle SHP output uses the independent v2 request/manifest and existing strict Manning/source readers. See [native_source_triangle_shp.md](native_source_triangle_shp.md); v1 remains sources=none only.
+
+# Large-run streaming path
+
+The P4-2C routes above keep explicit Manning drag and the source CFL bound
+`source_cfl_fraction / gamma`, which binds in thin rain films (0.01-0.1 s). They
+also keep the correction reference `max(V0, A*max(h0), 1 m3)`, which is about
+1 m3 for a dry start, and the full in-memory result. Their kernels are now
+vectorised and give binary64-identical results. For 10^5-face, multi-day runs,
+use [triangular_long_run.md](triangular_long_run.md). That path has opt-in
+point-implicit Manning, a correction reference that includes cumulative rainfall
+and boundary inflow, prescribed-discharge inflow/outflow groups, a per-output
+frame sink, and checkpoint/restart.
