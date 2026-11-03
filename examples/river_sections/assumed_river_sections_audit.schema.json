@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assumed river sections audit (assumed-river-sections-audit-v1)",
+  "description": "Output of hydrodynamics.river_section_selection. Every section is an assumed, user-confirmed, non-authoritative open boundary candidate selected by a DEM main-channel heuristic on the outer boundary loop of a TriangularMesh. edge_indices refer to mesh.edge_nodes order and are all exterior edges.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schema_version", "mesh_id", "mesh_artifact", "mesh_artifact_sha256", "dem", "dem_sha256", "dem_crs", "crs", "section_status", "max_point_distance_m", "rule", "outer_loop", "sections"],
+  "properties": {
+    "format": {"const": "assumed-river-sections-audit-v1"},
+    "schema_version": {"const": "1.0"},
+    "mesh_id": {"type": "string", "minLength": 1},
+    "mesh_artifact": {"type": ["string", "null"], "description": "Path of the triangle-domain-mesh-only-artifact-v1 file as given on the command line (null for in-memory meshes)."},
+    "mesh_artifact_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "dem": {"type": "string", "minLength": 1},
+    "dem_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "dem_crs": {"type": "string", "minLength": 1, "description": "DEM CRS as WKT read from the GeoTIFF; verified equivalent to crs, never transformed."},
+    "crs": {"type": "string", "minLength": 1},
+    "section_status": {"const": "ASSUMED_USER_CONFIRMED_NON_AUTHORITATIVE"},
+    "max_point_distance_m": {"type": "number", "exclusiveMinimum": 0, "maximum": 10000},
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["window_m", "thalweg_search_m", "bank_percentile", "bank_margin_m", "thalweg_margin_m", "gap_tolerance_m", "dem_samples_per_edge", "edge_elevation"],
+      "properties": {
+        "window_m": {"type": "number", "minimum": 50, "maximum": 50000},
+        "thalweg_search_m": {"type": "number", "exclusiveMinimum": 0, "maximum": 50000},
+        "bank_percentile": {"type": "number", "minimum": 50, "maximum": 100},
+        "bank_margin_m": {"type": "number", "minimum": 0, "maximum": 50},
+        "thalweg_margin_m": {"type": "number", "minimum": 0, "maximum": 50},
+        "gap_tolerance_m": {"type": "number", "minimum": 0, "maximum": 50000},
+        "dem_samples_per_edge": {"type": "integer", "minimum": 1, "maximum": 25},
+        "edge_elevation": {"type": "string", "minLength": 1}
+      }
+    },
+    "outer_loop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edge_count", "perimeter_m", "exterior_loop_edge_counts"],
+      "properties": {
+        "edge_count": {"type": "integer", "minimum": 3},
+        "perimeter_m": {"type": "number", "exclusiveMinimum": 0},
+        "exterior_loop_edge_counts": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}}
+      }
+    },
+    "sections": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/SectionAudit"}
+    }
+  },
+  "$defs": {
+    "ProfileRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["s_m", "length_m", "z_mean_m", "z_min_m", "mid_xy"],
+      "properties": {
+        "s_m": {"type": "number", "description": "Signed arclength (m) of the edge start relative to the anchor edge."},
+        "length_m": {"type": "number", "exclusiveMinimum": 0},
+        "z_mean_m": {"type": ["number", "null"], "description": "nanmean of the raw DEM samples; null when every sample is NoData."},
+        "z_min_m": {"type": ["number", "null"]},
+        "mid_xy": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}
+      }
+    },
+    "WindowRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["s_m", "length_m", "z_mean_m"],
+      "properties": {
+        "s_m": {"type": "number"},
+        "length_m": {"type": "number", "exclusiveMinimum": 0},
+        "z_mean_m": {"type": ["number", "null"]}
+      }
+    },
+    "SectionAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "name_zh", "discharge_series_column", "osm_intersection_xy", "nearest_edge_distance_m", "thalweg_elevation_m", "bank_level_p75_m", "threshold_m", "edge_count", "width_m", "mean_edge_elevation_m", "min_edge_elevation_m", "max_edge_elevation_m", "edges_above_threshold_included", "window_edge_count", "nodata_edges_in_window", "edge_indices", "edge_nodes", "profile", "window_profile"],
+      "properties": {
+        "role": {"type": "string", "enum": ["inflow", "outflow"]},
+        "name_zh": {"type": "string", "minLength": 1},
+        "discharge_series_column": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "osm_intersection_xy": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}},
+        "nearest_edge_distance_m": {"type": "number", "minimum": 0},
+        "thalweg_elevation_m": {"type": "number"},
+        "bank_level_p75_m": {"type": "number", "description": "Window elevation percentile at rule.bank_percentile (field name kept from the original audit)."},
+        "threshold_m": {"type": "number"},
+        "edge_count": {"type": "integer", "minimum": 1},
+        "width_m": {"type": "number", "exclusiveMinimum": 0, "description": "Sum of selected edge lengths along the boundary."},
+        "mean_edge_elevation_m": {"type": ["number", "null"], "description": "Length-weighted mean of selected edge mean elevations."},
+        "min_edge_elevation_m": {"type": ["number", "null"]},
+        "max_edge_elevation_m": {"type": ["number", "null"]},
+        "edges_above_threshold_included": {"type": "integer", "minimum": 0},
+        "window_edge_count": {"type": "integer", "minimum": 1},
+        "nodata_edges_in_window": {"type": "integer", "minimum": 0},
+        "edge_indices": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 0}, "description": "Contiguous exterior edge run in loop order (mesh.edge_nodes indices)."},
+        "edge_nodes": {"type": "array", "minItems": 1, "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 0}}},
+        "profile": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/ProfileRow"}},
+        "window_profile": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/WindowRow"}}
+      }
+    }
+  }
+}

@@ -90,6 +90,8 @@ samples fails with `discharge_series_out_of_range`. Use
 `open_boundary_edges_for_mesh_group(mesh, name)` to take edge indices from a
 named P2 boundary group.
 
+Candidate `edge_indices` for assumed river sections (DEM main-channel rule): see `docs/river_section_selection.md`.
+
 Formulation, documented here as an experimental choice:
 
 * Open edges keep the closed-wall Riemann flux, which gives hydrostatic balance

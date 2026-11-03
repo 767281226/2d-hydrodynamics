@@ -1,0 +1,39 @@
+{
+  "format": "assumed-river-sections-request-v1",
+  "schema_version": "1.0",
+  "crs": "EPSG:4548",
+  "max_point_distance_m": 100,
+  "dem_sha256": "bb5d2bd8cf387a698b6326fd94c603fcbae0c95c8734d564d0d4c007d63a38c7",
+  "rule": {
+    "window_m": 1500,
+    "thalweg_search_m": 300,
+    "bank_percentile": 75,
+    "bank_margin_m": 2.0,
+    "thalweg_margin_m": 1.5,
+    "gap_tolerance_m": 60,
+    "dem_samples_per_edge": 5
+  },
+  "sections": [
+    {
+      "name": "A",
+      "role": "inflow",
+      "xy": [478618, 4320778],
+      "discharge_series_column": "inflow_m3s",
+      "name_zh": "大清河西侧入口（新盖房来水）"
+    },
+    {
+      "name": "B",
+      "role": "outflow",
+      "xy": [492931, 4324745],
+      "discharge_series_column": "duliu_component_m3s",
+      "name_zh": "独流减河起点"
+    },
+    {
+      "name": "C",
+      "role": "outflow",
+      "xy": [499491, 4334475],
+      "discharge_series_column": "xihe_component_m3s",
+      "name_zh": "子牙河/西河东北出口"
+    }
+  ]
+}
