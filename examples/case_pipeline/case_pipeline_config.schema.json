@@ -1,0 +1,777 @@
+{
+ "$defs": {
+  "DemSection": {
+   "additionalProperties": false,
+   "properties": {
+    "path": {
+     "description": "GeoTIFF, relative to the case config or absolute",
+     "minLength": 1,
+     "title": "Path",
+     "type": "string"
+    },
+    "crs": {
+     "description": "projected metric CRS of the domain, sections and mesh, e.g. EPSG:4548",
+     "minLength": 1,
+     "title": "Crs",
+     "type": "string"
+    },
+    "sha256": {
+     "anyOf": [
+      {
+       "pattern": "^[0-9a-f]{64}$",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "optional expected DEM SHA-256 (computed when null)",
+     "title": "Sha256"
+    },
+    "vertical_unit": {
+     "anyOf": [
+      {
+       "const": "m",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "declare only when the GeoTIFF has no vertical unit; requires vertical_unit_evidence",
+     "title": "Vertical Unit"
+    },
+    "vertical_unit_evidence": {
+     "anyOf": [
+      {
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "relative evidence file for vertical_unit",
+     "title": "Vertical Unit Evidence"
+    },
+    "vertical_datum": {
+     "anyOf": [
+      {
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "declared datum label; requires vertical_datum_evidence",
+     "title": "Vertical Datum"
+    },
+    "vertical_datum_evidence": {
+     "anyOf": [
+      {
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "relative evidence file for vertical_datum",
+     "title": "Vertical Datum Evidence"
+    }
+   },
+   "required": [
+    "path",
+    "crs"
+   ],
+   "title": "DemSection",
+   "type": "object"
+  },
+  "DomainSection": {
+   "additionalProperties": false,
+   "properties": {
+    "polygon": {
+     "$ref": "#/$defs/PolygonSource"
+    },
+    "holes": {
+     "description": "unmeshed areas (walls); polygon interiors are holes too",
+     "items": {
+      "$ref": "#/$defs/PolygonSource"
+     },
+     "title": "Holes",
+     "type": "array"
+    },
+    "constraints": {
+     "description": "mesh-conforming lines, e.g. dike crests",
+     "items": {
+      "$ref": "#/$defs/LineSource"
+     },
+     "title": "Constraints",
+     "type": "array"
+    },
+    "simplify_tolerance_m": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "ge": 0.0,
+       "le": 1000.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "m; Douglas-Peucker tolerance, null = none",
+     "title": "Simplify Tolerance M"
+    },
+    "min_vertex_spacing_m": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "gt": 0.0,
+       "le": 1000.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "m; drop ring vertices closer than this, null = none",
+     "title": "Min Vertex Spacing M"
+    }
+   },
+   "required": [
+    "polygon"
+   ],
+   "title": "DomainSection",
+   "type": "object"
+  },
+  "LineSource": {
+   "additionalProperties": false,
+   "properties": {
+    "name": {
+     "maxLength": 64,
+     "minLength": 1,
+     "pattern": "^[A-Za-z0-9_-]+$",
+     "title": "Name",
+     "type": "string"
+    },
+    "points": {
+     "description": "m; polyline [[x, y], ...] in dem.crs, strictly inside the domain",
+     "items": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array"
+     },
+     "minItems": 2,
+     "title": "Points",
+     "type": "array"
+    }
+   },
+   "required": [
+    "name",
+    "points"
+   ],
+   "title": "LineSource",
+   "type": "object"
+  },
+  "MeshSettings": {
+   "additionalProperties": false,
+   "properties": {
+    "default_size_m": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "default": 50.0,
+     "description": "m; target edge length",
+     "gt": 0.0,
+     "le": 10000.0,
+     "title": "Default Size M"
+    },
+    "minimum_size_m": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "default": 1.0,
+     "description": "m; smallest edge length",
+     "gt": 0.0,
+     "le": 10000.0,
+     "title": "Minimum Size M"
+    },
+    "boundary_adaptive": {
+     "default": true,
+     "description": "grade sizes from short boundary segments",
+     "title": "Boundary Adaptive",
+     "type": "boolean"
+    },
+    "grading_ratio": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "default": 0.3,
+     "description": "1; boundary-adaptive size growth per metre",
+     "gt": 0.0,
+     "le": 1.0,
+     "title": "Grading Ratio"
+    },
+    "maximum_nodes": {
+     "default": 2000000,
+     "description": "count",
+     "maximum": 10000000,
+     "minimum": 3,
+     "title": "Maximum Nodes",
+     "type": "integer"
+    },
+    "algorithm_2d": {
+     "default": 5,
+     "description": "Gmsh Mesh.Algorithm (5 = Delaunay)",
+     "maximum": 11,
+     "minimum": 1,
+     "title": "Algorithm 2D",
+     "type": "integer"
+    }
+   },
+   "title": "MeshSettings",
+   "type": "object"
+  },
+  "OutputSettings": {
+   "additionalProperties": false,
+   "properties": {
+    "root": {
+     "default": "work/results",
+     "description": "results root; run dir = <root>/<run id>",
+     "minLength": 1,
+     "title": "Root",
+     "type": "string"
+    },
+    "run_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "run directory name; null = Beijing date + ns",
+     "title": "Run Id"
+    },
+    "profile": {
+     "anyOf": [
+      {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Profile"
+    },
+    "export": {
+     "default": true,
+     "title": "Export",
+     "type": "boolean"
+    }
+   },
+   "title": "OutputSettings",
+   "type": "object"
+  },
+  "PolygonSource": {
+   "additionalProperties": false,
+   "description": "One polygon (or polygon set unioned into one Polygon).",
+   "properties": {
+    "type": {
+     "enum": [
+      "coordinates",
+      "geojson",
+      "shp"
+     ],
+     "title": "Type",
+     "type": "string"
+    },
+    "path": {
+     "anyOf": [
+      {
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "geojson/shp file, relative to the case config",
+     "title": "Path"
+    },
+    "coordinates": {
+     "anyOf": [
+      {
+       "items": {
+        "items": {
+         "anyOf": [
+          {
+           "type": "number"
+          },
+          {
+           "type": "integer"
+          }
+         ]
+        },
+        "type": "array"
+       },
+       "minItems": 3,
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "m; [[x, y], ...] in dem.crs, ring closure optional",
+     "title": "Coordinates"
+    }
+   },
+   "required": [
+    "type"
+   ],
+   "title": "PolygonSource",
+   "type": "object"
+  },
+  "RunSettings": {
+   "additionalProperties": false,
+   "properties": {
+    "hours": {
+     "description": "h; hourly output frames 0..hours",
+     "maximum": 8760,
+     "minimum": 1,
+     "title": "Hours",
+     "type": "integer"
+    },
+    "manning_n": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "default": 0.035,
+     "description": "s m^-1/3",
+     "gt": 0.0,
+     "le": 1.0,
+     "title": "Manning N"
+    },
+    "initial_depth_m": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "default": 0.0,
+     "description": "m",
+     "ge": 0.0,
+     "le": 1000.0,
+     "title": "Initial Depth M"
+    },
+    "time_origin": {
+     "description": "ISO 8601 with UTC offset",
+     "title": "Time Origin",
+     "type": "string"
+    },
+    "cfl_number": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "default": 0.5,
+     "gt": 0.0,
+     "le": 1.0,
+     "title": "Cfl Number"
+    },
+    "kernel": {
+     "default": "auto",
+     "enum": [
+      "auto",
+      "numpy",
+      "numba"
+     ],
+     "title": "Kernel",
+     "type": "string"
+    },
+    "checkpoint_interval_s": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "gt": 0.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": 21600.0,
+     "description": "s; null disables --resume",
+     "title": "Checkpoint Interval S"
+    },
+    "long_run_options": {
+     "additionalProperties": true,
+     "description": "extra triangular-long-run-options-v1 fields",
+     "title": "Long Run Options",
+     "type": "object"
+    }
+   },
+   "required": [
+    "hours",
+    "time_origin"
+   ],
+   "title": "RunSettings",
+   "type": "object"
+  },
+  "SectionItem": {
+   "additionalProperties": false,
+   "properties": {
+    "name": {
+     "description": "section key",
+     "pattern": "^[A-Za-z0-9_]{1,32}$",
+     "title": "Name",
+     "type": "string"
+    },
+    "role": {
+     "enum": [
+      "inflow",
+      "outflow"
+     ],
+     "title": "Role",
+     "type": "string"
+    },
+    "xy": {
+     "description": "m; point near the river crossing of the domain boundary",
+     "items": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "integer"
+       }
+      ]
+     },
+     "maxItems": 2,
+     "minItems": 2,
+     "title": "Xy",
+     "type": "array"
+    },
+    "column": {
+     "description": "discharge CSV column (m3/s, magnitudes)",
+     "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+     "title": "Column",
+     "type": "string"
+    },
+    "name_zh": {
+     "default": "",
+     "maxLength": 200,
+     "title": "Name Zh",
+     "type": "string"
+    },
+    "status": {
+     "default": "RECONSTRUCTED_NOT_MEASURED",
+     "enum": [
+      "RECONSTRUCTED_NOT_MEASURED",
+      "MEASURED",
+      "COMPUTED_OUTFLOW"
+     ],
+     "title": "Status",
+     "type": "string"
+    },
+    "distribution": {
+     "anyOf": [
+      {
+       "enum": [
+        "length",
+        "conveyance_depth_5_3"
+       ],
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Distribution"
+    },
+    "boundary_type": {
+     "anyOf": [
+      {
+       "enum": [
+        "prescribed_outflow",
+        "free_outflow"
+       ],
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "outflow only; default prescribed_outflow",
+     "title": "Boundary Type"
+    },
+    "discharge_coefficient": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "gt": 0.0,
+       "le": 1.5
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "free_outflow only",
+     "title": "Discharge Coefficient"
+    },
+    "crest_elevation_m": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "ge": -1000.0,
+       "le": 10000.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "free_outflow only; m, DEM datum",
+     "title": "Crest Elevation M"
+    }
+   },
+   "required": [
+    "name",
+    "role",
+    "xy",
+    "column"
+   ],
+   "title": "SectionItem",
+   "type": "object"
+  },
+  "SectionsSettings": {
+   "additionalProperties": false,
+   "properties": {
+    "items": {
+     "items": {
+      "$ref": "#/$defs/SectionItem"
+     },
+     "minItems": 1,
+     "title": "Items",
+     "type": "array"
+    },
+    "max_point_distance_m": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "default": 100.0,
+     "description": "m; section point to nearest exterior edge",
+     "gt": 0.0,
+     "le": 10000.0,
+     "title": "Max Point Distance M"
+    },
+    "rule": {
+     "additionalProperties": true,
+     "description": "river_section_selection ChannelRuleParameters overrides",
+     "title": "Rule",
+     "type": "object"
+    }
+   },
+   "required": [
+    "items"
+   ],
+   "title": "SectionsSettings",
+   "type": "object"
+  },
+  "TerrainSettings": {
+   "additionalProperties": false,
+   "properties": {
+    "max_source_pixels": {
+     "default": 1000000000,
+     "description": "count",
+     "maximum": 1000000000,
+     "minimum": 1,
+     "title": "Max Source Pixels",
+     "type": "integer"
+    },
+    "max_candidate_overlap_checks": {
+     "default": 1000000000,
+     "description": "count",
+     "maximum": 1000000000,
+     "minimum": 1,
+     "title": "Max Candidate Overlap Checks",
+     "type": "integer"
+    }
+   },
+   "title": "TerrainSettings",
+   "type": "object"
+  }
+ },
+ "additionalProperties": false,
+ "properties": {
+  "format": {
+   "const": "case-pipeline-config-v1",
+   "default": "case-pipeline-config-v1",
+   "title": "Format",
+   "type": "string"
+  },
+  "schema_version": {
+   "const": "1.0",
+   "default": "1.0",
+   "title": "Schema Version",
+   "type": "string"
+  },
+  "case_id": {
+   "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+   "title": "Case Id",
+   "type": "string"
+  },
+  "description": {
+   "anyOf": [
+    {
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null,
+   "title": "Description"
+  },
+  "work_dir": {
+   "description": "stage artifacts directory, relative to the case config or absolute",
+   "minLength": 1,
+   "title": "Work Dir",
+   "type": "string"
+  },
+  "dem": {
+   "$ref": "#/$defs/DemSection"
+  },
+  "domain": {
+   "$ref": "#/$defs/DomainSection"
+  },
+  "mesh": {
+   "$ref": "#/$defs/MeshSettings"
+  },
+  "terrain": {
+   "$ref": "#/$defs/TerrainSettings"
+  },
+  "sections": {
+   "$ref": "#/$defs/SectionsSettings"
+  },
+  "forcing": {
+   "additionalProperties": {
+    "type": "string"
+   },
+   "description": "{'path': discharge CSV with time_s + section columns}",
+   "title": "Forcing",
+   "type": "object"
+  },
+  "run": {
+   "$ref": "#/$defs/RunSettings"
+  },
+  "output": {
+   "$ref": "#/$defs/OutputSettings"
+  }
+ },
+ "required": [
+  "case_id",
+  "work_dir",
+  "dem",
+  "domain",
+  "sections",
+  "forcing",
+  "run"
+ ],
+ "title": "CaseConfig",
+ "type": "object"
+}
