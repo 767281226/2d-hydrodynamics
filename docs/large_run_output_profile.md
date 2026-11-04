@@ -79,6 +79,7 @@ NOT MEASURED"（中文同时给出）。该标签写入 native NC、兼容 NC �
 | `shp_wet_depth_threshold_m` | m 或 null | null（=干阈值） | 0–100 |
 | `volume_check_rel_tol` | 1 | 1e-6 | (0,0.1] |
 | `disk_safety_factor` / `disk_preflight` | 1 / bool | 1.2 / true | 1–10 |
+| `socio_exposure` | 对象或 null | null | 社会经济暴露叠加（人口/耕地 → 原生三角面，逐帧与包络暴露量），字段见 `docs/socio_exposure_overlay.md` |
 
 未知键、字符串数字、布尔冒充数字均拒绝，错误信息带字段路径。
 
@@ -112,6 +113,9 @@ can_publish）；核对 checksums 的文件清单与全部文件大小，元数�
 manifest 的 run_id、时间轴、帧列表与文件大小；兼容格 v2 identity。页面只预载 mesh.bin（约 11 MB/19 万面），
 每次只请求当前帧并预取下一帧（缓存 ≤2 帧、≤32 MiB），每帧载入时校验 SHA-256。大网格按颜色桶批量填充 Path2D（每个 Path2D 最多 2048 面后即绘制并重建；Chromium 中单个超大 Path2D 追加为超线性，19 万面单帧曾需 100+ 秒），
 兼容格用 ImageData 绘制；侧栏显示 forcing 标签、范围、面数、帧数与时间起点；悬停显示精确 face_id。
+
+社会经济暴露叠加（`socio_exposure/`、最大淹没面 SHP 的 `POP`/`ARABLE_MU`/`EXPOSED` 字段、`--socio` 选项、对已有 bundle 追加的
+`python -m hydrodynamics.socio_exposure`）见 `docs/socio_exposure_overlay.md`。
 
 真实求解器接入（网格 artifact + 逐面地形 + 假定断面 + 流量 CSV → 本 sink → 导出/校验）与 `reopen` 续算见
 `docs/large_run_driver.md`（`python -m hydrodynamics.large_run_driver`）。

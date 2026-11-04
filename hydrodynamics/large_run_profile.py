@@ -50,6 +50,36 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, validate_default=True)
 
 
+class SocioExposureOptions(_Strict):
+    """Optional socio-economic exposure overlay (docs/socio_exposure_overlay.md). Post-processing only."""
+
+    grid_cells_path: StrictStr = Field(min_length=1, description="polygon shapefile of grid cells (e.g. grid_cells_socio.shp); .prj required")
+    population_field: StrictStr = Field("s_pop", min_length=1, max_length=10, description="persons per cell")
+    arable_mu_field: StrictStr = Field("s_ar_mu", min_length=1, max_length=10, description="arable land per cell, mu")
+    district_code_field: StrictStr | None = Field("qu_dm", min_length=1, max_length=10, description="district code; null = no district split")
+    district_name_field: StrictStr | None = Field("qu", min_length=1, max_length=10, description="district name; null = none")
+    district_totals_csv: StrictStr | None = Field(None, min_length=1, description="CSV qu_dm,population,area_km2,arable_km2 (context only)")
+    district_grid_summary_csv: StrictStr | None = Field(None, min_length=1, description="per-district grid sum CSV (cross-check only)")
+    exposure_depth_threshold_m: StrictFloat | StrictInt = Field(0.15, gt=0.0, le=100.0, description="m; face exposed iff depth >= value")
+    depth_class_edges_m: tuple[StrictFloat | StrictInt, ...] = Field((0.15, 0.5, 1.5, 3.0), min_length=1, max_length=10,
+                                                                     description="m; classes [e_k, e_k+1) and [e_last, inf)")
+    mapping_cache_dir: StrictStr | None = Field(None, min_length=1, description="directory for the face mapping cache npz")
+    conservation_rel_tol: StrictFloat | StrictInt = Field(1e-6, gt=0.0, le=0.01, description="1")
+
+    @field_validator("depth_class_edges_m")
+    @classmethod
+    def _edges(cls, value: tuple[float, ...]) -> tuple[float, ...]:
+        edges = tuple(_finite(v, "depth_class_edges_m") for v in value)
+        if any(v < 0 for v in edges) or any(b <= a for a, b in zip(edges, edges[1:])):
+            raise ValueError("depth_class_edges_m must be non-negative and strictly increasing")
+        return edges
+
+    @field_validator("exposure_depth_threshold_m", "conservation_rel_tol")
+    @classmethod
+    def _finite_socio(cls, value: float, info: Any) -> float:
+        return _finite(value, info.field_name)
+
+
 class LargeRunOutputProfile(_Strict):
     """Explicit large-run output options.
 
@@ -84,6 +114,8 @@ class LargeRunOutputProfile(_Strict):
     # Disk preflight: refuse to start unless free bytes >= estimate * factor.
     disk_safety_factor: StrictFloat | StrictInt = Field(1.2, ge=1.0, le=10.0, description="1")
     disk_preflight: StrictBool = True
+    # Optional socio-economic exposure overlay; None = not read (bundle says NOT_READ_NOT_REQUESTED).
+    socio_exposure: SocioExposureOptions | None = None
 
     @field_validator("display_grid_anchor_x_m", "display_grid_anchor_y_m", "display_grid_cell_size_m",
                      "stepjson_min_depth_m", "stepjson_still_direction_deg", "volume_check_rel_tol", "disk_safety_factor")
@@ -246,7 +278,7 @@ def load_profile(path: str | Path) -> LargeRunOutputProfile:
 
 
 __all__ = [
-    "LargeRunOutputProfile", "LargeRunMetadata", "ForcingScope", "BoundaryGroup", "LargeRunProfileError",
+    "LargeRunOutputProfile", "SocioExposureOptions", "LargeRunMetadata", "ForcingScope", "BoundaryGroup", "LargeRunProfileError",
     "PROFILE_FORMAT", "PROFILE_VERSION", "RAIN_ONLY_NOTICE", "RIVER_ASSUMED_SECTIONS_NOTICE", "hourly_times_s",
     "rain_only_forcing", "river_assumed_sections_forcing",
     "load_profile", "parse_metadata", "parse_profile",

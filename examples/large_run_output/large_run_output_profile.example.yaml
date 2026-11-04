@@ -20,3 +20,13 @@ shp_wet_depth_threshold_m: null
 volume_check_rel_tol: 1.0e-06
 disk_safety_factor: 1.2
 disk_preflight: true
+# Optional socio-economic exposure overlay (docs/socio_exposure_overlay.md). null = not read.
+# Example (paths relative to the working directory):
+# socio_exposure:
+#   grid_cells_path: data/grid_50m_social_economy/shp/grid_cells_socio.shp
+#   district_totals_csv: data/grid_50m_social_economy/静海西青_七普三调.csv
+#   district_grid_summary_csv: data/grid_50m_social_economy/面积汇总_按区.csv
+#   exposure_depth_threshold_m: 0.15
+#   depth_class_edges_m: [0.15, 0.5, 1.5, 3.0]
+#   mapping_cache_dir: null
+socio_exposure: null

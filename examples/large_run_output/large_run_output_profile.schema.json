@@ -24,6 +24,28 @@
     "shp_wet_depth_threshold_m": {"type": ["number", "null"], "minimum": 0.0, "maximum": 100.0, "default": null, "description": "m; MAXIMUM_WET_SURFACE threshold; null = run dry_depth_threshold_m"},
     "volume_check_rel_tol": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.1, "default": 1e-06, "description": "|sum(h*A) - ledger volume_m3| <= tol*max(1,|ledger|)"},
     "disk_safety_factor": {"type": "number", "minimum": 1.0, "maximum": 10.0, "default": 1.2, "description": "free bytes must be >= estimate * factor"},
-    "disk_preflight": {"type": "boolean", "default": true}
+    "disk_preflight": {"type": "boolean", "default": true},
+    "socio_exposure": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/socio_exposure"}], "default": null,
+                       "description": "optional socio-economic exposure overlay (docs/socio_exposure_overlay.md); null = not read"}
+  },
+  "$defs": {
+    "socio_exposure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grid_cells_path"],
+      "properties": {
+        "grid_cells_path": {"type": "string", "minLength": 1, "description": "polygon shapefile of 50 m grid cells (grid_cells_socio.shp); .shp/.shx/.dbf/.prj required"},
+        "population_field": {"type": "string", "minLength": 1, "maxLength": 10, "default": "s_pop", "description": "persons per cell (>= 0, no missing values)"},
+        "arable_mu_field": {"type": "string", "minLength": 1, "maxLength": 10, "default": "s_ar_mu", "description": "arable land per cell, mu (>= 0)"},
+        "district_code_field": {"type": ["string", "null"], "minLength": 1, "maxLength": 10, "default": "qu_dm", "description": "district code; null = no per-district split"},
+        "district_name_field": {"type": ["string", "null"], "minLength": 1, "maxLength": 10, "default": "qu", "description": "district name"},
+        "district_totals_csv": {"type": ["string", "null"], "minLength": 1, "default": null, "description": "CSV qu_dm,population,area_km2,arable_km2 (context: share of district inside the domain)"},
+        "district_grid_summary_csv": {"type": ["string", "null"], "minLength": 1, "default": null, "description": "CSV 区代码,区名,网格数,面积_km2,网格内常住人口_合计,网格内耕地_亩_合计 (read cross-check)"},
+        "exposure_depth_threshold_m": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 100.0, "default": 0.15, "description": "m; a face is exposed iff its depth >= value"},
+        "depth_class_edges_m": {"type": "array", "items": {"type": "number", "minimum": 0.0}, "minItems": 1, "maxItems": 10, "default": [0.15, 0.5, 1.5, 3.0], "description": "m, strictly increasing; classes [e_k, e_k+1) and [e_last, inf)"},
+        "mapping_cache_dir": {"type": ["string", "null"], "minLength": 1, "default": null, "description": "directory for the reusable face mapping npz keyed by mesh fingerprint + source digest"},
+        "conservation_rel_tol": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.01, "default": 1e-06, "description": "relative tolerance of the area/value conservation checks"}
+      }
+    }
   }
 }

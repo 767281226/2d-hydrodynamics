@@ -636,7 +636,8 @@ def _walk_ledger(value: Any, prefix: str = ""):
         yield prefix, value
 
 
-def _export_shp(out: Path, native: LargeNativeResult, profile: LargeRunOutputProfile, sha: str) -> list[dict[str, Any]]:
+def _export_shp(out: Path, native: LargeNativeResult, profile: LargeRunOutputProfile, sha: str,
+                socio: Any = None, roles: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
     meta = native.metadata
     threshold = float(meta.dry_depth_threshold_m if profile.shp_wet_depth_threshold_m is None else profile.shp_wet_depth_threshold_m)
     last = native.frame(native.n_frame - 1)
@@ -653,6 +654,9 @@ def _export_shp(out: Path, native: LargeNativeResult, profile: LargeRunOutputPro
                  "arrive_s": _dbf_values(arrival, "arrive_s", allow_nan=True), "bed_m": _dbf_values(bed, "bed_m")}
     wet = np.flatnonzero(max_h > threshold)
     max_cols = {name: [full_cols[name][k] for k in wet.tolist()] for name in ("face_id", "max_depth", "max_time", "area_m2", "max_speed", "arrive_s", "bed_m")}
+    max_fields = _MAX_FIELDS
+    if socio is not None:  # socio exposure overlay: per-face POP/ARABLE_MU/SOCIO_COV/QU_DM/EXPOSED
+        max_cols.update(socio.shp_columns(wet)); max_fields = _MAX_FIELDS + tuple(socio.shp_fields)
     full_sel = np.arange(native.n_face)
     frame_selector = {"aggregation": "FRAME", "frame_index": native.n_frame - 1, "time_s": last.time_s}
     max_selector = {"aggregation": "MAX_OVER_SAVED_FRAMES", "window_start_s": float(native.time_s[0]), "window_end_s": float(native.time_s[-1])}
@@ -660,19 +664,37 @@ def _export_shp(out: Path, native: LargeNativeResult, profile: LargeRunOutputPro
     for role, scope, target, sel, cols, fields, selector in (
         ("full_domain", "FULL_DOMAIN", "NATIVE", full_sel, full_cols, _FULL_FIELDS, frame_selector),
         ("full_domain_4490", "FULL_DOMAIN", "EPSG:4490", full_sel, full_cols, _FULL_FIELDS, frame_selector),
-        ("maximum_wet_surface", "MAXIMUM_WET_SURFACE", "NATIVE", wet, max_cols, _MAX_FIELDS, max_selector),
-        ("maximum_wet_surface_4490", "MAXIMUM_WET_SURFACE", "EPSG:4490", wet, max_cols, _MAX_FIELDS, max_selector),
+        ("maximum_wet_surface", "MAXIMUM_WET_SURFACE", "NATIVE", wet, max_cols, max_fields, max_selector),
+        ("maximum_wet_surface_4490", "MAXIMUM_WET_SURFACE", "EPSG:4490", wet, max_cols, max_fields, max_selector),
     ):
+        if roles is not None and role not in roles:
+            continue
         rows.append(_write_shp_package(out / role, role, scope, target, native, sel, cols, fields, sha, threshold, selector))
     return rows
 
 
 # --------------------------------------------------------------- the export
+def _write_checksums(out: Path, run_id: str) -> list[dict[str, Any]]:
+    rows = []
+    for path in sorted(p for p in out.rglob("*") if p.is_file() and p.name != "checksums.json"):
+        rows.append({"path": path.relative_to(out).as_posix(), "bytes": path.stat().st_size, "sha256": _sha_file(path)})
+    _write_json(out / "checksums.json", {"format": "large-run-bundle-checksums-v1", "run_id": run_id,
+                                          "file_count": len(rows), "total_bytes": int(sum(r["bytes"] for r in rows)), "files": rows})
+    return rows
+
+
 def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfile | None = None,
-                            *, progress: Any = None) -> dict[str, Any]:
-    """Export every derived deliverable from ``<bundle_dir>/result_native.nc`` (streaming)."""
+                            *, progress: Any = None, socio: Any = None) -> dict[str, Any]:
+    """Export every derived deliverable from ``<bundle_dir>/result_native.nc`` (streaming).
+
+    ``socio`` (a :class:`socio_exposure.SocioOptions`) overrides ``profile.socio_exposure``; when either is
+    given the socio-economic exposure overlay is written to ``socio_exposure/`` (docs/socio_exposure_overlay.md).
+    """
     from .nc2web import convert_netcdf_to_step_json, convert_netcdf_to_web
     profile = profile or LargeRunOutputProfile()
+    if socio is None and profile.socio_exposure is not None:
+        from .socio_exposure import SocioOptions
+        socio = SocioOptions.from_profile(profile.socio_exposure)
     out = Path(bundle_dir).resolve()
     native_path = out / "result_native.nc"
     log = progress or (lambda message: None)
@@ -698,6 +720,15 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
             if free < need * float(profile.disk_safety_factor):
                 raise LargeRunExportError(f"disk preflight failed: need about {need} bytes x {profile.disk_safety_factor}, {free} free")
         log(f"compat grid {grid.nx}x{grid.ny} @ {grid.dx:g} m, {grid.pair_cell.size} overlaps")
+        socio_acc = socio_ctx = None
+        if socio is not None:
+            from .socio_exposure import ExposureAccumulator, load_or_build_mapping
+            t0 = _time.perf_counter()
+            socio_mapping, socio_grid, socio_cache = load_or_build_mapping(
+                native.node_xy_m, native.face_nodes, native.face_id, native.face_area_m2, meta.coordinate_system, socio, log=log)
+            socio_acc = ExposureAccumulator(socio_mapping, socio, meta.time_origin)
+            socio_ctx = (socio_mapping, socio_grid, socio_cache)
+            timings["socio_mapping_s"] = _time.perf_counter() - t0
         comp_path = out / f"{meta.case_id}.nc"
         if comp_path.name == "result_native.nc":
             raise LargeRunExportError("case_id must not collide with result_native")
@@ -723,6 +754,8 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
                 web.write(frame, speed)
                 if steps_native is not None:
                     steps_native.write(frame)
+                if socio_acc is not None:
+                    socio_acc.add_frame(frame.index, frame.time_s, h)
                 frame_stats.append({"index": frame.index, "time_s": frame.time_s, "max_depth_m": float(h.max()),
                                     "max_speed_m_s": float(speed.max()), "volume_m3": volume, "wet_area_m2": wet_area,
                                     "wet_face_count": int(np.count_nonzero(wet)), **{f"ledger_{k}": v for k, v in frame.ledger.items()}})
@@ -770,8 +803,15 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
                     "nc2web_frame_files": [{"file": row["file"], "bytes": (out / "nc2web" / row["file"]).stat().st_size,
                                             "sha256": _sha_file(out / "nc2web" / row["file"])} for row in nc2web.frames]}
         _write_json(out / "compatibility_grid.json", grid_doc)
+        socio_result = None
+        if socio_acc is not None:
+            from .socio_exposure import run_socio_overlay
+            t0 = _time.perf_counter()
+            socio_result = run_socio_overlay(out, native, socio, None, native_sha256=sha, log=log, accumulator=socio_acc,
+                                             mapping=socio_ctx[0], grid=socio_ctx[1], cache_info=socio_ctx[2])
+            timings["socio_exposure_s"] = _time.perf_counter() - t0; log("socio exposure done")
         t0 = _time.perf_counter()
-        shp_rows = _export_shp(out / "shp", native, profile, sha)
+        shp_rows = _export_shp(out / "shp", native, profile, sha, socio=socio_result)
         timings["shp_s"] = _time.perf_counter() - t0; log("shp done")
         viewer_source = Path(__file__).resolve().parent / "assets" / "viewer.html"
         _write_new(out / "viewer.html", viewer_source.read_bytes())
@@ -815,6 +855,12 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
                    "social_economy_overlay": {"status": "NOT_READ_NOT_REQUESTED"}},
                "database_status": "DISABLED_NOT_REQUESTED", "social_economy_status": "NOT_READ_NOT_REQUESTED",
                "source_graph_file": "provenance/source_graph.json"}
+        if socio_result is not None:
+            from .socio_exposure import run_json_block
+            socio_block = run_json_block(socio_result)
+            run["socio_exposure"] = socio_block
+            run["social_economy_status"] = socio_block["status"]
+            run["legacy_optional_artifacts"]["social_economy_overlay"] = {"status": socio_block["status"], "summary": socio_block["summary"]}
         for name in ("mass_budget", "quality", "provenance", "logs"):
             (out / name).mkdir()
         _write_json(out / "provenance" / "source_graph.json", {"format": "large-run-source-graph-v1", "run_id": meta.run_id,
@@ -851,13 +897,16 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
                    "maximum_wet_face_count": next(row["feature_count"] for row in shp_rows if row["role"] == "maximum_wet_surface"),
                    "frames": frame_stats, "unmapped_fields": {"eta": "NOT_AVAILABLE_LEGACY_HYDROSTATIC_FILL"},
                    "database": "DISABLED_NOT_REQUESTED", "social_economy": "NOT_READ_NOT_REQUESTED"}
+        if socio_result is not None:
+            summary["social_economy"] = run["social_economy_status"]; summary["socio_exposure"] = run["socio_exposure"]
         _write_json(out / "summary.json", summary)
         timings["total_s"] = _time.perf_counter() - started
         _write_json(out / "logs" / "large_run_export.json", {"format": "large-run-export-log-v1", "run_id": meta.run_id,
             "status": "PASS", "timings_s": timings, "finished_utc": datetime.now(timezone.utc).isoformat(),
             "native_frame_reader": "streaming one frame per read", "compat_nc": "PASS", "nc2web_v1": nc2web.status,
             "stepjson_v1": stepjson.status, "stepjson_native": "PASS" if steps_native else "DISABLED",
-            "native_web_v2": "PASS", "shp_packages": "PASS"})
+            "native_web_v2": "PASS", "shp_packages": "PASS",
+            "socio_exposure": "PASS" if socio_result is not None else "NOT_REQUESTED"})
         parse_summary = {"format": "large-run-parse-summary-v1", "run_id": meta.run_id,
                          "native_web": {"status": web_report["status"], "frames": web_report["frame_count"], "faces": web_report["face_count"]},
                          "compatibility_nc": {"status": "PASS", "path": comp_path.name},
@@ -865,6 +914,8 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
                          "stepjson": {"status": stepjson.status, "files": len(stepjson.files), "record_format": stepjson.record_format},
                          "stepjson_native": None if steps_native_report is None else {"status": "pass", "files": len(steps_native_report["files"])},
                          "shp_packages": shp_rows, "forcing_notice": meta.forcing.notice}
+        if socio_result is not None:
+            parse_summary["socio_exposure"] = {"status": "PASS", "summary": run["socio_exposure"]["summary"]}
         _write_json(out / "parse_summary.json", parse_summary)
         _write_json(out / "run_report.json", {"format": "large-run-report-v1", "run_id": meta.run_id, "status": "complete",
             "complete": True, "can_publish": bool(meta.production_approved), "production_approved": meta.production_approved,
@@ -873,11 +924,7 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
             "outputs": {"native_web": web_report["sha256"], "nc2web_manifest": _sha_file(out / "nc2web" / "manifest.json"),
                         "stepjson_index": _sha_file(out / "stepjson" / "index.json")}})
         _write_json(out / "run.json", run)
-    rows = []
-    for path in sorted(p for p in out.rglob("*") if p.is_file() and p.name != "checksums.json"):
-        rows.append({"path": path.relative_to(out).as_posix(), "bytes": path.stat().st_size, "sha256": _sha_file(path)})
-    _write_json(out / "checksums.json", {"format": "large-run-bundle-checksums-v1", "run_id": meta.run_id,
-                                          "file_count": len(rows), "total_bytes": int(sum(r["bytes"] for r in rows)), "files": rows})
+    rows = _write_checksums(out, meta.run_id)
     timings["total_with_checksums_s"] = _time.perf_counter() - started
     return {"run_id": meta.run_id, "output_dir": str(out), "status": status, "face_count": int(run["native_result"]["face_count"]),
             "frame_count": len(times), "grid": [grid.nx, grid.ny, grid.dx], "file_count": len(rows),
@@ -974,6 +1021,17 @@ def verify_large_run_bundle(bundle_dir: str | Path) -> dict[str, Any]:
                 raise LargeRunExportError(f"SHP {row['role']} face IDs differ from native face_id")
         shp_checks[row["role"]] = {"features": row["feature_count"], "prj_head": (directory / "faces.prj").read_text(encoding="utf-8")[:40]}
     checks["shp"] = shp_checks
+    from .socio_exposure import SHP_FIELDS as _SOCIO_FIELDS, SocioExposureError, verify_socio_outputs
+    try:
+        checks["socio_exposure"] = verify_socio_outputs(out, run)
+    except SocioExposureError as exc:
+        raise LargeRunExportError(str(exc)) from exc
+    if run.get("socio_exposure"):
+        for role in run["socio_exposure"]["shp_fields_on"]:
+            with shapefile.Reader(str(out / "shp" / role / "faces.shp"), encoding="utf-8") as reader:
+                names = {f[0] for f in reader.fields[1:]}
+            if not {f[0] for f in _SOCIO_FIELDS} <= names:
+                raise LargeRunExportError(f"SHP {role} lacks the socio exposure fields")
     if not (out / "viewer.html").is_file():
         raise LargeRunExportError("viewer.html missing")
     checks["viewer"] = {"profiles": run["viewer"]["profiles"], "time_origin": run["time_origin"]}
@@ -985,10 +1043,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("bundle_dir", help="directory containing result_native.nc written by NativeUgridNetcdfSink")
     parser.add_argument("--profile", help="large-run output profile YAML/JSON (defaults apply when omitted)")
     parser.add_argument("--verify", action="store_true", help="re-open and parse every deliverable after export")
+    parser.add_argument("--socio", help="grid_cells_socio.shp: add the socio exposure overlay (other options from "
+                                        "profile.socio_exposure when present, defaults otherwise)")
     args = parser.parse_args(argv)
     try:
         profile = load_profile(args.profile) if args.profile else LargeRunOutputProfile()
-        report = export_large_run_bundle(args.bundle_dir, profile, progress=lambda m: print(m, file=sys.stderr, flush=True))
+        socio = None
+        if args.socio:
+            from .socio_exposure import SocioOptions
+            base = profile.socio_exposure.model_dump() if profile.socio_exposure is not None else {}
+            socio = SocioOptions.from_profile({**base, "grid_cells_path": args.socio})
+        report = export_large_run_bundle(args.bundle_dir, profile, progress=lambda m: print(m, file=sys.stderr, flush=True),
+                                         socio=socio)
         if args.verify:
             report["verify"] = verify_large_run_bundle(args.bundle_dir)
         print(json.dumps(report, ensure_ascii=False, sort_keys=True))
