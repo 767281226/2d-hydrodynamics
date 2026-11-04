@@ -52,6 +52,68 @@
    "title": "MeshSection",
    "type": "object"
   },
+  "OutflowBoundarySettings": {
+   "additionalProperties": false,
+   "description": "How one audit outflow section leaves the domain.",
+   "properties": {
+    "boundary_type": {
+     "default": "prescribed_outflow",
+     "description": "prescribed_outflow: the CSV column is the applied Q(t); free_outflow: stage-dependent critical-flow weir outflow, the CSV column is only a reference series in the ledger",
+     "enum": [
+      "prescribed_outflow",
+      "free_outflow"
+     ],
+     "title": "Boundary Type",
+     "type": "string"
+    },
+    "discharge_coefficient": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "gt": 0.0,
+       "le": 1.5
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "free_outflow only; dimensionless C_d in (0, 1.5]; null = (2/3)^(3/2) ~= 0.5443",
+     "title": "Discharge Coefficient"
+    },
+    "crest_elevation_m": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "ge": -1000.0,
+       "le": 10000.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "free_outflow only; m, bed datum, [-1000, 10000]; null = bed of each adjacent face (head = depth)",
+     "title": "Crest Elevation M"
+    }
+   },
+   "title": "OutflowBoundarySettings",
+   "type": "object"
+  },
   "OutputSection": {
    "additionalProperties": false,
    "properties": {
@@ -258,8 +320,16 @@
       ],
       "type": "string"
      },
-     "description": "per section; default inflow=length, outflow=conveyance_depth_5_3",
+     "description": "per section; default inflow=length, prescribed outflow=conveyance_depth_5_3; not allowed for free_outflow sections",
      "title": "Distribution",
+     "type": "object"
+    },
+    "outflow_boundary": {
+     "additionalProperties": {
+      "$ref": "#/$defs/OutflowBoundarySettings"
+     },
+     "description": "per outflow section; default boundary_type prescribed_outflow",
+     "title": "Outflow Boundary",
      "type": "object"
     }
    },

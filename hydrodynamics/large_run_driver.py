@@ -5,7 +5,8 @@ Pipeline (no new equations; every piece already exists)::
     mesh artifact (triangle-domain-mesh-only-artifact-v1)
     + per-face terrain .npz (face_id, elevation_m)
     + assumed river sections audit (assumed-river-sections-audit-v1)
-    + discharge CSV (time_s + series columns)
+    + discharge CSV (time_s + series columns; applied Q for inflow / prescribed outflow,
+      reference-only for sections configured as free_outflow)
         -> TriangularLongRunInputs / run_triangular_long_run        (hydrodynamics.triangular_long_run)
         -> NativeUgridNetcdfSink streaming <dir>/bundle/result_native.nc (hydrodynamics.frame_sink)
         -> export_large_run_bundle + verify_large_run_bundle        (hydrodynamics.large_run_export)
@@ -53,7 +54,7 @@ from .frame_sink import FrameSinkError, NativeUgridNetcdfSink, display_grid_exte
 from .large_run_export import LargeRunExportError, export_large_run_bundle, verify_large_run_bundle
 from .large_run_profile import (LargeRunMetadata, LargeRunOutputProfile, LargeRunProfileError, hourly_times_s, load_profile,
                                 parse_metadata, parse_profile, river_assumed_sections_forcing)
-from .triangular_long_run import (LONG_RUN_SOLVER_VERSION, TriangularFrame, TriangularLongRunError, TriangularLongRunInputs,
+from .triangular_long_run import (FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT, LONG_RUN_SOLVER_VERSION, TriangularFrame, TriangularLongRunError, TriangularLongRunInputs,
                                   TriangularLongRunOptions, TriangularLongRunSummary, load_long_run_checkpoint, numba_status,
                                   run_triangular_long_run)
 from .triangular_mesh import TriangularMesh, TriangularMeshError
@@ -118,12 +119,34 @@ class TerrainSection(_Strict):
         return value
 
 
+class OutflowBoundarySettings(_Strict):
+    """How one audit outflow section leaves the domain."""
+
+    boundary_type: Literal["prescribed_outflow", "free_outflow"] = Field(
+        "prescribed_outflow", description="prescribed_outflow: the CSV column is the applied Q(t); free_outflow: stage-dependent "
+                                          "critical-flow weir outflow, the CSV column is only a reference series in the ledger")
+    discharge_coefficient: Number | None = Field(None, gt=0.0, le=1.5, description="free_outflow only; dimensionless C_d in (0, 1.5]; null = (2/3)^(3/2) ~= 0.5443")
+    crest_elevation_m: Number | None = Field(None, ge=-1000.0, le=10000.0, description="free_outflow only; m, bed datum, [-1000, 10000]; null = bed of each adjacent face (head = depth)")
+
+    @field_validator("discharge_coefficient", "crest_elevation_m")
+    @classmethod
+    def _finite_numbers(cls, value: float | None, info: Any) -> float | None:
+        return None if value is None else _finite(value, info.field_name)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "OutflowBoundarySettings":
+        if self.boundary_type == "prescribed_outflow" and (self.discharge_coefficient is not None or self.crest_elevation_m is not None):
+            raise ValueError("discharge_coefficient and crest_elevation_m are only valid with boundary_type free_outflow")
+        return self
+
+
 class SectionsSection(_Strict):
     path: StrictStr = Field(min_length=1, description="assumed-river-sections-audit-v1 JSON")
     discharge_series_status: dict[StrictStr, DischargeStatus] = Field(description="one entry per section key in the audit")
-    distribution: dict[StrictStr, Distribution] = Field(default_factory=dict, description="per section; default inflow=length, outflow=conveyance_depth_5_3")
+    distribution: dict[StrictStr, Distribution] = Field(default_factory=dict, description="per section; default inflow=length, prescribed outflow=conveyance_depth_5_3; not allowed for free_outflow sections")
+    outflow_boundary: dict[StrictStr, OutflowBoundarySettings] = Field(default_factory=dict, description="per outflow section; default boundary_type prescribed_outflow")
 
-    @field_validator("discharge_series_status", "distribution")
+    @field_validator("discharge_series_status", "distribution", "outflow_boundary")
     @classmethod
     def _keys(cls, value: dict[str, Any], info: Any) -> dict[str, Any]:
         for key in value:
@@ -520,16 +543,71 @@ def boundary_group_specs(config: LargeRunDriverConfig, sections: Mapping[str, An
     unknown = sorted(set(config.sections.distribution) - set(sections["sections"]))
     if unknown:
         raise LargeRunDriverError(f"sections.distribution names unknown sections {unknown}")
+    unknown = sorted(set(config.sections.outflow_boundary) - set(sections["sections"]))
+    if unknown:
+        raise LargeRunDriverError(f"sections.outflow_boundary names unknown sections {unknown}")
     missing = sorted(set(sections["sections"]) - set(statuses))
     if missing:
         raise LargeRunDriverError(f"sections.discharge_series_status is required for every audit section; missing {missing}")
     groups = []
     times = forcing["time_s"].tolist()
     for key, item in sections["sections"].items():
-        distribution = config.sections.distribution.get(key, "length" if item["role"] == "inflow" else "conveyance_depth_5_3")
+        btype = section_boundary_type(config, key, item)
+        series = forcing["series"][item["column"]].tolist()
+        if btype == "free_outflow":
+            settings = config.sections.outflow_boundary[key]
+            group = {"name": key, "role": "free_outflow", "edge_indices": list(item["edge_indices"]),
+                     "reference_time_s": times, "reference_discharge_m3_s": series}
+            if settings.discharge_coefficient is not None:
+                group["discharge_coefficient"] = float(settings.discharge_coefficient)
+            if settings.crest_elevation_m is not None:
+                group["crest_elevation_m"] = float(settings.crest_elevation_m)
+            groups.append(group)
+            continue
         groups.append({"name": key, "role": item["role"], "edge_indices": list(item["edge_indices"]), "time_s": times,
-                       "discharge_m3_s": forcing["series"][item["column"]].tolist(), "distribution": distribution})
+                       "discharge_m3_s": series, "distribution": section_distribution(config, key, item)})
     return groups
+
+
+def section_boundary_type(config: LargeRunDriverConfig, key: str, item: Mapping[str, Any]) -> str:
+    """``inflow``, ``prescribed_outflow`` or ``free_outflow`` for one audit section (raises on inconsistent config)."""
+    settings = config.sections.outflow_boundary.get(key)
+    if item["role"] == "inflow":
+        if settings is not None:
+            raise LargeRunDriverError(f"sections.outflow_boundary.{key}: section {key} is an inflow section; outflow_boundary applies to outflow sections only")
+        return "inflow"
+    btype = "prescribed_outflow" if settings is None else settings.boundary_type
+    if btype == "free_outflow" and key in config.sections.distribution:
+        raise LargeRunDriverError(f"sections.distribution.{key}: distribution does not apply to a free_outflow section (every edge uses its own head)")
+    return btype
+
+
+def section_distribution(config: LargeRunDriverConfig, key: str, item: Mapping[str, Any]) -> str | None:
+    """Edge weighting of a prescribed section; None for free_outflow sections."""
+    if section_boundary_type(config, key, item) == "free_outflow":
+        return None
+    return config.sections.distribution.get(key, "length" if item["role"] == "inflow" else "conveyance_depth_5_3")
+
+
+def section_boundary_summary(config: LargeRunDriverConfig, key: str, item: Mapping[str, Any], *, full: bool = True) -> dict[str, Any]:
+    """Boundary treatment of one section for metadata, receipts and --check.
+
+    ``full=False`` (run metadata) keeps prescribed sections exactly as before
+    free_outflow existed (only ``distribution``), so partial results written by
+    earlier prescribed runs still reopen on ``--resume``.
+    """
+    btype = section_boundary_type(config, key, item)
+    if not full and btype != "free_outflow":
+        return {"distribution": section_distribution(config, key, item)}
+    out: dict[str, Any] = {"boundary_type": btype, "distribution": section_distribution(config, key, item),
+                           "discharge_series_use": "reference_only" if btype == "free_outflow" else "applied"}
+    if btype == "free_outflow":
+        settings = config.sections.outflow_boundary[key]
+        out["discharge_coefficient"] = (FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT if settings.discharge_coefficient is None
+                                        else float(settings.discharge_coefficient))
+        out["crest_elevation_m"] = None if settings.crest_elevation_m is None else float(settings.crest_elevation_m)
+        out["crest"] = "adjacent_face_bed" if settings.crest_elevation_m is None else "fixed_elevation"
+    return out
 
 
 def metadata_boundary_groups(config: LargeRunDriverConfig, sections: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -569,7 +647,7 @@ def build_metadata(config: LargeRunDriverConfig, mesh: Mapping[str, Any], sectio
         "terrain": terrain_provenance(config, terrain),
         "sections": {"path": sections["path"], "format": SECTIONS_FORMAT, "mesh_id": sections["mesh_id"],
                      "groups": {key: {"role": item["role"], "edge_count": len(item["edge_indices"]), "discharge_series_column": item["column"],
-                                      "distribution": config.sections.distribution.get(key, "length" if item["role"] == "inflow" else "conveyance_depth_5_3"),
+                                      **section_boundary_summary(config, key, item, full=False),
                                       "discharge_series_status": config.sections.discharge_series_status[key], "width_m": item["width_m"]}
                                 for key, item in sections["sections"].items()}},
         "forcing_csv": {"path": forcing["path"], "rows": forcing["rows"], "time_range_s": [forcing["first_time_s"], forcing["last_time_s"]],
@@ -696,6 +774,11 @@ def close_ledger_from_summary(summary: TriangularLongRunSummary, roles: Mapping[
                  "volume_m3": values["cumulative_inflow_volume_m3"] if role == "inflow" else values["cumulative_outflow_delivered_volume_m3"]}
         if role == "outflow":
             entry["requested_volume_m3"] = values["cumulative_outflow_requested_volume_m3"]
+        if role == "free_outflow":
+            # requested = uncapped weir discharge integrated over the run; reference = CSV comparison series only.
+            entry["outflow_discharge_m3_s"] = values["outflow_discharge_m3_s"]
+            if "cumulative_reference_outflow_volume_m3" in values:
+                entry["cumulative_reference_outflow_volume_m3"] = values["cumulative_reference_outflow_volume_m3"]
         groups[name] = entry
     return {
         "initial_volume_m3": last["initial_volume_m3"], "final_stored_volume_m3": last["stored_volume_m3"],
@@ -1049,9 +1132,13 @@ def check_case(config_path: str | Path, *, resume: bool = False) -> dict[str, An
                                        "crs": sections["coordinate_system"], "section_status": sections["section_status"],
                                        "sections": {key: {"role": item["role"], "edge_count": len(item["edge_indices"]), "column": item["column"],
                                                           "name": item["name"], "width_m": item["width_m"],
-                                                          "distribution": config.sections.distribution.get(key, "length" if item["role"] == "inflow" else "conveyance_depth_5_3"),
                                                           "discharge_series_status": config.sections.discharge_series_status.get(key)}
                                                     for key, item in sections["sections"].items()}}
+        for key, item in sections["sections"].items():
+            try:
+                report["inputs"]["sections"]["sections"][key].update(section_boundary_summary(config, key, item))
+            except LargeRunDriverError as exc:
+                errors.append(str(exc))
         if mesh_info is not None:
             if sections["mesh_id"] is not None and sections["mesh_id"] != mesh_info["mesh_id"]:
                 errors.append(f"sections audit mesh_id {sections['mesh_id']!r} differs from the mesh artifact mesh_id {mesh_info['mesh_id']!r}")
@@ -1065,7 +1152,8 @@ def check_case(config_path: str | Path, *, resume: bool = False) -> dict[str, An
         missing = sorted(set(sections["sections"]) - set(config.sections.discharge_series_status))
         if missing:
             errors.append(f"sections.discharge_series_status is required for every audit section; missing {missing}")
-        unknown = sorted((set(config.sections.discharge_series_status) | set(config.sections.distribution)) - set(sections["sections"]))
+        unknown = sorted((set(config.sections.discharge_series_status) | set(config.sections.distribution)
+                          | set(config.sections.outflow_boundary)) - set(sections["sections"]))
         if unknown:
             errors.append(f"sections config names unknown sections {unknown}")
     except LargeRunDriverError as exc:
@@ -1182,7 +1270,8 @@ __all__ = [
     "CONFIG_FORMAT", "LargeRunDriverConfig", "LargeRunDriverError", "PreparedCase", "boundary_group_specs", "build_metadata",
     "build_triangular_mesh", "check_case", "check_sections_against_edges", "close_ledger_from_summary", "driver_config_json_schema",
     "edge_table", "load_driver_config", "main", "newest_checkpoint", "parse_driver_config", "prepare_case", "read_forcing_csv",
-    "read_mesh_artifact", "read_sections_audit", "read_terrain", "resolve_config_paths", "run_large_case", "sink_ledger_from_row",
+    "read_mesh_artifact", "read_sections_audit", "read_terrain", "resolve_config_paths", "run_large_case", "section_boundary_summary",
+    "section_boundary_type", "section_distribution", "sink_ledger_from_row",
 ]
 
 

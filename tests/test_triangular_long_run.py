@@ -484,6 +484,193 @@ def test_discharge_series_is_linearly_interpolated():
     assert summary.ledger[2]["cumulative_inflow_volume_m3"] == pytest.approx(100.0, rel=1e-12)
 
 
+# ---------------------------------------------------------------------------
+# 5. Stage-dependent free outflow (critical-flow weir law)
+# ---------------------------------------------------------------------------
+KERNELS = ["numpy"] + (["numba"] if HAS_NUMBA else [])
+
+
+def _free(mesh: TriangularMesh, side: str = "east", **extra) -> dict:
+    return {"name": "C", "role": "free_outflow", "edge_indices": _side_edges(mesh, side), **extra}
+
+
+@pytest.mark.parametrize("kernel", KERNELS)
+def test_free_outflow_below_crest_is_exactly_a_closed_wall(kernel):
+    mesh = _grid_mesh(8, 3, jitter=0.2, seed=4)
+    x = _centroid_x(mesh)
+    bed = 0.3 * np.sin(x / 11.0)
+    level = 0.1
+    depth = np.maximum(level - bed, 0.0)
+    assert (depth == 0.0).any() and (depth > 0.0).any()
+    common = dict(bed_m=bed, initial_depth_m=depth, output_times_s=[0.0, 2.0, 6.0], manning_n=np.full(mesh.n_face, 0.03))
+    walls = run_triangular_long_run(TriangularLongRunInputs.build(mesh, **common), {"kernel": kernel})
+    group = _free(mesh, crest_elevation_m=0.5, reference_time_s=[0.0, 6.0], reference_discharge_m3_s=[1.0, 1.0])
+    free = run_triangular_long_run(TriangularLongRunInputs.build(mesh, **common, open_boundaries=[group]), {"kernel": kernel})
+    # Lake at rest below the crest: H = 0 on every open edge, so the boundary is exactly a wall.
+    assert np.array_equal(free.water_depth_m, walls.water_depth_m)
+    assert np.array_equal(free.unit_discharge_x_m2_s, walls.unit_discharge_x_m2_s)
+    assert np.max(np.abs(free.water_depth_m - depth)) <= 1e-12
+    final = free.ledger[-1]
+    assert final["cumulative_outflow_delivered_volume_m3"] == 0.0 and final["groups"]["C"]["outflow_discharge_m3_s"] == 0.0
+    # The reference series is only recorded, never applied.
+    assert final["groups"]["C"]["cumulative_reference_outflow_volume_m3"] == pytest.approx(6.0, rel=1e-12)
+    assert final["groups"]["C"]["reference_outflow_discharge_m3_s"] == 1.0
+
+
+@pytest.mark.parametrize("crest,coefficient", [(None, None), (0.1, 0.4)])
+def test_free_outflow_initial_discharge_equals_critical_weir_law(crest, coefficient):
+    from hydrodynamics.triangular_long_run import FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT, _boundary_stage, _prepare_boundary_groups
+    mesh = _grid_mesh(6, 3, dx=10.0)
+    depth = 0.4
+    east = _side_edges(mesh, "east")
+    extra = {}
+    if crest is not None:
+        extra["crest_elevation_m"] = crest
+    if coefficient is not None:
+        extra["discharge_coefficient"] = coefficient
+    group = {"name": "C", "role": "free_outflow", "edge_indices": east[:1], **extra}
+    inputs = TriangularLongRunInputs.build(mesh, bed_m=np.zeros(mesh.n_face), initial_depth_m=np.full(mesh.n_face, depth),
+                                           output_times_s=[0.0, 1.0], open_boundaries=[group])
+    edges = _edges(mesh)
+    length = float(edges.geometry.length[east[0]])
+    assert length == pytest.approx(10.0, rel=1e-12)
+    head = depth - (0.0 if crest is None else crest)
+    cd = FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT if coefficient is None else coefficient
+    assert FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT == pytest.approx(0.5443310539518174, rel=1e-15)
+    expected = cd * math.sqrt(9.81) * head ** 1.5 * length
+    # Stage-0 boundary term on the flat pool: requested == delivered == C_d sqrt(g) H^1.5 L (the cap is not active).
+    groups = _prepare_boundary_groups(inputs, edges.geometry)
+    state = np.zeros((mesh.n_face, 3)); state[:, 0] = depth
+    stage = _boundary_stage(groups, state, 0.0, 1e-3, edges.geometry.area, gravity=9.81, dry_depth_m=1e-6, outflow_fraction=0.5)
+    assert stage.outflow_requested_m3_s["C"] == pytest.approx(expected, rel=1e-14)
+    assert stage.outflow_delivered_m3_s["C"] == pytest.approx(expected, rel=1e-14)
+    face = edges.geometry.left[east[0]]
+    assert stage.derivative[face, 0] == pytest.approx(-expected / edges.geometry.area[face], rel=1e-14)
+    summary = run_triangular_long_run(inputs, {"manning_friction": "none", "kernel": "numpy"})
+    assert summary.ledger[0]["groups"]["C"]["outflow_discharge_m3_s"] == pytest.approx(expected, rel=1e-14)
+    assert "cumulative_reference_outflow_volume_m3" not in summary.ledger[0]["groups"]["C"]
+    assert 0.0 < summary.ledger[-1]["cumulative_outflow_delivered_volume_m3"] <= expected * 1.0 * 1.001
+
+
+@pytest.mark.parametrize("kernel", KERNELS)
+def test_free_outflow_drains_basin_above_crest_and_ledger_closes(kernel):
+    mesh = _grid_mesh(12, 3, dx=10.0)
+    area = math.fsum(mesh.face_area)
+    crest = 0.2
+    depth = np.full(mesh.n_face, 0.5)
+    initial = math.fsum((depth * np.asarray(mesh.face_area)).tolist())
+    inputs = TriangularLongRunInputs.build(mesh, bed_m=np.zeros(mesh.n_face), initial_depth_m=depth,
+                                           output_times_s=[0.0, 60.0, 300.0, 900.0], manning_n=np.full(mesh.n_face, 0.03),
+                                           open_boundaries=[_free(mesh, crest_elevation_m=crest)])
+    summary = run_triangular_long_run(inputs, {"kernel": kernel})
+    stored = [row["stored_volume_m3"] for row in summary.ledger]
+    assert all(b < a for a, b in zip(stored, stored[1:]))
+    discharge = [row["groups"]["C"]["outflow_discharge_m3_s"] for row in summary.ledger]
+    assert discharge[0] > discharge[-1] > 0.0
+    above_crest = initial - crest * area
+    assert stored[-1] < initial - 0.5 * above_crest      # most water above the crest has left
+    assert stored[-1] > 0.95 * crest * area               # nothing below the crest drains through the weir
+    for row in summary.ledger:
+        delivered = row["cumulative_outflow_delivered_volume_m3"]
+        # Delivered volume equals the stored-volume decrease to round-off.
+        assert abs((initial - row["stored_volume_m3"]) - delivered + row["cumulative_correction_volume_m3"]) <= 1e-11 * initial
+        assert abs(row["residual_m3"]) <= 1e-11 * initial
+        assert row["groups"]["C"]["cumulative_outflow_delivered_volume_m3"] == pytest.approx(delivered, rel=1e-12, abs=1e-12)
+        assert row["cumulative_outflow_requested_volume_m3"] >= delivered - 1e-9
+    assert (summary.water_depth_m >= 0.0).all()
+
+
+def test_free_outflow_spec_validation():
+    mesh = _grid_mesh(4, 2)
+    east = _side_edges(mesh, "east")
+    common = dict(bed_m=np.zeros(mesh.n_face), initial_depth_m=np.zeros(mesh.n_face), output_times_s=[0.0, 10.0])
+
+    def build(**group):
+        return TriangularLongRunInputs.build(mesh, **common, open_boundaries=[{"name": "C", "edge_indices": east, **group}])
+
+    build(role="free_outflow")
+    with pytest.raises(TriangularLongRunError, match="time_s/discharge_m3_s are not allowed"):
+        build(role="free_outflow", **_series(1.0))
+    with pytest.raises(TriangularLongRunError, match="distribution does not apply"):
+        build(role="free_outflow", distribution="conveyance_depth_5_3")
+    with pytest.raises(TriangularLongRunError, match="together"):
+        build(role="free_outflow", reference_time_s=[0.0, 10.0])
+    with pytest.raises(TriangularLongRunError, match="reference_discharge_m3_s values are magnitudes"):
+        build(role="free_outflow", reference_time_s=[0.0, 10.0], reference_discharge_m3_s=[1.0, -1.0])
+    with pytest.raises(TriangularLongRunError, match="reference discharge samples cover"):
+        build(role="free_outflow", reference_time_s=[0.0, 5.0], reference_discharge_m3_s=[1.0, 1.0])
+    for bad in (0.0, 1.6, True, "0.5", float("nan")):
+        with pytest.raises(TriangularLongRunError, match="discharge_coefficient"):
+            build(role="free_outflow", discharge_coefficient=bad)
+    with pytest.raises(TriangularLongRunError, match="crest_elevation_m"):
+        build(role="free_outflow", crest_elevation_m=20000.0)
+    with pytest.raises(TriangularLongRunError, match="only valid for role free_outflow"):
+        build(role="outflow", discharge_coefficient=0.5, **_series(1.0))
+    with pytest.raises(TriangularLongRunError, match="requires time_s and discharge_m3_s"):
+        build(role="outflow")
+
+
+def test_prescribed_group_fingerprint_is_unchanged_by_free_outflow_fields():
+    from hydrodynamics.triangular_long_run import _inputs_fingerprint
+    mesh = _grid_mesh(4, 2)
+    group = OpenBoundaryGroupSpec.model_validate({"name": "B", "role": "outflow", "edge_indices": _side_edges(mesh, "east"), **_series(1.0)})
+    assert set(group.model_dump(mode="json", exclude_none=True)) == {"format", "name", "role", "edge_indices", "time_s", "discharge_m3_s", "distribution"}
+    common = dict(bed_m=np.zeros(mesh.n_face), initial_depth_m=np.zeros(mesh.n_face), output_times_s=[0.0, 10.0])
+    geometry = _edges(mesh).geometry
+    free_default = TriangularLongRunInputs.build(mesh, **common, open_boundaries=[_free(mesh)])
+    free_explicit = TriangularLongRunInputs.build(mesh, **common, open_boundaries=[_free(mesh, discharge_coefficient=(2.0 / 3.0) ** 1.5)])
+    free_other = TriangularLongRunInputs.build(mesh, **common, open_boundaries=[_free(mesh, discharge_coefficient=0.4)])
+    free_crest = TriangularLongRunInputs.build(mesh, **common, open_boundaries=[_free(mesh, crest_elevation_m=0.0)])
+    prints = [_inputs_fingerprint(inputs, geometry) for inputs in (free_default, free_explicit, free_other, free_crest)]
+    assert prints[0] == prints[1] and len({prints[0], prints[2], prints[3]}) == 3
+
+
+def test_free_outflow_checkpoint_restart_reproduces_uninterrupted_run(tmp_path):
+    mesh = _grid_mesh(10, 3, dx=10.0, jitter=0.1, seed=6)
+    x = _centroid_x(mesh)
+    groups = [{"name": "A", "role": "inflow", "edge_indices": _side_edges(mesh, "west"), **_series(0.4)},
+              _free(mesh, reference_time_s=[0.0, 20.0, 40.0], reference_discharge_m3_s=[0.0, 0.5, 0.1])]
+    inputs = TriangularLongRunInputs.build(mesh, bed_m=0.002 * (100.0 - x), initial_depth_m=np.full(mesh.n_face, 0.1),
+                                           output_times_s=[0.0, 10.0, 20.0, 30.0, 40.0], manning_n=np.full(mesh.n_face, 0.03),
+                                           open_boundaries=groups)
+    options = {"kernel": "numpy", "checkpoint_interval_s": 20.0, "checkpoint_keep_count": 5}
+    full = run_triangular_long_run(inputs, options, checkpoint_directory=tmp_path / "ckpt")
+    resumed = run_triangular_long_run(inputs, options, checkpoint_directory=tmp_path / "ckpt2", resume_from=full.checkpoints_written[0])
+    assert np.array_equal(resumed.water_depth_m, full.water_depth_m)
+    assert np.array_equal(resumed.unit_discharge_y_m2_s, full.unit_discharge_y_m2_s)
+    strip = lambda rows: [{k: v for k, v in row.items() if k != "interval_wall_clock_s"} for row in rows]  # noqa: E731
+    assert strip(resumed.ledger) == strip(full.ledger)
+    final = full.ledger[-1]["groups"]["C"]
+    assert final["cumulative_reference_outflow_volume_m3"] == pytest.approx(0.5 * 20 * 0.5 + 0.5 * 20 * 0.6, rel=1e-12)
+    assert final["cumulative_outflow_delivered_volume_m3"] > 0.0
+    other = TriangularLongRunInputs.build(mesh, bed_m=inputs.bed_m, initial_depth_m=inputs.initial_depth_m,
+                                          output_times_s=inputs.output_times_s, manning_n=inputs.manning_n,
+                                          open_boundaries=[groups[0], {**groups[1], "discharge_coefficient": 0.4}])
+    with pytest.raises(TriangularLongRunError, match="does not match"):
+        run_triangular_long_run(other, options, checkpoint_directory=tmp_path / "x", resume_from=full.checkpoints_written[0])
+
+
+@pytest.mark.skipif(not HAS_NUMBA, reason="optional numba accelerator is not installed")
+def test_numba_and_numpy_agree_with_free_outflow():
+    mesh = _grid_mesh(10, 4, dx=10.0, jitter=0.15, seed=9)
+    x = _centroid_x(mesh)
+    bed = 0.004 * (100.0 - x) + 0.05 * np.sin(x / 9.0)
+    groups = [{"name": "A", "role": "inflow", "edge_indices": _side_edges(mesh, "west"), **_series(0.5)},
+              _free(mesh, reference_time_s=[0.0, 300.0], reference_discharge_m3_s=[0.3, 0.3])]
+    inputs = TriangularLongRunInputs.build(mesh, bed_m=bed, initial_depth_m=np.where(x > 50.0, 0.05, 0.0), output_times_s=[0.0, 60.0, 300.0],
+                                           manning_n=np.full(mesh.n_face, 0.035), rainfall_rate_m_s_by_interval=[1e-5, 1e-5],
+                                           open_boundaries=groups)
+    vector = run_triangular_long_run(inputs, {"kernel": "numpy"})
+    compiled = run_triangular_long_run(inputs, {"kernel": "numba"})
+    assert vector.ledger[-1]["cumulative_outflow_delivered_volume_m3"] > 0.0
+    assert np.allclose(compiled.water_depth_m, vector.water_depth_m, rtol=1e-9, atol=1e-12)
+    assert np.allclose(compiled.unit_discharge_x_m2_s, vector.unit_discharge_x_m2_s, rtol=1e-8, atol=1e-12)
+    for key in ("stored_volume_m3", "cumulative_outflow_delivered_volume_m3"):
+        assert compiled.ledger[-1][key] == pytest.approx(vector.ledger[-1][key], rel=1e-9)
+    assert compiled.ledger[-1]["groups"]["C"]["outflow_discharge_m3_s"] == pytest.approx(
+        vector.ledger[-1]["groups"]["C"]["outflow_discharge_m3_s"], rel=1e-8)
+
+
 @pytest.mark.skipif(not HAS_NUMBA, reason="optional numba accelerator is not installed")
 def test_numba_and_numpy_long_run_paths_agree_with_friction_rain_and_boundaries():
     mesh = _grid_mesh(10, 4, dx=10.0, jitter=0.15, seed=9)

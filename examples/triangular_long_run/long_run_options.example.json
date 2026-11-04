@@ -1,5 +1,5 @@
 {
- "description": "Illustrative long-run options for a 288 h discharge-driven closed-domain run. Edge indices and Q samples are placeholders; real section edges are mapped on the final mesh.",
+ "description": "Illustrative long-run options for a 288 h discharge-driven run. Edge indices and Q samples are placeholders; real section edges are mapped on the final mesh. A_inflow and B_outflow are prescribed-discharge groups; C_free_outflow is a stage-dependent free outflow (critical-flow weir law, crest = adjacent face bed) whose reference series is recorded in the ledger for comparison only.",
  "options": {
   "format": "triangular-long-run-options-v1",
   "schema_version": "1.0",
@@ -1204,6 +1204,28 @@
     60.0
    ],
    "distribution": "conveyance_depth_5_3"
+  },
+  {
+   "format": "triangular-open-boundary-group-v1",
+   "name": "C_free_outflow",
+   "role": "free_outflow",
+   "edge_indices": [
+    301,
+    302,
+    303
+   ],
+   "discharge_coefficient": 0.5443,
+   "crest_elevation_m": null,
+   "reference_time_s": [
+    0.0,
+    518400.0,
+    1036800.0
+   ],
+   "reference_discharge_m3_s": [
+    20.0,
+    40.0,
+    20.0
+   ]
   }
  ]
 }

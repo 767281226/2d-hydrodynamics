@@ -79,7 +79,7 @@ Unknown fields are rejected, and validation errors raise `ValueError` or
 | `volume_correction_reference` | enum | `initial_state_plus_cumulative_inflow` | `initial_state`: P4-1 `max(V0, A*max(h0), 1 m3)`. `initial_state_plus_cumulative_inflow`: `max(V0 + rain so far + boundary inflow so far, A*max(h0), 1 m3)`, evaluated before each attempt. |
 | `manning_friction` | enum | `point_implicit` | `none` (manning_n must be absent), `explicit_source_cfl` (P4-2 explicit drag plus the `source_cfl_fraction/gamma` step bound), `point_implicit` |
 | `source_cfl_fraction` | number, - | null | required in (0, 1] for `explicit_source_cfl`, rejected otherwise |
-| `outflow_stage_volume_fraction` | number, - | 0.5 | (0, 1]; the largest share of a face's water above the dry threshold that prescribed outflow can remove in one RK stage |
+| `outflow_stage_volume_fraction` | number, - | 0.5 | (0, 1]; the largest share of a face's water above the dry threshold that prescribed or free outflow can remove in one RK stage |
 | `maximum_accepted_step_count` | integer | 1e9 | [1, 1e12]; exceeding it fails with `step_safety_limit` |
 | `checkpoint_interval_s` | number, s or null | null | (0, 31536000]; needs a `checkpoint_directory` |
 | `checkpoint_keep_count` | integer | 2 | [1, 1000] newest checkpoints kept |
@@ -99,11 +99,22 @@ it. There is no friction step bound, so thin rain films are no longer limited to
 | Field | Type / unit | Default | Validation |
 |---|---|---|---|
 | `name` | non-empty string | required | unique among groups |
-| `role` | enum | required | `inflow` (water enters) or `outflow` (water leaves) |
+| `role` | enum | required | `inflow` (prescribed Q enters), `outflow` (prescribed Q leaves), or `free_outflow` (stage-dependent outflow, see below) |
 | `edge_indices` | list of int | required | exterior P2 mesh edge indices (`mesh.edge_nodes` order), unique, at most one group per edge |
-| `time_s` | list of number, s | required | strictly increasing; must cover `[0, last output time]` |
-| `discharge_m3_s` | list of number, m3/s | required | same length as `time_s`, every value >= 0 (direction comes from `role`) |
-| `distribution` | enum | `length` | `length` or `conveyance_depth_5_3` (weights `L_e h^(5/3)` over wet faces; an all-dry inflow section falls back to length weights) |
+| `time_s` | list of number, s | required for `inflow`/`outflow`; must be absent for `free_outflow` | at least 2 values, strictly increasing; must cover `[0, last output time]` |
+| `discharge_m3_s` | list of number, m3/s | required for `inflow`/`outflow`; must be absent for `free_outflow` | same length as `time_s`, every value >= 0 (direction comes from `role`) |
+| `distribution` | enum | `length` | `length` or `conveyance_depth_5_3` (weights `L_e h^(5/3)` over wet faces; an all-dry inflow section falls back to length weights). `free_outflow` accepts only `length` (each edge uses its own head). |
+| `discharge_coefficient` | number, dimensionless | null = (2/3)^(3/2) ≈ 0.5443 | `free_outflow` only; (0, 1.5] |
+| `crest_elevation_m` | number, m (bed datum) | null = bed of each edge's interior face (H = h) | `free_outflow` only; [-1000, 10000] |
+| `reference_time_s` | list of number, s | null | `free_outflow` only; given together with `reference_discharge_m3_s`; at least 2 values, strictly increasing, must cover the run |
+| `reference_discharge_m3_s` | list of number, m3/s | null | `free_outflow` only; same length as `reference_time_s`, values >= 0. A comparison series that is only recorded in the ledger and never applied. |
+
+The format string stays `triangular-open-boundary-group-v1`. The new fields are
+optional, so every earlier v1 group is still valid. Earlier prescribed groups
+also keep the same input fingerprint, because unset (null) fields are left out
+of the hash, so their checkpoints can still be resumed.
+A free group's fingerprint always includes its resolved discharge coefficient
+and crest.
 
 Q(t) is linearly interpolated between samples. Asking for a value outside the
 samples fails with `discharge_series_out_of_range`. Use
@@ -129,10 +140,36 @@ Formulation, documented here as an experimental choice:
   Withdrawal from dry faces is not spread to other faces. The ledger records the
   requested and delivered volumes, and the shortfall is requested minus
   delivered. A negative depth still triggers the normal dt-halving retry.
+* Free outflow (`free_outflow`, experimental choice) follows a broad-crested
+  weir / critical-flow law. It is evaluated on each RK stage state, edge by edge,
+  for edge e of length `L_e` on interior face i:
+
+  `q_e = C_d sqrt(g) H^(3/2)` (m2/s), `H = max(0, (z_i + h_i) - z_crest)`
+
+  If `crest_elevation_m` is null, the crest is the face bed and `H = h_i`.
+  A dry face (`h_i <=` dry threshold) gives `H = 0`. The default
+  `C_d = (2/3)^(3/2)` is critical depth over a broad crest,
+  `Q/L = sqrt(g) (2H/3)^(3/2)`. Flow is outward only, never inward. It reuses the
+  outflow method above: the closed-wall Riemann flux is kept on the edge, and
+  the face loses mass `q_e` and momentum `q_e * u_face`. The same per-stage cap
+  `outflow_stage_volume_fraction * (h - dry) * A` applies. Because of this, a
+  pool at or below the crest (H = 0) is exactly a closed wall, and a lake at
+  rest below the crest stays at rest (binary64-identical to a wall run). The
+  stage's critical outflow wave speed `q_e/h_i + sqrt(g h_i)` is added to the
+  face CFL sum.
+  In the ledger, "requested" for a free group is the uncapped weir discharge,
+  so the shortfall shows only the stage cap.
 
 Volumes use the SSPRK2 stage times t and t+dt, so the step volume is
 `0.5 dt (Q(t) + Q(t+dt))`. This is exact for piecewise-linear Q when the
-output times are aligned with the samples.
+output times are aligned with the samples. Free-outflow volumes use the same
+SSPRK2 average of the two stage discharges, and the reference volume uses the
+same average of the reference series.
+
+Free outflow is evaluated in Python on the compact boundary-face set, in the
+same place as the other boundary terms. The numba edge and face passes are
+unchanged. The per-step cost does not change measurably, because the boundary
+faces are a few hundred out of about 10^5.
 
 ## Python API
 
@@ -153,7 +190,10 @@ inputs = TriangularLongRunInputs.build(
     manning_n=n,                         # per face, (0, 1], or None with manning_friction="none"
     rainfall_rate_m_s_by_interval=None,  # one m/s rate per output interval, or None
     open_boundaries=[{"name": "A", "role": "inflow", "edge_indices": [...],
-                      "time_s": t, "discharge_m3_s": q}],
+                      "time_s": t, "discharge_m3_s": q},
+                     {"name": "B", "role": "free_outflow", "edge_indices": [...],
+                      "crest_elevation_m": None,           # None = face bed; or a number in m
+                      "reference_time_s": t, "reference_discharge_m3_s": q_ref}],  # optional, ledger only
 )
 # or TriangularLongRunInputs.from_capability(validate_triangular_run_request(cfg), manning_n=..., ...)
 
@@ -192,6 +232,11 @@ Ledger row per output time, all in m3 unless noted:
   delivered outflow, outflow shortfall, and correction.
 * `residual_m3 = stored - initial - rain - inflow + delivered outflow - correction`.
 * Per-group cumulative inflow, requested, delivered, and shortfall volumes.
+  A `free_outflow` group also has `outflow_discharge_m3_s`, the instantaneous
+  uncapped weir discharge of the saved state. If it has a reference series, it
+  also has `reference_outflow_discharge_m3_s` (the reference Q at the output
+  time) and `cumulative_reference_outflow_volume_m3`. Both are for comparison
+  only and are not part of the residual.
 * `volume_correction_reference_scale_m3`.
 * Minimum and maximum depth.
 * Interval accepted and rejected step counts, minimum and maximum dt, and wall
@@ -252,8 +297,11 @@ and the smallest faces control it. Wave-CFL dt with u = 1 m/s:
 
 * Experimental only. Not production approved.
 * No gate hydraulics, infiltration, or spatial rainfall.
-* Open-boundary forms are the simple prescribed-flux forms above. There are no
-  stage, rating-curve, or Riemann-invariant boundaries.
+* Open-boundary forms are the simple prescribed-flux forms and the
+  critical-flow free outflow above. There are no tailwater-dependent
+  (submerged weir), rating-curve, or Riemann-invariant boundaries. Free outflow
+  assumes free (critical) flow over the crest and ignores downstream backwater.
+  `C_d` and the crest are user choices that have not been calibrated.
 * Outflow caps are applied per group. A face next to two outflow groups is
   protected only by the negative-depth retry.
 * Explicit mode follows the legacy step rules but does not reproduce every

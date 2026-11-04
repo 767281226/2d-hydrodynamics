@@ -57,7 +57,11 @@ python -X utf8 -m hydrodynamics.large_run_driver <config.json> --quiet    # 不�
 | `terrain.vertical_unit` | enum | `m` | 只允许 `m` |
 | `sections.path` | 路径 | 必填 | `assumed-river-sections-audit-v1` JSON（见 §3） |
 | `sections.discharge_series_status` | map 断面键 → enum | 必填 | 每个审计断面都要有；`RECONSTRUCTED_NOT_MEASURED` / `MEASURED` / `COMPUTED_OUTFLOW`；未知断面键拒绝 |
-| `sections.distribution` | map 断面键 → enum | `{}` | `length` 或 `conveyance_depth_5_3`；缺省 inflow=`length`，outflow=`conveyance_depth_5_3` |
+| `sections.distribution` | map 断面键 → enum | `{}` | `length` 或 `conveyance_depth_5_3`；缺省 inflow=`length`，规定出流=`conveyance_depth_5_3`；`free_outflow` 断面不得设置 |
+| `sections.outflow_boundary` | map 断面键 → object | `{}` | 仅限审计中 role=outflow 的断面（inflow 断面或未知键报错）；缺省 `prescribed_outflow` |
+| `sections.outflow_boundary.<键>.boundary_type` | enum | `prescribed_outflow` | `prescribed_outflow`：CSV 列为施加的 Q(t)（原行为）；`free_outflow`：随水位的自由出流（临界流堰公式，见 docs/triangular_long_run.md），CSV 列只作为参照序列记入 ledger |
+| `sections.outflow_boundary.<键>.discharge_coefficient` | number 无量纲或 null | null = (2/3)^(3/2) ≈ 0.5443 | 仅 `free_outflow`；(0, 1.5] |
+| `sections.outflow_boundary.<键>.crest_elevation_m` | number m 或 null | null = 各边相邻面床高（H = h） | 仅 `free_outflow`；[-1000, 10000]，与地形同一垂直基准 |
 | `forcing.path` | 路径 | 必填 | CSV，含 `time_s` 与审计里各断面的 `discharge_series_column`；`time_s` 严格递增且覆盖 `[0, 最后输出时刻]`；流量值有限且 ≥ 0（方向由断面 role 决定） |
 | `forcing.rainfall` | null | null | v1 必须为 null（无降雨）；降雨列合同留待后续版本 |
 | `run.hours` | int | 与 `output_times_s` 二选一 | [1, 8760]；输出时刻 0..hours 整点 |
@@ -82,8 +86,19 @@ python -X utf8 -m hydrodynamics.large_run_driver <config.json> --quiet    # 不�
 驱动据此核对网格）、可选 `section_status`（缺省取顶层）、可选 `width_m`。顶层 `mesh_id`、`crs` 若存在必须与网格一致。
 至少一个 inflow 断面。
 
-求解器边界组：`{name: 键, role, edge_indices, time_s: CSV time_s, discharge_m3_s: CSV 列, distribution}`。
-Q(t) 由求解器线性插值。无降雨（`rainfall_rate_m_s_by_interval=None`）。
+求解器边界组：入流与规定出流断面为 `{name: 键, role, edge_indices, time_s: CSV time_s, discharge_m3_s: CSV 列, distribution}`，
+Q(t) 由求解器线性插值。`free_outflow` 断面为 `{name, role: "free_outflow", edge_indices, reference_time_s: CSV time_s,
+reference_discharge_m3_s: CSV 列[, discharge_coefficient][, crest_elevation_m]}`：出流量由局部水位按
+`q_e = C_d sqrt(g) H^(3/2)` 计算（只出不进，实验性选择），CSV 重建出流只作对比，ledger 中每组记录
+`outflow_discharge_m3_s`（输出时刻瞬时堰流量）、`cumulative_outflow_delivered_volume_m3`、`reference_outflow_discharge_m3_s`
+与 `cumulative_reference_outflow_volume_m3`。无降雨（`rainfall_rate_m_s_by_interval=None`）。
+
+元数据的 `forcing.boundary_groups[].role` 仍沿用审计 role（`outflow`）；`solver.sections.groups.<键>` 对 `free_outflow`
+断面额外记录 `boundary_type`、`discharge_series_use: reference_only`、`discharge_coefficient`、`crest_elevation_m`、`crest`，
+`distribution` 为 null。规定出流断面的元数据保持原样（不加新键），因此旧的未完成结果仍能 `--resume`。
+`--check` 在 `inputs.sections.sections.<键>` 中打印每个断面的 `boundary_type`、`discharge_series_use`、`distribution`
+以及自由出流参数。close ledger 中 `free_outflow` 组的 `role` 为 `free_outflow`，并带 `outflow_discharge_m3_s` 与
+`cumulative_reference_outflow_volume_m3`。
 
 元数据（`LargeRunMetadata`）：`data_origin=LIVE_SOLVER_RUN`、`live_solver_ran=true`、`production_approved=false`、
 `forcing=river_assumed_sections_forcing(groups)`（标签即 "RIVER INFLOW/OUTFLOW AT ASSUMED (USER-CONFIRMED, NON-AUTHORITATIVE)
@@ -152,4 +167,5 @@ close ledger：初始/末态体积、累计雨/入流/请求出流/交付出流/
 
 * 实验性，`production_approved=false`。无降雨、无闸门调度、无空间变化糙率与初始水深。
 * 断面为假定断面（用户确认、非权威），Q 为重建值；该标签写入全部产物。
+* `free_outflow` 为实验性临界流堰边界：不考虑下游顶托（淹没出流），C_d 与堰顶高程未经率定。
 * 数值方案与选项见 `docs/triangular_long_run.md`，驱动不改变它们。

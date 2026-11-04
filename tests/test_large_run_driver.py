@@ -156,6 +156,14 @@ def test_schema_and_example_match_the_model():
     (lambda c: c["output"].update(export="yes"), "boolean"),
     (lambda c: c.update(unknown_field=1), "Extra inputs"),
     (lambda c: c.update(format="large-run-driver-config-v2"), "format"),
+    (lambda c: c["sections"].update(outflow_boundary={"east_out": {"boundary_type": "rating_curve"}}), "boundary_type"),
+    (lambda c: c["sections"].update(outflow_boundary={"east_out": {"discharge_coefficient": 0.5}}), "only valid with boundary_type free_outflow"),
+    (lambda c: c["sections"].update(outflow_boundary={"east_out": {"boundary_type": "free_outflow", "discharge_coefficient": 0}}), "greater than 0"),
+    (lambda c: c["sections"].update(outflow_boundary={"east_out": {"boundary_type": "free_outflow", "discharge_coefficient": 1.6}}), "less than or equal to 1.5"),
+    (lambda c: c["sections"].update(outflow_boundary={"east_out": {"boundary_type": "free_outflow", "crest_elevation_m": "1"}}), "crest_elevation_m"),
+    (lambda c: c["sections"].update(outflow_boundary={"east_out": {"boundary_type": "free_outflow", "crest_elevation_m": 1e5}}), "less than or equal to 10000"),
+    (lambda c: c["sections"].update(outflow_boundary={"east_out": {"boundary_type": "free_outflow", "weir": 1}}), "Extra inputs"),
+    (lambda c: c["sections"].update(outflow_boundary={"a__b": {}}), "without '__'"),
 ])
 def test_config_validation_errors(tmp_path, mutate, message):
     config = _config_dict(make_case(tmp_path))
@@ -323,6 +331,68 @@ def test_full_run_streams_exports_and_verifies(tmp_path):
         run_large_case(path)
     with pytest.raises(LargeRunDriverError, match="already complete"):
         run_large_case(path, resume=True)
+
+
+def _free_outflow_case(root: Path, *, name: str = "run", crest=None, coefficient=None, **kwargs) -> Path:
+    path = make_case(root, name=name, **kwargs)
+    config = _config_dict(path)
+    settings = {"boundary_type": "free_outflow", "crest_elevation_m": crest}
+    if coefficient is not None:
+        settings["discharge_coefficient"] = coefficient
+    config["sections"]["outflow_boundary"] = {"east_out": settings}
+    return _rewrite(path, config)
+
+
+def test_free_outflow_section_config_builds_reference_only_groups(tmp_path):
+    path = _free_outflow_case(tmp_path, crest=0.3, coefficient=0.5)
+    case = _prepare(path)
+    inflow, free = case.groups
+    assert inflow["role"] == "inflow" and inflow["time_s"] == [0.0, 5.0, 10.0, 15.0]
+    assert free == {"name": "east_out", "role": "free_outflow", "edge_indices": free["edge_indices"],
+                    "reference_time_s": [0.0, 5.0, 10.0, 15.0], "reference_discharge_m3_s": [0.2] * 4,
+                    "discharge_coefficient": 0.5, "crest_elevation_m": 0.3}
+    groups = case.metadata.solver["sections"]["groups"]
+    assert groups["east_out"]["boundary_type"] == "free_outflow" and groups["east_out"]["discharge_series_use"] == "reference_only"
+    assert groups["east_out"]["distribution"] is None and groups["east_out"]["crest_elevation_m"] == 0.3
+    assert "boundary_type" not in groups["west_in"]  # prescribed metadata unchanged (keeps old partial results resumable)
+    assert {g.group_id: g.role for g in case.metadata.forcing.boundary_groups} == {"west_in": "inflow", "east_out": "outflow"}
+    report = check_case(path)
+    assert report["status"] == "ok", report["errors"]
+    section = report["inputs"]["sections"]["sections"]["east_out"]
+    assert section["boundary_type"] == "free_outflow" and section["discharge_coefficient"] == 0.5 and section["crest"] == "fixed_elevation"
+    assert report["inputs"]["sections"]["sections"]["west_in"]["boundary_type"] == "inflow"
+
+    config = _config_dict(path)
+    config["sections"]["distribution"] = {"east_out": "length"}
+    with pytest.raises(LargeRunDriverError, match="distribution does not apply to a free_outflow section"):
+        _prepare(_rewrite(path, config))
+    assert any("distribution does not apply" in e for e in check_case(path)["errors"])
+    config["sections"]["distribution"] = {}
+    config["sections"]["outflow_boundary"] = {"west_in": {"boundary_type": "free_outflow"}}
+    with pytest.raises(LargeRunDriverError, match="west_in is an inflow section"):
+        _prepare(_rewrite(path, config))
+    config["sections"]["outflow_boundary"] = {"ghost": {"boundary_type": "free_outflow"}}
+    with pytest.raises(LargeRunDriverError, match=r"outflow_boundary names unknown sections \['ghost'\]"):
+        _prepare(_rewrite(path, config))
+
+
+def test_full_run_with_free_outflow_exports_and_verifies(tmp_path):
+    import netCDF4
+    path = _free_outflow_case(tmp_path)
+    report = run_large_case(path)
+    assert report["status"] == "complete" and report["verify"]["status"] == "PASS"
+    rows = _ledger_rows(tmp_path / "run")
+    final = rows[-1]
+    group = final["groups"]["east_out"]
+    assert group["cumulative_outflow_delivered_volume_m3"] > 0.0 and group["outflow_discharge_m3_s"] > 0.0
+    assert group["cumulative_reference_outflow_volume_m3"] == pytest.approx(0.2 * 10.0, rel=1e-12)
+    assert abs(final["residual_m3"]) < 1e-9
+    with netCDF4.Dataset(str(tmp_path / "run" / "bundle" / "result_native.nc")) as ds:
+        assert "mass_budget_groups__east_out__outflow_discharge_m3_s" in ds.variables
+        assert ds["mass_budget_groups__east_out__outflow_discharge_m3_s"].units == "m3 s-1"
+        close = json.loads(str(ds["mass_ledger_json"][...]))
+        assert close["groups"]["east_out"]["role"] == "free_outflow"
+        assert close["groups"]["east_out"]["cumulative_reference_outflow_volume_m3"] == pytest.approx(2.0, rel=1e-12)
 
 
 def test_failed_input_run_writes_failed_report_and_keeps_nothing_else(tmp_path):

@@ -1,7 +1,7 @@
 {
  "format": "large-run-driver-config-v1",
  "schema_version": "1.0",
- "description": "First real discharge-driven 288 h run on the mesh005 artifact: no rainfall, river Q at three assumed (user-confirmed, non-authoritative) sections, reconstructed (not measured) Q series. Relative paths resolve against this file's directory. The run directory must not exist; the exported bundle is written to <directory>/bundle.",
+ "description": "Real discharge-driven 288 h run on the mesh005 artifact: no rainfall, river inflow A prescribed from the reconstructed (not measured) Q series at an assumed (user-confirmed, non-authoritative) section; downstream exits B and C are stage-dependent free outflow (critical-flow weir law, crest = adjacent face bed), their CSV columns are reference series only. Relative paths resolve against this file's directory. The run directory must not exist; the exported bundle is written to <directory>/bundle.",
  "mesh": {
   "path": "../../work/b1r29/attempt_mesh005_20261103_fbe6a14e6854/out/mesh005_20261103_fbe6a14e6854/artifacts/domain-mesh.json",
   "expected_sha256": null
@@ -23,9 +23,19 @@
    "C": "COMPUTED_OUTFLOW"
   },
   "distribution": {
-   "A": "length",
-   "B": "conveyance_depth_5_3",
-   "C": "conveyance_depth_5_3"
+   "A": "length"
+  },
+  "outflow_boundary": {
+   "B": {
+    "boundary_type": "free_outflow",
+    "discharge_coefficient": null,
+    "crest_elevation_m": null
+   },
+   "C": {
+    "boundary_type": "free_outflow",
+    "discharge_coefficient": null,
+    "crest_elevation_m": null
+   }
   }
  },
  "forcing": {

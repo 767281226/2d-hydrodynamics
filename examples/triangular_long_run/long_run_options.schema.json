@@ -172,7 +172,7 @@
     },
     "OpenBoundaryGroupSpec": {
       "additionalProperties": false,
-      "description": "Prescribed-discharge open boundary group on exterior mesh edges.\n\n``discharge_m3_s`` are non-negative magnitudes; ``role`` gives the direction\n(inflow enters the domain, outflow leaves it).  Q(t) is linearly\ninterpolated between samples; evaluating outside [time_s[0], time_s[-1]] is\nan error, and the samples must cover the whole run.",
+      "description": "Open boundary group on exterior mesh edges.\n\n``inflow`` / ``outflow``: prescribed discharge.  ``discharge_m3_s`` are\nnon-negative magnitudes; ``role`` gives the direction.  Q(t) is linearly\ninterpolated between samples; evaluating outside [time_s[0], time_s[-1]] is\nan error, and the samples must cover the whole run.\n\n``free_outflow``: stage-dependent outflow (experimental critical-flow weir\nlaw q_e = C_d sqrt(g) H^(3/2), H = max(0, z + h - z_crest), outward only).\nIt takes no prescribed series; ``reference_time_s`` /\n``reference_discharge_m3_s`` (both or neither) are only integrated into the\nledger for comparison and never applied.",
       "properties": {
         "format": {
           "const": "triangular-open-boundary-group-v1",
@@ -187,7 +187,8 @@
         "role": {
           "enum": [
             "inflow",
-            "outflow"
+            "outflow",
+            "free_outflow"
           ],
           "title": "Role",
           "type": "string"
@@ -201,22 +202,38 @@
           "type": "array"
         },
         "time_s": {
-          "items": {
-            "type": "number"
-          },
-          "maxItems": 10000000,
-          "minItems": 2,
-          "title": "Time S",
-          "type": "array"
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 10000000,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time S"
         },
         "discharge_m3_s": {
-          "items": {
-            "type": "number"
-          },
-          "maxItems": 10000000,
-          "minItems": 2,
-          "title": "Discharge M3 S",
-          "type": "array"
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 10000000,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Discharge M3 S"
         },
         "distribution": {
           "default": "length",
@@ -226,14 +243,74 @@
           ],
           "title": "Distribution",
           "type": "string"
+        },
+        "discharge_coefficient": {
+          "anyOf": [
+            {
+              "gt": 0.0,
+              "le": 1.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Discharge Coefficient"
+        },
+        "crest_elevation_m": {
+          "anyOf": [
+            {
+              "ge": -1000.0,
+              "le": 10000.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Crest Elevation M"
+        },
+        "reference_time_s": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 10000000,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Time S"
+        },
+        "reference_discharge_m3_s": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 10000000,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Discharge M3 S"
         }
       },
       "required": [
         "name",
         "role",
-        "edge_indices",
-        "time_s",
-        "discharge_m3_s"
+        "edge_indices"
       ],
       "title": "OpenBoundaryGroupSpec",
       "type": "object"

@@ -9,7 +9,8 @@ dry threshold, uniform rainfall source) through the vectorised kernels in
 * point-implicit Manning friction (no friction step limit);
 * a correction-budget reference that grows with cumulative rainfall and
   boundary inflow volume;
-* prescribed-discharge open boundary groups (inflow / capped outflow);
+* prescribed-discharge open boundary groups (inflow / capped outflow) and
+  stage-dependent free-outflow groups (critical-flow weir law, capped);
 * a per-output frame sink (frames are handed off, never retained);
 * bounded per-face maxima and a compact per-interval mass ledger;
 * atomic checkpoints with exact restart.
@@ -62,6 +63,8 @@ LONG_RUN_OPTIONS_FORMAT = "triangular-long-run-options-v1"
 OPEN_BOUNDARY_FORMAT = "triangular-open-boundary-group-v1"
 CHECKPOINT_FORMAT = "triangular-long-run-checkpoint-v1"
 LONG_RUN_SOLVER_VERSION = "triangular-long-run-1.0.0"
+# Critical depth over a broad crest: Q/L = (2/3)^(3/2) sqrt(g) H^(3/2).
+FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT = (2.0 / 3.0) ** 1.5
 
 
 class TriangularLongRunError(ValueError):
@@ -103,8 +106,8 @@ class TriangularLongRunOptions(_StrictContractModel):
     # "point_implicit": q <- q / (1 + dt g n^2 |q| / h^(7/3)) per RK stage.
     manning_friction: Literal["none", "explicit_source_cfl", "point_implicit"] = "point_implicit"
     source_cfl_fraction: Number | None = Field(default=None, gt=0.0, le=1.0)
-    # Fraction of a face's water above the dry threshold that prescribed outflow
-    # may remove in one RK stage.
+    # Fraction of a face's water above the dry threshold that prescribed or free
+    # outflow may remove in one RK stage.
     outflow_stage_volume_fraction: Number = Field(default=0.5, gt=0.0, le=1.0)
     maximum_accepted_step_count: StrictInt = Field(default=1_000_000_000, ge=1, le=1_000_000_000_000)
     checkpoint_interval_s: Number | None = Field(default=None, gt=0.0, le=31_536_000.0)
@@ -133,22 +136,57 @@ class TriangularLongRunOptions(_StrictContractModel):
         return hashlib.sha256(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-class OpenBoundaryGroupSpec(_StrictContractModel):
-    """Prescribed-discharge open boundary group on exterior mesh edges.
+def _check_series(times: list[float], values: list[float], time_name: str, value_name: str) -> None:
+    if len(times) != len(values):
+        raise ValueError(f"{time_name} and {value_name} must have the same length")
+    if any(right <= left for left, right in zip(times, times[1:])):
+        raise ValueError(f"{time_name} must be strictly increasing")
+    if any(value < 0.0 for value in values):
+        raise ValueError(f"{value_name} values are magnitudes and must be >= 0; use role to set direction")
 
-    ``discharge_m3_s`` are non-negative magnitudes; ``role`` gives the direction
-    (inflow enters the domain, outflow leaves it).  Q(t) is linearly
+
+_FREE_OUTFLOW_ONLY_FIELDS = ("discharge_coefficient", "crest_elevation_m", "reference_time_s", "reference_discharge_m3_s")
+
+
+class OpenBoundaryGroupSpec(_StrictContractModel):
+    """Open boundary group on exterior mesh edges.
+
+    ``inflow`` / ``outflow``: prescribed discharge.  ``discharge_m3_s`` are
+    non-negative magnitudes; ``role`` gives the direction.  Q(t) is linearly
     interpolated between samples; evaluating outside [time_s[0], time_s[-1]] is
     an error, and the samples must cover the whole run.
+
+    ``free_outflow``: stage-dependent outflow (experimental critical-flow weir
+    law q_e = C_d sqrt(g) H^(3/2), H = max(0, z + h - z_crest), outward only).
+    It takes no prescribed series; ``reference_time_s`` /
+    ``reference_discharge_m3_s`` (both or neither) are only integrated into the
+    ledger for comparison and never applied.
     """
 
     format: Literal["triangular-open-boundary-group-v1"] = OPEN_BOUNDARY_FORMAT
     name: Text
-    role: Literal["inflow", "outflow"]
+    role: Literal["inflow", "outflow", "free_outflow"]
     edge_indices: list[StrictInt] = Field(min_length=1)
-    time_s: list[Number] = Field(min_length=2, max_length=10_000_000)
-    discharge_m3_s: list[Number] = Field(min_length=2, max_length=10_000_000)
+    # s / m3/s.  Required for inflow and outflow, forbidden for free_outflow.
+    time_s: list[Number] | None = Field(default=None, min_length=2, max_length=10_000_000)
+    discharge_m3_s: list[Number] | None = Field(default=None, min_length=2, max_length=10_000_000)
     distribution: Literal["length", "conveyance_depth_5_3"] = "length"
+    # free_outflow only.  Dimensionless, (0, 1.5]; null = (2/3)^(3/2) ~= 0.5443.
+    discharge_coefficient: Number | None = Field(default=None, gt=0.0, le=1.5)
+    # free_outflow only.  m, bed datum, [-1000, 10000]; null = bed of the adjacent face (H = h).
+    crest_elevation_m: Number | None = Field(default=None, ge=-1000.0, le=10000.0)
+    # free_outflow only.  Comparison series (s / m3/s), recorded in the ledger, never applied.
+    reference_time_s: list[Number] | None = Field(default=None, min_length=2, max_length=10_000_000)
+    reference_discharge_m3_s: list[Number] | None = Field(default=None, min_length=2, max_length=10_000_000)
+
+    @property
+    def effective_discharge_coefficient(self) -> float:
+        return FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT if self.discharge_coefficient is None else float(self.discharge_coefficient)
+
+    @property
+    def series_time_s(self) -> list[float] | None:
+        """Time samples that must cover the run (prescribed series, or the free-outflow reference)."""
+        return self.reference_time_s if self.role == "free_outflow" else self.time_s
 
     @field_validator("name")
     @classmethod
@@ -159,12 +197,23 @@ class OpenBoundaryGroupSpec(_StrictContractModel):
 
     @model_validator(mode="after")
     def series(self) -> "OpenBoundaryGroupSpec":
-        if len(self.time_s) != len(self.discharge_m3_s):
-            raise ValueError("time_s and discharge_m3_s must have the same length")
-        if any(right <= left for left, right in zip(self.time_s, self.time_s[1:])):
-            raise ValueError("time_s must be strictly increasing")
-        if any(value < 0.0 for value in self.discharge_m3_s):
-            raise ValueError("discharge_m3_s values are magnitudes and must be >= 0; use role to set direction")
+        if self.role == "free_outflow":
+            if self.time_s is not None or self.discharge_m3_s is not None:
+                raise ValueError("role free_outflow computes Q from the local water level; time_s/discharge_m3_s are not allowed "
+                                 "(use reference_time_s/reference_discharge_m3_s for a comparison series)")
+            if self.distribution != "length":
+                raise ValueError("distribution does not apply to role free_outflow (every edge uses its own head)")
+            if (self.reference_time_s is None) != (self.reference_discharge_m3_s is None):
+                raise ValueError("reference_time_s and reference_discharge_m3_s must be given together or not at all")
+            if self.reference_time_s is not None:
+                _check_series(self.reference_time_s, self.reference_discharge_m3_s, "reference_time_s", "reference_discharge_m3_s")
+        else:
+            if self.time_s is None or self.discharge_m3_s is None:
+                raise ValueError(f"role {self.role} requires time_s and discharge_m3_s")
+            given = [name for name in _FREE_OUTFLOW_ONLY_FIELDS if getattr(self, name) is not None]
+            if given:
+                raise ValueError(f"{', '.join(given)} only valid for role free_outflow")
+            _check_series(self.time_s, self.discharge_m3_s, "time_s", "discharge_m3_s")
         if any(index < 0 for index in self.edge_indices):
             raise ValueError("edge_indices must be non-negative mesh edge indices")
         if len(set(self.edge_indices)) != len(self.edge_indices):
@@ -246,9 +295,11 @@ class TriangularLongRunInputs:
                 if edge in used:
                     raise TriangularLongRunError(f"open boundary group {group.name!r}: edge index {edge} belongs to more than one group")
                 used.add(edge)
-            if group.time_s[0] > 0.0 or group.time_s[-1] < float(times[-1]):
+            samples = group.series_time_s
+            if samples is not None and (samples[0] > 0.0 or samples[-1] < float(times[-1])):
+                label = "reference discharge samples" if group.role == "free_outflow" else "discharge samples"
                 raise TriangularLongRunError(
-                    f"open boundary group {group.name!r}: discharge samples cover [{group.time_s[0]}, {group.time_s[-1]}] s "
+                    f"open boundary group {group.name!r}: {label} cover [{samples[0]}, {samples[-1]}] s "
                     f"but the run needs [0, {float(times[-1])}] s"
                 )
         return cls(mesh, bed, depth, times, n_array, rain, tuple(groups))
@@ -336,8 +387,19 @@ class _BoundaryGroup:
     nx: np.ndarray           # outward unit normal
     ny: np.ndarray
     factor: np.ndarray       # length / area[face], 1/m
-    times: np.ndarray
+    times: np.ndarray        # prescribed series, or the free-outflow reference series (empty if none)
     discharge: np.ndarray
+    bed: np.ndarray          # bed elevation of each edge's face, m
+    crest: np.ndarray | None  # free_outflow crest elevation per edge, m; None = face bed (head = depth)
+    coefficient: float       # free_outflow discharge coefficient C_d
+
+    @property
+    def free(self) -> bool:
+        return self.spec.role == "free_outflow"
+
+    @property
+    def has_reference(self) -> bool:
+        return self.free and self.times.size > 0
 
     def discharge_at(self, time_s: float) -> float:
         tolerance = _step_tolerance_s(max(abs(time_s), 1.0))
@@ -376,12 +438,19 @@ def _prepare_boundary_groups(inputs: TriangularLongRunInputs, geometry: EdgeGeom
     stored = (lambda faces: faces) if face_map is None else (lambda faces: face_map[faces])
     union = np.unique(np.concatenate([stored(geometry.left[edges]) for edges in edge_lists])) if edge_lists else np.zeros(0, dtype=np.int64)
     groups = []
+    bed = np.asarray(inputs.bed_m, dtype=np.float64)
     for spec, edges in zip(inputs.open_boundaries, edge_lists):
         faces = stored(geometry.left[edges])
+        free = spec.role == "free_outflow"
+        series_t = spec.reference_time_s if free else spec.time_s
+        series_q = spec.reference_discharge_m3_s if free else spec.discharge_m3_s
+        crest = np.full(edges.size, float(spec.crest_elevation_m)) if free and spec.crest_elevation_m is not None else None
         groups.append(_BoundaryGroup(
             spec=spec, edges=edges, faces=faces, local=np.searchsorted(union, faces), length=geometry.length[edges],
             nx=geometry.nx[edges], ny=geometry.ny[edges], factor=geometry.left_factor[edges],
-            times=np.asarray(spec.time_s, dtype=np.float64), discharge=np.asarray(spec.discharge_m3_s, dtype=np.float64),
+            times=np.asarray(series_t if series_t is not None else [], dtype=np.float64),
+            discharge=np.asarray(series_q if series_q is not None else [], dtype=np.float64),
+            bed=bed[geometry.left[edges]], crest=crest, coefficient=spec.effective_discharge_coefficient,
         ))
     return _BoundarySet(tuple(groups), union)
 
@@ -392,6 +461,7 @@ class _BoundaryStage:
     inflow_m3_s: dict[str, float]
     outflow_requested_m3_s: dict[str, float]
     outflow_delivered_m3_s: dict[str, float]
+    reference_outflow_m3_s: dict[str, float] = field(default_factory=dict)  # free_outflow comparison series only
 
 
 def _edge_weights(group: _BoundaryGroup, depth: np.ndarray, dry_depth_m: float, *, wet_only: bool) -> np.ndarray:
@@ -420,17 +490,49 @@ def _inflow_ghost_depth(q: np.ndarray, h_interior: np.ndarray, gravity: float) -
     return np.maximum(h_interior, critical)
 
 
+def _free_outflow_unit_discharge(group: _BoundaryGroup, depth: np.ndarray, gravity: float, dry_depth_m: float) -> np.ndarray:
+    """Critical-flow weir law per edge, q_e = C_d sqrt(g) H^(3/2) in m2/s, outward only.
+
+    H = h on a wet face when the crest is the face bed, otherwise
+    H = max(0, (z + h) - z_crest).  Dry faces (h <= dry threshold) give 0, so a
+    pool at or below the crest is exactly a closed wall.
+    """
+    h = depth[group.faces]
+    wet = h > dry_depth_m
+    if group.crest is None:
+        head = np.where(wet, h, 0.0)
+    else:
+        head = np.where(wet, np.maximum((group.bed + h) - group.crest, 0.0), 0.0)
+    if not head.any():
+        return head  # all zeros: exactly the result below, without the extra array work
+    return (group.coefficient * math.sqrt(gravity)) * (head * np.sqrt(head))
+
+
 def _boundary_wave_sums(boundaries: _BoundarySet, state: np.ndarray, time_s: float,
                         *, gravity: float, dry_depth_m: float) -> np.ndarray | None:
-    """Extra sum_e L_e a_e from inflow ghost states on ``boundaries.faces`` (added to the wall wave sums).
+    """Extra sum_e L_e a_e on ``boundaries.faces`` (added to the wall wave sums).
 
-    Each group's contribution is accumulated per face in edge order and the
-    groups are added in order, exactly as a dense ``bincount`` sum would.
+    Inflow adds its ghost wave speed ``q/h_g + sqrt(g h_g)``; free outflow the
+    critical outflow speed ``q/h + sqrt(g h)`` of the interior face; prescribed
+    outflow adds nothing.  Each group's contribution is accumulated per face in
+    edge order and the groups are added in order, exactly as a dense
+    ``bincount`` sum would.
     """
     extra = None
     n_local = boundaries.faces.size
     for group in boundaries:
-        if group.spec.role != "inflow":
+        if group.spec.role == "outflow":
+            continue
+        if group.free:
+            q = _free_outflow_unit_discharge(group, state[:, 0], gravity, dry_depth_m)
+            positive = q > 0.0
+            if not positive.any():
+                continue
+            h = state[group.faces, 0]
+            speed = np.zeros_like(q)
+            speed[positive] = q[positive] / h[positive] + np.sqrt(gravity * h[positive])
+            contribution = np.bincount(group.local, weights=group.length * speed, minlength=n_local)
+            extra = contribution if extra is None else extra + contribution
             continue
         q = _inflow_unit_discharge(group, state[:, 0], time_s, dry_depth_m)
         positive = q > 0.0
@@ -474,7 +576,10 @@ def _boundary_stage(boundaries: _BoundarySet, state: np.ndarray, time_s: float, 
       (q_e^2 / h_g) along the inward normal, h_g = max(h_face, (q_e^2/g)^(1/3));
     * outflow removes mass q_e and momentum q_e * u_face, with q_e capped so a
       stage of length dt removes at most ``outflow_fraction`` of the water above
-      the dry threshold in each adjacent face.
+      the dry threshold in each adjacent face;
+    * free outflow does the same with q_e = C_d sqrt(g) H^(3/2) evaluated on the
+      stage state instead of a prescribed Q (its "requested" discharge is the
+      uncapped weir discharge).
 
     The terms are computed on ``boundaries.faces`` and written into ``dense``
     (an ``(n_face, 3)`` buffer that is zero on every other row; allocated when
@@ -501,19 +606,33 @@ def _boundary_stage(boundaries: _BoundarySet, state: np.ndarray, time_s: float, 
             d2 -= np.bincount(local, weights=group.factor * momentum * group.ny, minlength=n_local)
             stage.inflow_m3_s[name] = math.fsum((q * group.length).tolist())
         else:
-            requested = group.discharge_at(time_s)
-            stage.outflow_requested_m3_s[name] = requested
-            delivered_q = np.zeros(group.edges.size)
-            if requested > 0.0:
-                weights = _edge_weights(group, h, dry_depth_m, wet_only=True)
-                total = math.fsum(weights.tolist())
-                if total > 0.0:
-                    q = requested * (weights / total) / group.length
-                    wanted = np.bincount(local, weights=q * group.length * dt_s, minlength=n_local)[local]
-                    available = outflow_fraction * np.maximum(h[group.faces] - dry_depth_m, 0.0) * area[group.faces]
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        scale = np.where(wanted > available, available / wanted, 1.0)
-                    delivered_q = q * np.where(wanted > 0.0, scale, 0.0)
+            q = None  # unit discharge per edge before the stage cap, or None for no withdrawal
+            if group.free:
+                weir = _free_outflow_unit_discharge(group, h, gravity, dry_depth_m)
+                if group.has_reference:
+                    stage.reference_outflow_m3_s[name] = group.discharge_at(time_s)
+                if weir.any():
+                    q = weir
+                    stage.outflow_requested_m3_s[name] = math.fsum((weir * group.length).tolist())
+                else:
+                    stage.outflow_requested_m3_s[name] = 0.0
+            else:
+                requested = group.discharge_at(time_s)
+                stage.outflow_requested_m3_s[name] = requested
+                if requested > 0.0:
+                    weights = _edge_weights(group, h, dry_depth_m, wet_only=True)
+                    total = math.fsum(weights.tolist())
+                    if total > 0.0:
+                        q = requested * (weights / total) / group.length
+            if q is None:
+                # No withdrawal: the face terms below would subtract exact +0.0, so skip them.
+                stage.outflow_delivered_m3_s[name] = 0.0
+                continue
+            wanted = np.bincount(local, weights=q * group.length * dt_s, minlength=n_local)[local]
+            available = outflow_fraction * np.maximum(h[group.faces] - dry_depth_m, 0.0) * area[group.faces]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                scale = np.where(wanted > available, available / wanted, 1.0)
+            delivered_q = q * np.where(wanted > 0.0, scale, 0.0)
             hf = h[group.faces]
             wet = hf > dry_depth_m
             u = np.zeros_like(hf)
@@ -603,7 +722,14 @@ def _inputs_fingerprint(inputs: TriangularLongRunInputs, geometry: EdgeGeometry)
     digest.update(b"n" if inputs.manning_n is None else inputs.manning_n.tobytes())
     digest.update(b"r" if inputs.rainfall_rate_m_s_by_interval is None else inputs.rainfall_rate_m_s_by_interval.tobytes())
     for group in inputs.open_boundaries:
-        digest.update(json.dumps(group.model_dump(mode="json"), sort_keys=True).encode("utf-8"))
+        # Unset (null) fields are omitted, so prescribed groups hash exactly as
+        # before free_outflow existed (older checkpoints stay resumable); free
+        # groups always carry their resolved discharge coefficient.
+        data = group.model_dump(mode="json", exclude_none=True)
+        if group.role == "free_outflow":
+            data["discharge_coefficient"] = group.effective_discharge_coefficient
+            data.setdefault("crest_elevation_m", None)
+        digest.update(json.dumps(data, sort_keys=True).encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -721,7 +847,9 @@ def run_triangular_long_run(
     counters: dict[str, Any] = {"accepted": 0, "rejected": {}, "corrections": 0}
     ledger_rows: list[dict[str, Any]] = []
     totals = {key: _Compensated() for key in _LEDGER_KEYS}
-    group_totals = {group.spec.name: {key: _Compensated() for key in ("inflow", "outflow_requested", "outflow_delivered")} for group in groups}
+    group_keys = {group.spec.name: ("inflow", "outflow_requested", "outflow_delivered") + (("reference_outflow",) if group.has_reference else ())
+                  for group in groups}
+    group_totals = {name: {key: _Compensated() for key in keys} for name, keys in group_keys.items()}
     state = to_internal(initial.state)
     max_depth = state[:, 0].copy()
     time_of_max = np.zeros(mesh.n_face)
@@ -761,6 +889,23 @@ def run_triangular_long_run(
         np.divide(current[:, 2], h, out=v, where=wet)
         return u, v
 
+    def group_ledger(group: _BoundaryGroup, index: int) -> dict[str, float]:
+        items = group_totals[group.spec.name]
+        entry = {
+            "cumulative_inflow_volume_m3": items["inflow"].value,
+            "cumulative_outflow_requested_volume_m3": items["outflow_requested"].value,
+            "cumulative_outflow_delivered_volume_m3": items["outflow_delivered"].value,
+            "cumulative_outflow_shortfall_volume_m3": items["outflow_requested"].value - items["outflow_delivered"].value,
+        }
+        if group.free:
+            # Instantaneous (uncapped) weir discharge of the saved state, m3/s.
+            weir = _free_outflow_unit_discharge(group, state[:, 0], g, dry)
+            entry["outflow_discharge_m3_s"] = math.fsum((weir * group.length).tolist())
+            if group.has_reference:
+                entry["reference_outflow_discharge_m3_s"] = group.discharge_at(times[index])
+                entry["cumulative_reference_outflow_volume_m3"] = items["reference_outflow"].value
+        return entry
+
     def ledger_row(index: int, interval: Mapping[str, float], wall_s: float, interval_steps: int, interval_rejected: int,
                    interval_dt: tuple[float, float]) -> dict[str, Any]:
         stored = math.fsum((state[:, 0] * area_k).tolist())
@@ -785,15 +930,7 @@ def run_triangular_long_run(
             "cumulative_outflow_shortfall_volume_m3": cumulative["outflow_requested"] - cumulative["outflow_delivered"],
             "cumulative_correction_volume_m3": cumulative["correction"],
             "residual_m3": residual,
-            "groups": {
-                name: {
-                    "cumulative_inflow_volume_m3": items["inflow"].value,
-                    "cumulative_outflow_requested_volume_m3": items["outflow_requested"].value,
-                    "cumulative_outflow_delivered_volume_m3": items["outflow_delivered"].value,
-                    "cumulative_outflow_shortfall_volume_m3": items["outflow_requested"].value - items["outflow_delivered"].value,
-                }
-                for name, items in group_totals.items()
-            },
+            "groups": {group.spec.name: group_ledger(group, index) for group in groups},
             "volume_correction_reference_scale_m3": correction_scale(),
             "minimum_water_depth_m": float(state[:, 0].min()),
             "maximum_water_depth_m": float(state[:, 0].max()),
@@ -1034,7 +1171,10 @@ def run_triangular_long_run(
                     interval[key].add(value)
             for group in groups:
                 name = group.spec.name
-                for key, attribute in (("inflow", "inflow_m3_s"), ("outflow_requested", "outflow_requested_m3_s"), ("outflow_delivered", "outflow_delivered_m3_s")):
+                for key, attribute in (("inflow", "inflow_m3_s"), ("outflow_requested", "outflow_requested_m3_s"),
+                                       ("outflow_delivered", "outflow_delivered_m3_s"), ("reference_outflow", "reference_outflow_m3_s")):
+                    if key not in group_totals[name]:
+                        continue
                     value = 0.5 * dt * (getattr(boundary_0, attribute).get(name, 0.0) + getattr(boundary_1, attribute).get(name, 0.0))
                     if value:
                         group_totals[name][key].add(value)
@@ -1123,7 +1263,8 @@ def long_run_options_json_schema() -> dict[str, Any]:
 
 
 __all__ = [
-    "CHECKPOINT_FORMAT", "FrameSink", "LONG_RUN_OPTIONS_FORMAT", "LONG_RUN_SOLVER_VERSION", "MemoryFrameSink",
+    "CHECKPOINT_FORMAT", "FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT", "FrameSink", "LONG_RUN_OPTIONS_FORMAT",
+    "LONG_RUN_SOLVER_VERSION", "MemoryFrameSink",
     "OPEN_BOUNDARY_FORMAT", "OpenBoundaryGroupSpec", "TriangularFrame", "TriangularLongRunError",
     "TriangularLongRunInputs", "TriangularLongRunOptions", "TriangularLongRunSummary",
     "load_long_run_checkpoint", "long_run_options_json_schema", "numba_status",
