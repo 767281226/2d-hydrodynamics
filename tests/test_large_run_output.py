@@ -225,5 +225,5 @@ def test_end_to_end_large_profile_bundle(tmp_path, forcing):
 def test_viewer_asset_supports_large_bundles_and_keeps_m1_paths():
     html = (ROOT / "hydrodynamics" / "assets" / "viewer.html").read_text(encoding="utf-8")
     for marker in ("NTW3F02", "large-run-output-bundle-v1", "hydrodynamics-legacy-grid-compatibility-v2", "drawNativeLarge",
-                   "m1-output-bundle-v1", "NTW3F01", "forcing_notice"):
+                   "m1-output-bundle-v1", "NTW3F01", "forcing_notice", "PATH_CHUNK_FACES"):
         assert marker in html

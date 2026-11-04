@@ -14,7 +14,7 @@
   #side{width:330px;flex:none;margin:12px 12px 12px 0;padding:15px;background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;gap:11px;overflow:auto}
   h1{font-size:16px;margin:0 0 5px}.sub{font-size:12px;color:var(--muted);line-height:1.5}.field{display:grid;gap:5px;font-size:12px;color:var(--muted)}
   select,button{background:#203146;color:var(--ink);border:1px solid #38506a;border-radius:6px;padding:7px 9px;font:inherit}button{background:#1d4ed8;border:0;cursor:pointer}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  input[type=range]{width:100%;accent-color:var(--accent)}.kpi{display:grid;grid-template-columns:1fr 1fr;gap:7px}.kpi>div{background:#101b2a;border-radius:7px;padding:8px}.value{font-size:17px;color:var(--accent)}.label{font-size:11px;color:var(--muted);margin-top:2px}
+  input[type=range]{width:100%;margin:0;accent-color:var(--accent)}.kpi{display:grid;grid-template-columns:1fr 1fr;gap:7px}.kpi>div{background:#101b2a;border-radius:7px;padding:8px}.value{font-size:17px;color:var(--accent)}.label{font-size:11px;color:var(--muted);margin-top:2px}
   #forcing{display:none;font-size:12px;line-height:1.5;padding:7px 9px;border-radius:7px;background:#3a2a10;border:1px solid #b7862c;color:#ffd58a}#status{font-size:12px;color:var(--muted);overflow-wrap:anywhere}#status.error{color:var(--bad)}#legend{height:14px;border-radius:6px;background:linear-gradient(90deg,#14288c,#2898dc,#4cc88c,#fa783c)}
   @media(max-width:760px){body{height:auto;min-height:100vh;flex-direction:column;overflow:auto}#stage{flex:none;height:55vh;min-height:300px;padding:7px 7px 0}#side{width:auto;max-height:none;margin:7px;padding:11px;gap:8px;overflow:visible}#wrap{border-radius:7px}.kpi{grid-template-columns:repeat(4,1fr)}.value{font-size:14px}}
 </style>
@@ -43,7 +43,7 @@
 </aside>
 <script>
 "use strict";
-const NATIVE_MAGIC="NTW3M01\n",NATIVE_FRAME_MAGIC="NTW3F01\n",NATIVE_FRAME_MAGIC_V2="NTW3F02\n",LARGE_BUNDLE_FORMAT="large-run-output-bundle-v1",LARGE_FACE_RENDER=20000,COLOR_BUCKETS=48,GRID_MESH_MAGIC="NC2WM01\n",GRID_FRAME_MAGIC="NC2WF01\n";
+const NATIVE_MAGIC="NTW3M01\n",NATIVE_FRAME_MAGIC="NTW3F01\n",NATIVE_FRAME_MAGIC_V2="NTW3F02\n",LARGE_BUNDLE_FORMAT="large-run-output-bundle-v1",LARGE_FACE_RENDER=20000,COLOR_BUCKETS=48,PATH_CHUNK_FACES=2048,GRID_MESH_MAGIC="NC2WM01\n",GRID_FRAME_MAGIC="NC2WF01\n";
 const MAX_CACHED_FRAME_BYTES=32*1024*1024,MAX_CACHE_BYTES=32*1024*1024,MAX_CACHE_FRAMES=2,PLAY_MS=500;
 const cv=document.getElementById("cv"),ctx=cv.getContext("2d"),tip=document.getElementById("tip");
 let bundle=null,profile="native_web",manifest=null,gridMeta=null,mesh=null,frameCache=new Map(),frameIndex=0,playing=false,timer=0,viewport=null;
@@ -142,9 +142,12 @@ function drawNativeLarge(frame){
   const rect=cv.getBoundingClientRect(),w=rect.width,h=rect.height;if(w<2||h<2)return;ctx.clearRect(0,0,w,h);ctx.fillStyle="#09111b";ctx.fillRect(0,0,w,h);const b=mesh.bounds,pad=16,scale=Math.min((w-2*pad)/(b.xmax-b.xmin||1),(h-2*pad)/(b.ymax-b.ymin||1));const dw=(b.xmax-b.xmin)*scale,dh=(b.ymax-b.ymin)*scale,left=(w-dw)/2,top=(h-dh)/2;viewport={left,top,scale,width:w,height:h};
   const name=layerName(),li=currentLayerIndex(),values=frame.arrays[li],[min,max]=manifestBounds(name),depth=frame.arrays[0],thr=Number(manifest.dry_depth_threshold_m||0);let maxDepth=0,wetArea=0,wetCount=0;
   if(!mesh.screen||mesh.screen.scale!==scale||mesh.screen.left!==left||mesh.screen.top!==top){const sx=new Float32Array(mesh.nodeCount),sy=new Float32Array(mesh.nodeCount);for(let i=0;i<mesh.nodeCount;i++){sx[i]=left+(mesh.xy[2*i]-b.xmin)*scale;sy[i]=top+(b.ymax-mesh.xy[2*i+1])*scale}mesh.screen={scale,left,top,sx,sy}}
-  const sx=mesh.screen.sx,sy=mesh.screen.sy,paths=Array.from({length:COLOR_BUCKETS+1},()=>new Path2D()),span=(max>min)?(max-min):1;
-  for(let f=0;f<mesh.faceCount;f++){const hval=depth[f];if(hval>thr){wetArea+=mesh.areas[f];wetCount++;if(hval>maxDepth)maxDepth=hval}const val=values[f];let k;if((name==="water_depth_m"&&!(val>0))||!Number.isFinite(val))k=COLOR_BUCKETS;else k=Math.max(0,Math.min(COLOR_BUCKETS-1,Math.floor((val-min)/span*COLOR_BUCKETS)));const p=paths[k],a=mesh.faces[f*3],c=mesh.faces[f*3+1],d=mesh.faces[f*3+2];p.moveTo(sx[a],sy[a]);p.lineTo(sx[c],sy[c]);p.lineTo(sx[d],sy[d]);p.closePath()}
-  for(let k=0;k<=COLOR_BUCKETS;k++){const col=k===COLOR_BUCKETS?[30,42,56,255]:color(min+(k+.5)/COLOR_BUCKETS*span,min,max);const style=`rgb(${col[0]|0},${col[1]|0},${col[2]|0})`;ctx.fillStyle=style;ctx.strokeStyle=style;ctx.lineWidth=.35;ctx.fill(paths[k]);ctx.stroke(paths[k])}
+  // Chromium appends to a very large Path2D superlinearly (a 139k-face bucket took >100 s), so each bucket path is flushed every PATH_CHUNK_FACES faces.
+  const sx=mesh.screen.sx,sy=mesh.screen.sy,paths=Array.from({length:COLOR_BUCKETS+1},()=>new Path2D()),counts=new Uint32Array(COLOR_BUCKETS+1),span=(max>min)?(max-min):1;
+  const styles=Array.from({length:COLOR_BUCKETS+1},(_,k)=>{const col=k===COLOR_BUCKETS?[30,42,56,255]:color(min+(k+.5)/COLOR_BUCKETS*span,min,max);return `rgb(${col[0]|0},${col[1]|0},${col[2]|0})`});
+  ctx.lineWidth=.35;const flushBucket=k=>{if(!counts[k])return;ctx.fillStyle=styles[k];ctx.strokeStyle=styles[k];ctx.fill(paths[k]);ctx.stroke(paths[k]);paths[k]=new Path2D();counts[k]=0};
+  for(let f=0;f<mesh.faceCount;f++){const hval=depth[f];if(hval>thr){wetArea+=mesh.areas[f];wetCount++;if(hval>maxDepth)maxDepth=hval}const val=values[f];let k;if((name==="water_depth_m"&&!(val>0))||!Number.isFinite(val))k=COLOR_BUCKETS;else k=Math.max(0,Math.min(COLOR_BUCKETS-1,Math.floor((val-min)/span*COLOR_BUCKETS)));const p=paths[k],a=mesh.faces[f*3],c=mesh.faces[f*3+1],d=mesh.faces[f*3+2];p.moveTo(sx[a],sy[a]);p.lineTo(sx[c],sy[c]);p.lineTo(sx[d],sy[d]);p.closePath();if(++counts[k]>=PATH_CHUNK_FACES)flushBucket(k)}
+  for(let k=0;k<=COLOR_BUCKETS;k++)flushBucket(k);
   document.getElementById("maxLabel").textContent="本帧最大水深 m";document.getElementById("wetLabel").textContent="湿面 / 原生面积 km²";document.getElementById("kMax").textContent=maxDepth.toFixed(4);document.getElementById("kWet").textContent=`${wetCount} / ${(wetArea/1e6).toFixed(4)}`;updateTime(frame);updateLegend(name);document.getElementById("status").textContent=`Native 三角网格 · ${mesh.faceCount} faces · ${manifest.coordinate_system} · native_web v${manifest.version} · 逐帧按需加载`;
 }
 function renderCompatibilityLarge(frame){

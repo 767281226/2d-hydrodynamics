@@ -110,7 +110,7 @@ NOT MEASURED"（中文同时给出）。该标签写入 native NC、兼容 NC �
 `start_viewer.bat <bundle_dir>` 不变。`viewer_server` 对 large bundle：必须显式路径（除非 production_approved 且
 can_publish）；核对 checksums 的文件清单与全部文件大小，元数据/mesh/coverage 的 SHA-256；native_web 2.0
 manifest 的 run_id、时间轴、帧列表与文件大小；兼容格 v2 identity。页面只预载 mesh.bin（约 11 MB/19 万面），
-每次只请求当前帧并预取下一帧（缓存 ≤2 帧、≤32 MiB），每帧载入时校验 SHA-256。大网格按颜色桶批量填充 Path2D，
+每次只请求当前帧并预取下一帧（缓存 ≤2 帧、≤32 MiB），每帧载入时校验 SHA-256。大网格按颜色桶批量填充 Path2D（每个 Path2D 最多 2048 面后即绘制并重建；Chromium 中单个超大 Path2D 追加为超线性，19 万面单帧曾需 100+ 秒），
 兼容格用 ImageData 绘制；侧栏显示 forcing 标签、范围、面数、帧数与时间起点；悬停显示精确 face_id。
 
 真实求解器接入（网格 artifact + 逐面地形 + 假定断面 + 流量 CSV → 本 sink → 导出/校验）与 `reopen` 续算见
