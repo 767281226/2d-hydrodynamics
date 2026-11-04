@@ -25,12 +25,6 @@
   "MeshSection": {
    "additionalProperties": false,
    "properties": {
-    "path": {
-     "description": "triangle-domain-mesh-only-artifact-v1 JSON",
-     "minLength": 1,
-     "title": "Path",
-     "type": "string"
-    },
     "expected_sha256": {
      "anyOf": [
       {
@@ -44,6 +38,12 @@
      "default": null,
      "description": "refuse the artifact if its SHA-256 differs",
      "title": "Expected Sha256"
+    },
+    "path": {
+     "description": "triangle-domain-mesh-only-artifact-v1 JSON",
+     "minLength": 1,
+     "title": "Path",
+     "type": "string"
     }
    },
    "required": [
@@ -66,28 +66,6 @@
      "title": "Boundary Type",
      "type": "string"
     },
-    "discharge_coefficient": {
-     "anyOf": [
-      {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "integer"
-        }
-       ],
-       "gt": 0.0,
-       "le": 1.5
-      },
-      {
-       "type": "null"
-      }
-     ],
-     "default": null,
-     "description": "free_outflow only; dimensionless C_d in (0, 1.5]; null = (2/3)^(3/2) ~= 0.5443",
-     "title": "Discharge Coefficient"
-    },
     "crest_elevation_m": {
      "anyOf": [
       {
@@ -109,6 +87,28 @@
      "default": null,
      "description": "free_outflow only; m, bed datum, [-1000, 10000]; null = bed of each adjacent face (head = depth)",
      "title": "Crest Elevation M"
+    },
+    "discharge_coefficient": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "gt": 0.0,
+       "le": 1.5
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "free_outflow only; dimensionless C_d in (0, 1.5]; null = (2/3)^(3/2) ~= 0.5443",
+     "title": "Discharge Coefficient"
     }
    },
    "title": "OutflowBoundarySettings",
@@ -118,10 +118,24 @@
    "additionalProperties": false,
    "properties": {
     "directory": {
-     "description": "run directory; must not exist unless --resume; bundle is written to <directory>/bundle",
-     "minLength": 1,
-     "title": "Directory",
-     "type": "string"
+     "anyOf": [
+      {
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "explicit run directory (exclusive with root); must not exist unless --resume; bundle is written to <directory>/bundle",
+     "title": "Directory"
+    },
+    "export": {
+     "default": true,
+     "description": "run export_large_run_bundle + verify_large_run_bundle after the solver",
+     "title": "Export",
+     "type": "boolean"
     },
     "profile": {
      "anyOf": [
@@ -140,22 +154,76 @@
      "description": "LargeRunOutputProfile fields, or a YAML/JSON profile path; null = defaults",
      "title": "Profile"
     },
-    "export": {
-     "default": true,
-     "description": "run export_large_run_bundle + verify_large_run_bundle after the solver",
-     "title": "Export",
-     "type": "boolean"
+    "root": {
+     "anyOf": [
+      {
+       "minLength": 1,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "results root (exclusive with directory), e.g. work/results; the run directory is <root>/<scheme id>",
+     "title": "Root"
+    },
+    "script_id": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "scheme id = run directory name under root: 1-96 ASCII letters/digits/._-, starting with a letter or digit, no Windows reserved names; CLI --id wins; null with root = Beijing date + '-' + Unix ns (as the workflow)",
+     "title": "Script Id"
     }
    },
-   "required": [
-    "directory"
-   ],
    "title": "OutputSection",
    "type": "object"
   },
   "RunSection": {
    "additionalProperties": false,
    "properties": {
+    "case_id": {
+     "description": "also names the derived <case_id>.nc",
+     "maxLength": 128,
+     "minLength": 1,
+     "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+     "title": "Case Id",
+     "type": "string"
+    },
+    "checkpoint_interval_s": {
+     "anyOf": [
+      {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "integer"
+        }
+       ],
+       "gt": 0.0,
+       "le": 31536000.0
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "s; null disables checkpoints and therefore --resume",
+     "title": "Checkpoint Interval S"
+    },
+    "coordinate_system": {
+     "description": "must equal the mesh artifact coordinate_system",
+     "minLength": 1,
+     "title": "Coordinate System",
+     "type": "string"
+    },
     "hours": {
      "anyOf": [
       {
@@ -170,6 +238,40 @@
      "default": null,
      "description": "hourly output times 0..hours (exclusive with output_times_s)",
      "title": "Hours"
+    },
+    "initial_depth_m": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "description": "m; uniform initial water depth",
+     "ge": 0.0,
+     "le": 1000.0,
+     "title": "Initial Depth M"
+    },
+    "long_run_options": {
+     "additionalProperties": true,
+     "description": "triangular-long-run-options-v1 fields (checkpoint_interval_s lives in run.checkpoint_interval_s)",
+     "title": "Long Run Options",
+     "type": "object"
+    },
+    "manning_n": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "integer"
+      }
+     ],
+     "description": "s m^-1/3; uniform Manning n",
+     "gt": 0.0,
+     "le": 1.0,
+     "title": "Manning N"
     },
     "output_times_s": {
      "anyOf": [
@@ -196,86 +298,25 @@
      "description": "s; explicit output times starting at 0",
      "title": "Output Times S"
     },
-    "initial_depth_m": {
+    "run_id": {
      "anyOf": [
       {
-       "type": "number"
-      },
-      {
-       "type": "integer"
-      }
-     ],
-     "description": "m; uniform initial water depth",
-     "ge": 0.0,
-     "le": 1000.0,
-     "title": "Initial Depth M"
-    },
-    "manning_n": {
-     "anyOf": [
-      {
-       "type": "number"
-      },
-      {
-       "type": "integer"
-      }
-     ],
-     "description": "s m^-1/3; uniform Manning n",
-     "gt": 0.0,
-     "le": 1.0,
-     "title": "Manning N"
-    },
-    "long_run_options": {
-     "additionalProperties": true,
-     "description": "triangular-long-run-options-v1 fields (checkpoint_interval_s lives in run.checkpoint_interval_s)",
-     "title": "Long Run Options",
-     "type": "object"
-    },
-    "checkpoint_interval_s": {
-     "anyOf": [
-      {
-       "anyOf": [
-        {
-         "type": "number"
-        },
-        {
-         "type": "integer"
-        }
-       ],
-       "gt": 0.0,
-       "le": 31536000.0
+       "maxLength": 128,
+       "minLength": 1,
+       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+       "type": "string"
       },
       {
        "type": "null"
       }
      ],
      "default": null,
-     "description": "s; null disables checkpoints and therefore --resume",
-     "title": "Checkpoint Interval S"
+     "description": "result run id shown in the bundle/viewer; null = the scheme id (output.script_id / --id)",
+     "title": "Run Id"
     },
     "time_origin": {
      "description": "ISO 8601 with explicit UTC offset, e.g. 2023-08-01T02:00:00+08:00",
      "title": "Time Origin",
-     "type": "string"
-    },
-    "run_id": {
-     "maxLength": 128,
-     "minLength": 1,
-     "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-     "title": "Run Id",
-     "type": "string"
-    },
-    "case_id": {
-     "description": "also names the derived <case_id>.nc",
-     "maxLength": 128,
-     "minLength": 1,
-     "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-     "title": "Case Id",
-     "type": "string"
-    },
-    "coordinate_system": {
-     "description": "must equal the mesh artifact coordinate_system",
-     "minLength": 1,
-     "title": "Coordinate System",
      "type": "string"
     }
    },
@@ -283,7 +324,6 @@
     "initial_depth_m",
     "manning_n",
     "time_origin",
-    "run_id",
     "case_id",
     "coordinate_system"
    ],
@@ -293,12 +333,6 @@
   "SectionsSection": {
    "additionalProperties": false,
    "properties": {
-    "path": {
-     "description": "assumed-river-sections-audit-v1 JSON",
-     "minLength": 1,
-     "title": "Path",
-     "type": "string"
-    },
     "discharge_series_status": {
      "additionalProperties": {
       "enum": [
@@ -331,6 +365,12 @@
      "description": "per outflow section; default boundary_type prescribed_outflow",
      "title": "Outflow Boundary",
      "type": "object"
+    },
+    "path": {
+     "description": "assumed-river-sections-audit-v1 JSON",
+     "minLength": 1,
+     "title": "Path",
+     "type": "string"
     }
    },
    "required": [
@@ -343,12 +383,6 @@
   "TerrainSection": {
    "additionalProperties": false,
    "properties": {
-    "path": {
-     "description": ".npz with int64 face_id and float64 elevation_m (matched by face_id)",
-     "minLength": 1,
-     "title": "Path",
-     "type": "string"
-    },
     "dem_path": {
      "description": "provenance only; the driver never opens the DEM",
      "minLength": 1,
@@ -381,6 +415,12 @@
      "title": "Method",
      "type": "string"
     },
+    "path": {
+     "description": ".npz with int64 face_id and float64 elevation_m (matched by face_id)",
+     "minLength": 1,
+     "title": "Path",
+     "type": "string"
+    },
     "vertical_datum": {
      "anyOf": [
       {
@@ -411,20 +451,10 @@
    "type": "object"
   }
  },
+ "$id": "large-run-driver-config-v1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
  "additionalProperties": false,
  "properties": {
-  "format": {
-   "const": "large-run-driver-config-v1",
-   "default": "large-run-driver-config-v1",
-   "title": "Format",
-   "type": "string"
-  },
-  "schema_version": {
-   "const": "1.0",
-   "default": "1.0",
-   "title": "Schema Version",
-   "type": "string"
-  },
   "description": {
    "anyOf": [
     {
@@ -437,23 +467,35 @@
    "default": null,
    "title": "Description"
   },
+  "forcing": {
+   "$ref": "#/$defs/ForcingSection"
+  },
+  "format": {
+   "const": "large-run-driver-config-v1",
+   "default": "large-run-driver-config-v1",
+   "title": "Format",
+   "type": "string"
+  },
   "mesh": {
    "$ref": "#/$defs/MeshSection"
   },
-  "terrain": {
-   "$ref": "#/$defs/TerrainSection"
-  },
-  "sections": {
-   "$ref": "#/$defs/SectionsSection"
-  },
-  "forcing": {
-   "$ref": "#/$defs/ForcingSection"
+  "output": {
+   "$ref": "#/$defs/OutputSection"
   },
   "run": {
    "$ref": "#/$defs/RunSection"
   },
-  "output": {
-   "$ref": "#/$defs/OutputSection"
+  "schema_version": {
+   "const": "1.0",
+   "default": "1.0",
+   "title": "Schema Version",
+   "type": "string"
+  },
+  "sections": {
+   "$ref": "#/$defs/SectionsSection"
+  },
+  "terrain": {
+   "$ref": "#/$defs/TerrainSection"
   }
  },
  "required": [
@@ -465,7 +507,5 @@
   "output"
  ],
  "title": "LargeRunDriverConfig",
- "type": "object",
- "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "large-run-driver-config-v1"
+ "type": "object"
 }

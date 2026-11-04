@@ -15,7 +15,8 @@ Input contract ``large-run-driver-config-v1`` (JSON Schema:
 ``examples/large_run_output/large_run_driver_config.schema.json``; field table:
 ``docs/large_run_driver.md``).
 
-Run directory layout (``output.directory``; must not exist unless ``--resume``)::
+Run directory (``output.directory``, or ``<output.root>/<scheme id>`` with the scheme id from ``--id``,
+``output.script_id`` or a generated Beijing-date + Unix-ns id; must not exist unless ``--resume``)::
 
     run_report.json       status running | failed | complete (complete only after frames, close, export, verify)
     run_receipt.json      input SHA-256s, options, kernel, step counts, wall times, library versions
@@ -27,7 +28,7 @@ Run directory layout (``output.directory``; must not exist unless ``--resume``):
 
 CLI::
 
-    python -m hydrodynamics.large_run_driver <config.json> [--resume] [--check]
+    python -m hydrodynamics.large_run_driver <config.json> [--id SCHEME_ID] [--resume] [--check]
 """
 from __future__ import annotations
 
@@ -168,7 +169,8 @@ class RunSection(_Strict):
     long_run_options: dict[str, Any] = Field(default_factory=dict, description="triangular-long-run-options-v1 fields (checkpoint_interval_s lives in run.checkpoint_interval_s)")
     checkpoint_interval_s: Number | None = Field(None, gt=0.0, le=MAX_RUN_SECONDS, description="s; null disables checkpoints and therefore --resume")
     time_origin: StrictStr = Field(description="ISO 8601 with explicit UTC offset, e.g. 2023-08-01T02:00:00+08:00")
-    run_id: StrictStr = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    run_id: StrictStr | None = Field(None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                                     description="result run id shown in the bundle/viewer; null = the scheme id (output.script_id / --id)")
     case_id: StrictStr = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$", description="also names the derived <case_id>.nc")
     coordinate_system: StrictStr = Field(min_length=1, description="must equal the mesh artifact coordinate_system")
 
@@ -229,9 +231,25 @@ class RunSection(_Strict):
 
 
 class OutputSection(_Strict):
-    directory: StrictStr = Field(min_length=1, description="run directory; must not exist unless --resume; bundle is written to <directory>/bundle")
+    directory: StrictStr | None = Field(None, min_length=1, description="explicit run directory (exclusive with root); must not exist unless --resume; bundle is written to <directory>/bundle")
+    root: StrictStr | None = Field(None, min_length=1, description="results root (exclusive with directory), e.g. work/results; the run directory is <root>/<scheme id>")
+    script_id: StrictStr | None = Field(None, description="scheme id = run directory name under root: 1-96 ASCII letters/digits/._-, starting with a letter or digit, no Windows reserved names; CLI --id wins; null with root = Beijing date + '-' + Unix ns (as the workflow)")
     profile: dict[str, Any] | StrictStr | None = Field(None, description="LargeRunOutputProfile fields, or a YAML/JSON profile path; null = defaults")
     export: StrictBool = Field(True, description="run export_large_run_bundle + verify_large_run_bundle after the solver")
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "OutputSection":
+        if (self.directory is None) == (self.root is None):
+            raise ValueError("set exactly one of output.directory or output.root")
+        if self.directory is not None and self.script_id is not None:
+            raise ValueError("output.script_id names a directory under output.root; it cannot be combined with output.directory")
+        if self.script_id is not None:
+            from .workflow_config import validate_run_id
+            try:
+                validate_run_id(self.script_id)
+            except Exception as exc:
+                raise ValueError(f"output.script_id: {exc}") from exc
+        return self
 
 
 class LargeRunDriverConfig(_Strict):
@@ -266,7 +284,7 @@ def parse_driver_config(value: Mapping[str, Any]) -> LargeRunDriverConfig:
 
 
 _PATH_FIELDS = (("mesh", "path"), ("terrain", "path"), ("terrain", "dem_path"), ("terrain", "mapping_report_path"),
-                ("sections", "path"), ("forcing", "path"), ("output", "directory"), ("output", "profile"))
+                ("sections", "path"), ("forcing", "path"), ("output", "directory"), ("output", "root"), ("output", "profile"))
 
 
 def resolve_config_paths(config: LargeRunDriverConfig, base_dir: Path) -> LargeRunDriverConfig:
@@ -279,7 +297,37 @@ def resolve_config_paths(config: LargeRunDriverConfig, base_dir: Path) -> LargeR
     return parse_driver_config(data)
 
 
-def load_driver_config(path: str | Path) -> LargeRunDriverConfig:
+def finalize_output(config: LargeRunDriverConfig, script_id: str | None = None) -> LargeRunDriverConfig:
+    """Resolve the run directory and run_id.
+
+    With ``output.root`` the run directory is ``<root>/<scheme id>``; the id is ``script_id`` (CLI ``--id``),
+    else ``output.script_id``, else a new Beijing-date + Unix-ns id (the workflow rule).  ``run.run_id`` null
+    becomes the scheme id (or the directory name with ``output.directory``).
+    """
+    from .run_identity import resolve_script_id
+    from .workflow_config import WorkflowError
+    data = config.model_dump(mode="json")
+    out = data["output"]
+    if script_id is not None and out["root"] is None:
+        raise LargeRunDriverError("--id selects a directory under output.root; this config uses output.directory")
+    if out["root"] is not None:
+        try:
+            scheme = resolve_script_id(script_id if script_id is not None else out["script_id"])
+        except WorkflowError as exc:
+            raise LargeRunDriverError(f"invalid scheme id: {exc}") from exc
+        out["directory"] = str(Path(out["root"]) / scheme)
+        out["script_id"] = scheme
+    else:
+        scheme = Path(out["directory"]).name
+    if data["run"]["run_id"] is None:
+        data["run"]["run_id"] = scheme
+    resolved = LargeRunDriverConfig.model_validate({**data, "output": {**out, "root": None, "script_id": None}})
+    object.__setattr__(resolved, "_scheme_id", scheme)
+    return resolved
+
+
+def load_driver_config(path: str | Path, *, script_id: str | None = None) -> LargeRunDriverConfig:
+    """Load, resolve paths and resolve the run directory/run_id (see :func:`finalize_output`)."""
     source = Path(path)
     try:
         raw = json.loads(source.read_text(encoding="utf-8"))
@@ -287,7 +335,7 @@ def load_driver_config(path: str | Path) -> LargeRunDriverConfig:
         raise LargeRunDriverError(f"cannot read driver config {source}: {exc}") from exc
     except ValueError as exc:
         raise LargeRunDriverError(f"driver config {source} is not valid JSON: {exc}") from exc
-    return resolve_config_paths(parse_driver_config(raw), source.resolve().parent)
+    return finalize_output(resolve_config_paths(parse_driver_config(raw), source.resolve().parent), script_id)
 
 
 def driver_config_json_schema() -> dict[str, Any]:
@@ -898,11 +946,11 @@ def _summary_dict(summary: TriangularLongRunSummary) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
-def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = None) -> dict[str, Any]:
+def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = None, script_id: str | None = None) -> dict[str, Any]:
     """Run (or resume) one case end-to-end; returns the final run_report dict. Raises on failure after writing it."""
     say = log or (lambda message: None)
     config_file = Path(config_path).resolve()
-    config = load_driver_config(config_file)
+    config = load_driver_config(config_file, script_id=script_id)
     config_sha = _sha_file(config_file)
     out = Path(config.output.directory)
     bundle = out / BUNDLE_SUBDIR
@@ -1080,14 +1128,14 @@ def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = 
 # ---------------------------------------------------------------------------
 # --check: validate configuration and inputs without building the mesh
 # ---------------------------------------------------------------------------
-def check_case(config_path: str | Path, *, resume: bool = False) -> dict[str, Any]:
+def check_case(config_path: str | Path, *, resume: bool = False, script_id: str | None = None) -> dict[str, Any]:
     """Validate the config and every input; nothing heavy is built. Status ok | missing_inputs | invalid."""
     config_file = Path(config_path).resolve()
     report: dict[str, Any] = {"format": CHECK_FORMAT, "config": str(config_file), "status": "ok", "errors": [], "missing": [],
                               "warnings": [], "inputs": {}, "run": {}, "environment": {}}
     errors: list[str] = report["errors"]
     try:
-        config = load_driver_config(config_file)
+        config = load_driver_config(config_file, script_id=script_id)
     except LargeRunDriverError as exc:
         errors.append(str(exc)); report["status"] = "invalid"
         return report
@@ -1095,7 +1143,8 @@ def check_case(config_path: str | Path, *, resume: bool = False) -> dict[str, An
     report["run"] = {"run_id": config.run.run_id, "case_id": config.run.case_id, "time_origin": config.run.time_origin,
                      "coordinate_system": config.run.coordinate_system, "initial_depth_m": config.run.initial_depth_m,
                      "manning_n": config.run.manning_n, "checkpoint_interval_s": config.run.checkpoint_interval_s,
-                     "export": config.output.export, "output_directory": config.output.directory}
+                     "export": config.output.export, "output_directory": config.output.directory,
+                     "scheme_id": getattr(config, "_scheme_id", None)}
     times = config.run.times_s()
     report["run"].update({"frames": len(times), "last_time_s": times[-1]})
     options = config.run.options()
@@ -1250,14 +1299,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--resume", action="store_true", help="continue a failed run from its newest checkpoint; never rewrites saved frames")
     parser.add_argument("--check", action="store_true", help="validate config and inputs only (no mesh build, no run); print a summary")
     parser.add_argument("--quiet", action="store_true", help="do not echo progress events to stderr")
+    parser.add_argument("--id", "--script-id", dest="script_id", default=None,
+                        help="scheme id = run directory name under output.root (overrides output.script_id; required with --resume when the id was generated)")
     args = parser.parse_args(argv)
     log = None if args.quiet else (lambda message: print(message, file=sys.stderr, flush=True))
     if args.check:
-        report = check_case(args.config, resume=args.resume)
+        report = check_case(args.config, resume=args.resume, script_id=args.script_id)
         print(json.dumps(report, ensure_ascii=False, indent=1, sort_keys=True, default=str))
         return 0 if report["status"] == "ok" else 1
     try:
-        report = run_large_case(args.config, resume=args.resume, log=log)
+        report = run_large_case(args.config, resume=args.resume, log=log, script_id=args.script_id)
     except (LargeRunDriverError, LargeRunProfileError, LargeRunExportError, FrameSinkError, TriangularLongRunError,
             TriangularSolverExecutionError, TriangularMeshError, OSError, ValueError) as exc:
         print(json.dumps({"status": "failed", "type": type(exc).__name__, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
@@ -1269,7 +1320,7 @@ def main(argv: list[str] | None = None) -> int:
 __all__ = [
     "CONFIG_FORMAT", "LargeRunDriverConfig", "LargeRunDriverError", "PreparedCase", "boundary_group_specs", "build_metadata",
     "build_triangular_mesh", "check_case", "check_sections_against_edges", "close_ledger_from_summary", "driver_config_json_schema",
-    "edge_table", "load_driver_config", "main", "newest_checkpoint", "parse_driver_config", "prepare_case", "read_forcing_csv",
+    "edge_table", "finalize_output", "load_driver_config", "main", "newest_checkpoint", "parse_driver_config", "prepare_case", "read_forcing_csv",
     "read_mesh_artifact", "read_sections_audit", "read_terrain", "resolve_config_paths", "run_large_case", "section_boundary_summary",
     "section_boundary_type", "section_distribution", "sink_ledger_from_row",
 ]

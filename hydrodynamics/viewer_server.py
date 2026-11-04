@@ -254,11 +254,25 @@ def _sha_file(path:Path)->str:
 def _project_root()->Path:return Path(__file__).resolve().parents[1]
 
 
+def _large_run_bundle(run_dir:Path)->Path|None:
+    """``<run dir>/bundle`` of a complete large-run driver run (run_report.json status complete), else None."""
+    bundle=run_dir/"bundle";report=run_dir/"run_report.json"
+    if not (bundle/"run.json").is_file() or not report.is_file():return None
+    try:status=json.loads(report.read_text(encoding="utf-8")).get("status")
+    except (OSError,ValueError):return None
+    return bundle if status=="complete" else None
+
+
 def _latest_success(project:Path)->Path:
     from .workflow import find_latest_completed_bundle
-    latest=find_latest_completed_bundle(project/"work"/"results")
-    if latest is None:raise ViewerBundleError("no complete successful viewer bundle is available under work/results")
-    return latest.resolve()
+    results=project/"work"/"results"
+    candidates=[]
+    latest=find_latest_completed_bundle(results)
+    if latest is not None:candidates.append(latest)
+    if results.is_dir():
+        candidates.extend(b for b in (_large_run_bundle(d) for d in results.iterdir() if d.is_dir()) if b is not None)
+    if not candidates:raise ViewerBundleError("no complete successful viewer bundle is available under work/results")
+    return max(candidates,key=lambda b:(b/"run.json").stat().st_mtime_ns).resolve()
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
@@ -331,6 +345,8 @@ def main(argv:list[str]|None=None)->int:
                 if candidate.exists():pass
                 elif (args.project_root/"work"/"results"/candidate).exists():candidate=args.project_root/"work"/"results"/candidate
                 else:candidate=args.project_root/candidate
+            if not (candidate/"run.json").is_file() and (candidate/"bundle"/"run.json").is_file():
+                candidate=candidate/"bundle"  # large-run driver layout: <scheme id>/bundle
             root,run=validate_bundle(candidate,explicit=True)
         else:
             root,run=validate_bundle(_latest_success(args.project_root),explicit=False)

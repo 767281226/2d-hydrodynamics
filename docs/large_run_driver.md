@@ -26,7 +26,10 @@ python -X utf8 -m hydrodynamics.large_run_driver <config.json>            # 新�
 python -X utf8 -m hydrodynamics.large_run_driver <config.json> --resume   # 从最新检查点续算（见 §5）
 python -X utf8 -m hydrodynamics.large_run_driver <config.json> --check    # 只校验配置与输入，不建网格、不计算
 python -X utf8 -m hydrodynamics.large_run_driver <config.json> --quiet    # 不把进度事件回显到 stderr
+python -X utf8 -m hydrodynamics.large_run_driver <config.json> --id 方案ID  # 结果写到 <output.root>/<方案ID>/（覆盖 output.script_id）
 ```
+
+输出目录规则与工作流（`docs/workflow.md`）一致：配置 `output.root`（如 `work/results`）时，运行目录为 `<root>/<方案ID>/`。方案 ID 取 `--id`（别名 `--script-id`），否则取 `output.script_id`，都没有时按北京时间生成 `YYYYMMDD-<Unix 纳秒>`。方案 ID 为 1–96 个 ASCII 字母/数字/`._-`，以字母或数字开头，不能以点结尾，不能用 Windows 保留名。`run.run_id` 为 null 时取方案 ID。生成的 ID 在续算时需用 `--id` 显式给出。查看结果：`start_viewer.bat <方案ID>`（自动进入 `<方案ID>/bundle`）；不带参数时打开 `work/results` 下最新完成的结果。
 
 返回码：`0` 完成（`--check` 时为 `status: ok`），否则 `1`。真实运行需要系统 `python`
 （numpy 2.4、numba 0.64、netCDF4、pyproj、shapefile、pydantic）；numba 不是必需依赖，缺失时自动回退 numpy 核。
@@ -71,10 +74,12 @@ python -X utf8 -m hydrodynamics.large_run_driver <config.json> --quiet    # 不�
 | `run.long_run_options` | object | `{}` | 按 `triangular-long-run-options-v1` 校验；不得含 `checkpoint_interval_s`；`manning_friction` 不得为 `none` |
 | `run.checkpoint_interval_s` | number s 或 null | null | (0, 31 536 000]；null = 不写检查点，`--resume` 不可用 |
 | `run.time_origin` | ISO 8601 | 必填 | 必须带 UTC 偏移，如 `2023-08-01T02:00:00+08:00` |
-| `run.run_id` | string | 必填 | `^[A-Za-z0-9][A-Za-z0-9._-]*$`，≤ 128 |
+| `run.run_id` | string 或 null | null = 方案 ID | `^[A-Za-z0-9][A-Za-z0-9._-]*$`，≤ 128；写入结果包与 viewer |
 | `run.case_id` | string | 必填 | 同上；不得为 `result_native`（它命名派生的 `<case_id>.nc`） |
 | `run.coordinate_system` | string | 必填 | 必须等于网格 artifact 的 `coordinate_system`（以及审计的 `crs`）；须为米制投影 CRS |
-| `output.directory` | 路径 | 必填 | 运行目录；新运行时必须不存在；bundle 写到 `<directory>/bundle` |
+| `output.directory` | 路径或 null | 与 `output.root` 二选一 | 显式运行目录；新运行时必须不存在；bundle 写到 `<directory>/bundle`；不能与 `--id`/`output.script_id` 同用 |
+| `output.root` | 路径或 null | 与 `output.directory` 二选一 | 结果根目录（如 `work/results`）；运行目录为 `<root>/<方案ID>` |
+| `output.script_id` | string 或 null | null | 方案 ID（运行目录名），规则见 §1；`--id` 优先；null 时生成 `YYYYMMDD-<Unix 纳秒>`（北京时间） |
 | `output.profile` | object / 路径 / null | null | `LargeRunOutputProfile` 字段或 YAML/JSON 文件；null = 默认 |
 | `output.export` | bool | true | 求解结束后执行导出 + 校验 |
 
@@ -110,7 +115,7 @@ SECTIONS; NO RAINFALL; Q SERIES RECONSTRUCTED, NOT MEASURED"）、`dry_depth_thr
 ## 4. 运行目录与产物
 
 ```
-<directory>/
+<directory> 或 <root>/<方案ID>/
   run_report.json       status: running | failed | complete（complete 仅在全部帧写完、sink 关闭、导出完成、verify PASS 之后）
   run_receipt.json      输入 SHA-256、选项、数值指纹、kernel、步数、各阶段墙钟、python/numpy/numba/netCDF4/pyproj 版本、续算信息
   progress.jsonl        每行一个 JSON 事件：start / inputs_ready / sink_opened / solver_progress / frame_written / solver_done /
