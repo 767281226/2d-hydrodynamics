@@ -46,11 +46,14 @@ from .triangular_solver_contract import (
 )
 from .triangular_solver_kernels import (
     EdgeGeometry,
+    NumbaWorkspace,
     manning_explicit,
     manning_point_implicit,
     numba_status,
     select_rhs_kernel,
+    spatial_face_order,
     stage_and_sanitize,
+    stage_sanitize_numba,
     update_face_maxima,
 )
 
@@ -328,6 +331,7 @@ class _BoundaryGroup:
     spec: OpenBoundaryGroupSpec
     edges: np.ndarray        # mesh edge indices
     faces: np.ndarray        # interior face of each edge
+    local: np.ndarray        # position of each edge's face in _BoundarySet.faces
     length: np.ndarray       # m
     nx: np.ndarray           # outward unit normal
     ny: np.ndarray
@@ -346,17 +350,40 @@ class _BoundaryGroup:
         return float(np.interp(time_s, self.times, self.discharge))
 
 
-def _prepare_boundary_groups(inputs: TriangularLongRunInputs, geometry: EdgeGeometry) -> tuple[_BoundaryGroup, ...]:
+@dataclass(frozen=True, eq=False)
+class _BoundarySet:
+    """All open boundary groups plus the sorted union of their interior faces.
+
+    Boundary terms are evaluated on this compact face set only (a few hundred
+    faces) and scattered into a persistent dense ``(n_face, 3)`` buffer whose
+    other rows stay exactly zero, so the stage arithmetic is unchanged.
+    """
+
+    groups: tuple[_BoundaryGroup, ...]
+    faces: np.ndarray        # sorted unique interior faces of all groups
+
+    def __len__(self) -> int:
+        return len(self.groups)
+
+    def __iter__(self):
+        return iter(self.groups)
+
+
+def _prepare_boundary_groups(inputs: TriangularLongRunInputs, geometry: EdgeGeometry,
+                             face_map: np.ndarray | None = None) -> _BoundarySet:
+    """Boundary groups; ``face_map`` (mesh face -> storage position) selects the per-face array layout."""
+    edge_lists = [np.asarray(spec.edge_indices, dtype=np.int64) for spec in inputs.open_boundaries]
+    stored = (lambda faces: faces) if face_map is None else (lambda faces: face_map[faces])
+    union = np.unique(np.concatenate([stored(geometry.left[edges]) for edges in edge_lists])) if edge_lists else np.zeros(0, dtype=np.int64)
     groups = []
-    for spec in inputs.open_boundaries:
-        edges = np.asarray(spec.edge_indices, dtype=np.int64)
-        faces = geometry.left[edges]
+    for spec, edges in zip(inputs.open_boundaries, edge_lists):
+        faces = stored(geometry.left[edges])
         groups.append(_BoundaryGroup(
-            spec=spec, edges=edges, faces=faces, length=geometry.length[edges],
+            spec=spec, edges=edges, faces=faces, local=np.searchsorted(union, faces), length=geometry.length[edges],
             nx=geometry.nx[edges], ny=geometry.ny[edges], factor=geometry.left_factor[edges],
             times=np.asarray(spec.time_s, dtype=np.float64), discharge=np.asarray(spec.discharge_m3_s, dtype=np.float64),
         ))
-    return tuple(groups)
+    return _BoundarySet(tuple(groups), union)
 
 
 @dataclass
@@ -393,11 +420,16 @@ def _inflow_ghost_depth(q: np.ndarray, h_interior: np.ndarray, gravity: float) -
     return np.maximum(h_interior, critical)
 
 
-def _boundary_wave_sums(groups: Sequence[_BoundaryGroup], state: np.ndarray, time_s: float, n_face: int,
+def _boundary_wave_sums(boundaries: _BoundarySet, state: np.ndarray, time_s: float,
                         *, gravity: float, dry_depth_m: float) -> np.ndarray | None:
-    """Extra sum_e L_e a_e from inflow ghost states (added to the wall wave sums)."""
+    """Extra sum_e L_e a_e from inflow ghost states on ``boundaries.faces`` (added to the wall wave sums).
+
+    Each group's contribution is accumulated per face in edge order and the
+    groups are added in order, exactly as a dense ``bincount`` sum would.
+    """
     extra = None
-    for group in groups:
+    n_local = boundaries.faces.size
+    for group in boundaries:
         if group.spec.role != "inflow":
             continue
         q = _inflow_unit_discharge(group, state[:, 0], time_s, dry_depth_m)
@@ -407,13 +439,32 @@ def _boundary_wave_sums(groups: Sequence[_BoundaryGroup], state: np.ndarray, tim
         ghost = _inflow_ghost_depth(q, state[group.faces, 0], gravity)
         speed = np.zeros_like(q)
         speed[positive] = q[positive] / ghost[positive] + np.sqrt(gravity * ghost[positive])
-        contribution = np.bincount(group.faces, weights=group.length * speed, minlength=n_face)
+        contribution = np.bincount(group.local, weights=group.length * speed, minlength=n_local)
         extra = contribution if extra is None else extra + contribution
     return extra
 
 
-def _boundary_stage(groups: Sequence[_BoundaryGroup], state: np.ndarray, time_s: float, dt_s: float, area: np.ndarray,
-                    *, gravity: float, dry_depth_m: float, outflow_fraction: float) -> _BoundaryStage:
+def _boundary_wave_cfl(boundaries: _BoundarySet, wall_cfl: float, wave_sums: np.ndarray, extra: np.ndarray | None,
+                       area: np.ndarray, cfl: float) -> float:
+    """``cfl * min(area / (wave_sums + extra))`` given the wall-only bound ``wall_cfl``.
+
+    Only boundary faces change; a face's bound can only shrink when ``extra``
+    is added, so the minimum over all faces is ``min(wall_cfl, boundary minimum)``
+    in binary64 (min and the positive scaling by ``cfl`` are exact and monotone).
+    """
+    if extra is None:
+        return wall_cfl
+    faces = boundaries.faces
+    sums = wave_sums[faces] + extra
+    positive = sums > 0.0
+    if not positive.any():
+        return wall_cfl
+    return min(wall_cfl, cfl * float(np.min(area[faces][positive] / sums[positive])))
+
+
+def _boundary_stage(boundaries: _BoundarySet, state: np.ndarray, time_s: float, dt_s: float, area: np.ndarray,
+                    *, gravity: float, dry_depth_m: float, outflow_fraction: float,
+                    dense: np.ndarray | None = None) -> _BoundaryStage:
     """Additive face derivative of all open boundary groups for one RK stage.
 
     Open edges keep the closed-wall Riemann flux (hydrostatic balance and
@@ -424,25 +475,30 @@ def _boundary_stage(groups: Sequence[_BoundaryGroup], state: np.ndarray, time_s:
     * outflow removes mass q_e and momentum q_e * u_face, with q_e capped so a
       stage of length dt removes at most ``outflow_fraction`` of the water above
       the dry threshold in each adjacent face.
+
+    The terms are computed on ``boundaries.faces`` and written into ``dense``
+    (an ``(n_face, 3)`` buffer that is zero on every other row; allocated when
+    not given).
     """
     stage = _BoundaryStage(None, {}, {}, {})
-    if not groups:
+    if not len(boundaries):
         return stage
-    n_face = state.shape[0]
+    n_local = boundaries.faces.size
     h = state[:, 0]
-    d0 = np.zeros(n_face)
-    d1 = np.zeros(n_face)
-    d2 = np.zeros(n_face)
-    for group in groups:
+    d0 = np.zeros(n_local)
+    d1 = np.zeros(n_local)
+    d2 = np.zeros(n_local)
+    for group in boundaries:
         name = group.spec.name
+        local = group.local
         if group.spec.role == "inflow":
             q = _inflow_unit_discharge(group, h, time_s, dry_depth_m)
             ghost = _inflow_ghost_depth(q, h[group.faces], gravity)
             with np.errstate(divide="ignore", invalid="ignore"):
                 momentum = np.where(q > 0.0, q * q / ghost, 0.0)
-            d0 += np.bincount(group.faces, weights=group.factor * q, minlength=n_face)
-            d1 -= np.bincount(group.faces, weights=group.factor * momentum * group.nx, minlength=n_face)
-            d2 -= np.bincount(group.faces, weights=group.factor * momentum * group.ny, minlength=n_face)
+            d0 += np.bincount(local, weights=group.factor * q, minlength=n_local)
+            d1 -= np.bincount(local, weights=group.factor * momentum * group.nx, minlength=n_local)
+            d2 -= np.bincount(local, weights=group.factor * momentum * group.ny, minlength=n_local)
             stage.inflow_m3_s[name] = math.fsum((q * group.length).tolist())
         else:
             requested = group.discharge_at(time_s)
@@ -453,7 +509,7 @@ def _boundary_stage(groups: Sequence[_BoundaryGroup], state: np.ndarray, time_s:
                 total = math.fsum(weights.tolist())
                 if total > 0.0:
                     q = requested * (weights / total) / group.length
-                    wanted = np.bincount(group.faces, weights=q * group.length * dt_s, minlength=n_face)[group.faces]
+                    wanted = np.bincount(local, weights=q * group.length * dt_s, minlength=n_local)[local]
                     available = outflow_fraction * np.maximum(h[group.faces] - dry_depth_m, 0.0) * area[group.faces]
                     with np.errstate(divide="ignore", invalid="ignore"):
                         scale = np.where(wanted > available, available / wanted, 1.0)
@@ -464,11 +520,17 @@ def _boundary_stage(groups: Sequence[_BoundaryGroup], state: np.ndarray, time_s:
             v = np.zeros_like(hf)
             np.divide(state[group.faces, 1], hf, out=u, where=wet)
             np.divide(state[group.faces, 2], hf, out=v, where=wet)
-            d0 -= np.bincount(group.faces, weights=group.factor * delivered_q, minlength=n_face)
-            d1 -= np.bincount(group.faces, weights=group.factor * delivered_q * u, minlength=n_face)
-            d2 -= np.bincount(group.faces, weights=group.factor * delivered_q * v, minlength=n_face)
+            d0 -= np.bincount(local, weights=group.factor * delivered_q, minlength=n_local)
+            d1 -= np.bincount(local, weights=group.factor * delivered_q * u, minlength=n_local)
+            d2 -= np.bincount(local, weights=group.factor * delivered_q * v, minlength=n_local)
             stage.outflow_delivered_m3_s[name] = math.fsum((delivered_q * group.length).tolist())
-    stage.derivative = np.stack([d0, d1, d2], axis=1)
+    if dense is None:
+        dense = np.zeros((state.shape[0], 3), dtype=np.float64)
+    faces = boundaries.faces
+    dense[faces, 0] = d0
+    dense[faces, 1] = d1
+    dense[faces, 2] = d2
+    stage.derivative = dense
     return stage
 
 
@@ -616,7 +678,15 @@ def run_triangular_long_run(
     rhs = select_rhs_kernel(options.kernel)
     kernel_name = "numba" if rhs.__name__ == "rhs_numba" else "numpy"
     use_numba = kernel_name == "numba"
-    groups = _prepare_boundary_groups(inputs, geometry)
+    # The numba kernels keep every per-face array in a cache-friendly storage
+    # order (spatial Morton order of the face centroids; see NumbaWorkspace).
+    # Inputs are converted once, outputs are converted back on every frame,
+    # checkpoint and summary; the arithmetic and its order are unchanged.
+    workspace = NumbaWorkspace(geometry, face_order=spatial_face_order(mesh.face_centroid)) if use_numba else None
+    to_internal = workspace.to_internal if use_numba else (lambda values: values)
+    to_mesh = workspace.to_mesh if use_numba else (lambda values: values)
+    groups = _prepare_boundary_groups(inputs, geometry, face_map=workspace.face_inverse if use_numba else None)
+    boundary_buffer = np.zeros((mesh.n_face, 3), dtype=np.float64) if len(groups) else None
     fingerprint = _inputs_fingerprint(inputs, geometry)
     numerics = options.numerics_fingerprint()
 
@@ -629,7 +699,9 @@ def run_triangular_long_run(
     area = geometry.area
     total_area = math.fsum(area.tolist())
     bed = np.ascontiguousarray(inputs.bed_m)
-    manning_n = inputs.manning_n
+    area_k = to_internal(area)                                       # per-face arrays in storage order
+    bed_k = to_internal(bed)
+    manning_n = None if inputs.manning_n is None else to_internal(inputs.manning_n)
     rain_rates = inputs.rainfall_rate_m_s_by_interval
     times = [float(value) for value in inputs.output_times_s]
     explicit = friction == "explicit_source_cfl"
@@ -650,12 +722,12 @@ def run_triangular_long_run(
     ledger_rows: list[dict[str, Any]] = []
     totals = {key: _Compensated() for key in _LEDGER_KEYS}
     group_totals = {group.spec.name: {key: _Compensated() for key in ("inflow", "outflow_requested", "outflow_delivered")} for group in groups}
-    max_depth = initial.state[:, 0].copy()
+    state = to_internal(initial.state)
+    max_depth = state[:, 0].copy()
     time_of_max = np.zeros(mesh.n_face)
     max_speed = np.zeros(mesh.n_face)
     extrema = {"min_dt": math.inf, "max_dt": -math.inf, "pair": 0.0, "gamma": 0.0}
     start_index = 0
-    state = initial.state
     last_checkpoint_time = 0.0
     checkpoints: list[str] = []
 
@@ -663,10 +735,10 @@ def run_triangular_long_run(
         metadata, arrays = load_long_run_checkpoint(resume_from)
         if metadata["inputs_fingerprint"] != fingerprint or metadata["numerics_fingerprint"] != numerics:
             raise TriangularLongRunError("checkpoint does not match these inputs and numerical options")
-        state = arrays["state"].copy()
-        max_depth = arrays["maximum_depth_m"].copy()
-        time_of_max = arrays["time_of_maximum_depth_s"].copy()
-        max_speed = arrays["maximum_speed_m_s"].copy()
+        state = to_internal(arrays["state"].copy())
+        max_depth = to_internal(arrays["maximum_depth_m"].copy())
+        time_of_max = to_internal(arrays["time_of_maximum_depth_s"].copy())
+        max_speed = to_internal(arrays["maximum_speed_m_s"].copy())
         start_index = int(metadata["output_index"])
         counters = {"accepted": int(metadata["accepted"]), "rejected": dict(metadata["rejected"]), "corrections": int(metadata["corrections"])}
         totals = {key: _Compensated(*metadata["totals"][key]) for key in _LEDGER_KEYS}
@@ -691,7 +763,7 @@ def run_triangular_long_run(
 
     def ledger_row(index: int, interval: Mapping[str, float], wall_s: float, interval_steps: int, interval_rejected: int,
                    interval_dt: tuple[float, float]) -> dict[str, Any]:
-        stored = math.fsum((state[:, 0] * area).tolist())
+        stored = math.fsum((state[:, 0] * area_k).tolist())
         cumulative = {key: totals[key].value for key in _LEDGER_KEYS}
         residual = (stored - initial_volume - cumulative["rainfall"] - cumulative["inflow"]
                     + cumulative["outflow_delivered"] - cumulative["correction"])
@@ -736,10 +808,11 @@ def run_triangular_long_run(
         if frame_sink is None:
             return
         u, v = velocities(state)
+        depth = to_mesh(state[:, 0])
         frame_sink(TriangularFrame(
-            output_index=index, time_s=times[index], water_depth_m=_readonly(state[:, 0]),
-            unit_discharge_x_m2_s=_readonly(state[:, 1]), unit_discharge_y_m2_s=_readonly(state[:, 2]),
-            velocity_x_m_s=_readonly(u), velocity_y_m_s=_readonly(v), water_level_m=_readonly(bed + state[:, 0]),
+            output_index=index, time_s=times[index], water_depth_m=_readonly(depth),
+            unit_discharge_x_m2_s=_readonly(to_mesh(state[:, 1])), unit_discharge_y_m2_s=_readonly(to_mesh(state[:, 2])),
+            velocity_x_m_s=_readonly(to_mesh(u)), velocity_y_m_s=_readonly(to_mesh(v)), water_level_m=_readonly(bed + depth),
             ledger=dict(row),
         ))
 
@@ -748,22 +821,28 @@ def run_triangular_long_run(
         ledger_rows.append(row)
         emit(0, row)
 
-    def evaluate(current: np.ndarray, stage_time: float) -> tuple[np.ndarray, float, float, np.ndarray | None, float, Mapping[str, Any] | None, str | None]:
+    # numba path: all per-step arrays are preallocated.  Two derivative buffers
+    # (stage-0 flux is cached across retries while stage-1 flux is recomputed)
+    # and three state buffers that rotate with the accepted state.
+    flux_buffers = [np.empty((mesh.n_face, 3)) for _ in range(2)] if use_numba else [None, None]
+    stage_buffers = [np.empty((mesh.n_face, 3)) for _ in range(3)] if use_numba else [None, None, None]
+
+    def evaluate(current: np.ndarray, stage_time: float, slot: int) -> tuple[np.ndarray, float, float, np.ndarray | None, float, Mapping[str, Any] | None, str | None]:
         """Spatial residual, wave CFL, pair residual, explicit Manning source/limit."""
-        result = rhs(current, bed, geometry, gravity=g, cfl=cfl, dry_depth_m=dry)
+        if use_numba:
+            result = rhs(current, bed_k, geometry, gravity=g, cfl=cfl, dry_depth_m=dry, workspace=workspace, out=flux_buffers[slot])
+        else:
+            result = rhs(current, bed_k, geometry, gravity=g, cfl=cfl, dry_depth_m=dry)
         wave_cfl = result.cfl_limit_s
-        extra = _boundary_wave_sums(groups, current, stage_time, mesh.n_face, gravity=g, dry_depth_m=dry) if groups else None
-        if extra is not None:
-            sums = result.wave_sums + extra
-            positive = sums > 0.0
-            wave_cfl = cfl * float(np.min(area[positive] / sums[positive])) if positive.any() else math.inf
+        if len(groups):
+            extra = _boundary_wave_sums(groups, current, stage_time, gravity=g, dry_depth_m=dry)
+            wave_cfl = _boundary_wave_cfl(groups, wave_cfl, result.wave_sums, extra, area_k, cfl)
         if explicit:
             source = manning_explicit(current, manning_n, gravity=g, source_cfl_fraction=source_fraction, dry_depth_m=dry)
             return result.derivative, wave_cfl, result.maximum_pair_residual_m3_s, source.source, source.source_limit_s, source.diagnostics, source.error
         return result.derivative, wave_cfl, result.maximum_pair_residual_m3_s, None, math.inf, None, None
 
-    def sanitized(result: tuple[np.ndarray | None, int, int, float, int]) -> _Sanitized:
-        out, code, index, correction_volume, count = result
+    def sanitized(out: np.ndarray | None, code: int, index: int, correction_volume: float, count: int) -> _Sanitized:
         if code == 1:
             return _Sanitized(None, 0.0, 0, "non_finite_state", "stage contains NaN or infinity")
         if code == 2:
@@ -772,15 +851,35 @@ def run_triangular_long_run(
         return _Sanitized(out, correction_volume, count)
 
     def euler(current: np.ndarray, flux: np.ndarray, source: np.ndarray | None, boundary: np.ndarray | None,
-              rain_m_s: float | None, dt: float) -> _Sanitized:
-        return sanitized(stage_and_sanitize(
-            current, dt_s=dt, flux=flux, source=source, boundary=boundary, rain_m_s=rain_m_s, area=area,
-            dry_depth_m=dry, negative_tolerance_m=negative_tolerance, use_numba=use_numba,
+              rain_m_s: float | None, dt: float, slot: int) -> tuple[_Sanitized, float]:
+        """Euler stage + sanitation (+ point-implicit Manning); returns the stage and max gamma."""
+        if use_numba:
+            out = stage_buffers[slot]
+            code, index, correction_volume, count, gamma = stage_sanitize_numba(
+                current, out=out, workspace=workspace, area=area_k, dry_depth_m=dry, negative_tolerance_m=negative_tolerance,
+                dt_s=dt, flux=flux, source=source, boundary=boundary, rain_m_s=rain_m_s,
+                manning_n=manning_n if implicit else None, gravity=g,
+            )
+            return sanitized(out if code == 0 else None, code, index, correction_volume, count), gamma
+        stage = sanitized(*stage_and_sanitize(
+            current, dt_s=dt, flux=flux, source=source, boundary=boundary, rain_m_s=rain_m_s, area=area_k,
+            dry_depth_m=dry, negative_tolerance_m=negative_tolerance, use_numba=False,
         ))
+        gamma = 0.0
+        if implicit and stage.state is not None:
+            _, gamma = manning_point_implicit(stage.state, manning_n, dt, gravity=g, dry_depth_m=dry, use_numba=False)
+        return stage, gamma
 
     def average(first: np.ndarray, second: np.ndarray) -> _Sanitized:
-        return sanitized(stage_and_sanitize(
-            first, second=second, area=area, dry_depth_m=dry, negative_tolerance_m=negative_tolerance, use_numba=use_numba,
+        if use_numba:
+            out = stage_buffers[2]
+            code, index, correction_volume, count, _ = stage_sanitize_numba(
+                first, out=out, workspace=workspace, area=area_k, dry_depth_m=dry, negative_tolerance_m=negative_tolerance,
+                second=second,
+            )
+            return sanitized(out if code == 0 else None, code, index, correction_volume, count)
+        return sanitized(*stage_and_sanitize(
+            first, second=second, area=area_k, dry_depth_m=dry, negative_tolerance_m=negative_tolerance, use_numba=False,
         ))
 
     outflow_fraction = float(options.outflow_stage_volume_fraction)
@@ -808,7 +907,7 @@ def run_triangular_long_run(
                 raise _fail(f"accepted step durations overshot output interval by {-remaining:.17g} s", time_s=time_s,
                             stage="time_accumulation", reason="time_overshoot", counters=counters)
             if cached is None:
-                cached = evaluate(state, time_s)
+                cached = evaluate(state, time_s, 0)
             flux_0, wave_cfl_0, pair_0, source_0, source_cfl_0, _, source_error_0 = cached
             if source_error_0:
                 raise _fail(f"Manning source limit evaluation failed: {source_error_0}", time_s=time_s, stage="step_selection",
@@ -840,9 +939,11 @@ def run_triangular_long_run(
             while True:
                 budget_remaining = max(0.0, options.volume_correction_budget_fraction * correction_scale() - totals["correction"].value)
                 reason, detail = None, None
-                boundary_0 = _boundary_stage(groups, state, time_s, dt, area, gravity=g, dry_depth_m=dry, outflow_fraction=outflow_fraction)
-                stage_1 = euler(state, flux_0, source_0, boundary_0.derivative, rain, dt)
-                gamma_seen = 0.0
+                boundary_0 = _boundary_stage(groups, state, time_s, dt, area_k, gravity=g, dry_depth_m=dry,
+                                             outflow_fraction=outflow_fraction, dense=boundary_buffer)
+                # The point-implicit Manning update is fused into the stage; its
+                # result is discarded with the stage if the stage is rejected.
+                stage_1, gamma_seen = euler(state, flux_0, source_0, boundary_0.derivative, rain, dt, 0)
                 cfl_after = math.inf
                 if stage_1.reason:
                     reason, detail = stage_1.reason, f"stage 1: {stage_1.detail}"
@@ -850,9 +951,7 @@ def run_triangular_long_run(
                     reason, detail = "correction_budget", "stage-1 weighted correction exceeds the remaining volume-correction budget"
                 else:
                     stage_1_state = stage_1.state
-                    if implicit:
-                        stage_1_state, gamma_seen = manning_point_implicit(stage_1_state, manning_n, dt, gravity=g, dry_depth_m=dry, use_numba=use_numba)
-                    evaluated_1 = evaluate(stage_1_state, time_s + dt)
+                    evaluated_1 = evaluate(stage_1_state, time_s + dt, 1)
                     flux_1, wave_cfl_1, pair_1, source_1, source_cfl_1, source_diag_1, source_error_1 = evaluated_1
                     cfl_after = min(wave_cfl_1, source_cfl_1)
                     if source_error_1:
@@ -865,17 +964,15 @@ def run_triangular_long_run(
                     elif wave_violated:
                         reason, detail = "second_stage_cfl", "candidate step exceeds freshly recomputed stage-1 wave CFL bound"
                     else:
-                        boundary_1 = _boundary_stage(groups, stage_1_state, time_s + dt, dt, area, gravity=g, dry_depth_m=dry,
-                                                     outflow_fraction=outflow_fraction)
-                        stage_2 = euler(stage_1_state, flux_1, source_1, boundary_1.derivative, rain, dt)
+                        boundary_1 = _boundary_stage(groups, stage_1_state, time_s + dt, dt, area_k, gravity=g, dry_depth_m=dry,
+                                                     outflow_fraction=outflow_fraction, dense=boundary_buffer)
+                        stage_2, gamma_2 = euler(stage_1_state, flux_1, source_1, boundary_1.derivative, rain, dt, 1)
                         if stage_2.reason:
                             reason, detail = stage_2.reason, f"stage 2: {stage_2.detail}"
                         else:
                             correction = 0.5 * (stage_1.correction_volume_m3 + stage_2.correction_volume_m3)
                             stage_2_state = stage_2.state
-                            if implicit:
-                                stage_2_state, gamma_2 = manning_point_implicit(stage_2_state, manning_n, dt, gravity=g, dry_depth_m=dry, use_numba=use_numba)
-                                gamma_seen = max(gamma_seen, gamma_2)
+                            gamma_seen = max(gamma_seen, gamma_2)
                             if correction > budget_remaining:
                                 reason, detail = "correction_budget", "SSPRK2 weighted correction exceeds the remaining volume-correction budget"
                             else:
@@ -915,7 +1012,10 @@ def run_triangular_long_run(
             reaches_output = abs(dt - remaining) <= _step_tolerance_s(max(dt, remaining))
             elapsed.add(dt)
             time_s = end_time if reaches_output else math.fsum((interval_start, elapsed.total, elapsed.correction))
+            previous_state = state
             state = final.state
+            if use_numba:
+                stage_buffers[2] = previous_state  # the old state buffer becomes the next final-state buffer
             cached = None
             extrema["pair"] = max(extrema["pair"], pair_1)
             extrema["gamma"] = max(extrema["gamma"], gamma_seen)
@@ -945,7 +1045,7 @@ def run_triangular_long_run(
             interval_dt[1] = max(interval_dt[1], dt)
             extrema["min_dt"] = min(extrema["min_dt"], dt)
             extrema["max_dt"] = max(extrema["max_dt"], dt)
-            update_face_maxima(state, time_s, dry, max_depth, time_of_max, max_speed, use_numba=use_numba)
+            update_face_maxima(state, time_s, dry, max_depth, time_of_max, max_speed, use_numba=use_numba, workspace=workspace)
             if counters["accepted"] > options.maximum_accepted_step_count:
                 raise _fail("accepted-step safety limit exceeded", time_s=time_s, stage="integration",
                             reason="step_safety_limit", counters=counters)
@@ -981,7 +1081,8 @@ def run_triangular_long_run(
                 "extrema": extrema, "ledger": ledger_rows,
             }
             written = _write_checkpoint(Path(checkpoint_directory), payload, {
-                "state": state, "maximum_depth_m": max_depth, "time_of_maximum_depth_s": time_of_max, "maximum_speed_m_s": max_speed,
+                "state": to_mesh(state), "maximum_depth_m": to_mesh(max_depth),
+                "time_of_maximum_depth_s": to_mesh(time_of_max), "maximum_speed_m_s": to_mesh(max_speed),
             }, output_index)
             checkpoints.append(str(written))
             last_checkpoint_time = times[output_index]
@@ -995,8 +1096,9 @@ def run_triangular_long_run(
     scale = correction_scale()
     return TriangularLongRunSummary(
         status="completed", final_time_s=time_s,
-        water_depth_m=state[:, 0].copy(), unit_discharge_x_m2_s=state[:, 1].copy(), unit_discharge_y_m2_s=state[:, 2].copy(),
-        maximum_depth_m=max_depth, time_of_maximum_depth_s=time_of_max, maximum_speed_m_s=max_speed,
+        water_depth_m=to_mesh(state[:, 0]).copy(), unit_discharge_x_m2_s=to_mesh(state[:, 1]).copy(),
+        unit_discharge_y_m2_s=to_mesh(state[:, 2]).copy(),
+        maximum_depth_m=to_mesh(max_depth), time_of_maximum_depth_s=to_mesh(time_of_max), maximum_speed_m_s=to_mesh(max_speed),
         ledger=ledger_rows, accepted_step_count=counters["accepted"], rejected_step_count=sum(counters["rejected"].values()),
         rejected_step_reasons=dict(counters["rejected"]), mass_correction_count=counters["corrections"],
         minimum_accepted_step_s=extrema["min_dt"], maximum_accepted_step_s=extrema["max_dt"],

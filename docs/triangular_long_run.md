@@ -26,6 +26,26 @@ Both the legacy path and the long-run path use the kernels in
   or `numba`. It runs a parallel edge pass and then a parallel face pass. The
   face pass adds each face's edge terms in ascending edge index, which is the
   order of the sequential loop. numba is never a required dependency.
+* In the long-run driver the numba path also:
+  * fuses each Euler stage (or the SSPRK2 average), the sanitation rules and
+    the point-implicit Manning update into one parallel face pass. The
+    order-dependent parts (the first failing face and the sequential
+    tiny-negative correction sum) are finished by a serial scan in mesh face
+    order, so they follow the serial rules exactly;
+  * keeps all work arrays preallocated in a `NumbaWorkspace`, so a step makes
+    no large allocations;
+  * stores per-face arrays in a spatial (Morton) order of face centroids, for
+    cache locality. Edge terms are still added in ascending mesh edge index.
+    Inputs are converted once. Frames, checkpoints and the summary are
+    converted back to mesh face order;
+  * evaluates open-boundary terms only on the boundary faces. The wave CFL
+    bound becomes `min(wall bound, boundary-face bound)`, which is the same
+    binary64 value;
+  * reduces only exact minima, maxima and integer counts across threads.
+
+  The results are binary64-identical to the previous numba kernel and do not
+  depend on the thread count. This was checked on the tests and on the real
+  mesh (final state, maxima and ledger).
 
 Tolerance: on the accepted P4-2C rainfall/Manning cases and on random wet/dry
 states over a non-flat bed, the vectorised legacy kernels (`_rhs_and_cfl`,
@@ -201,6 +221,21 @@ also using:
 | Vectorised numpy | about 0.30 |
 | numba, dry start with rain and point-implicit friction | about 0.037 |
 | numba, wet state | about 0.043 |
+
+On the 178,962-face / 271,454-edge mesh005 case (dry start, three open
+boundary sections, point-implicit friction, first 180 s, 2,121 steps), measured
+back to back on the lightly loaded workstation:
+
+| Path | Seconds per accepted step |
+|---|---|
+| Previous numba driver | 0.035 (0.066-0.093 under heavy concurrent load) |
+| Fused, preallocated, Morton-ordered numba driver | 0.0096-0.010 (0.024-0.033 under heavy load) |
+
+The previous profile was: RHS about 45 %, Python boundary terms over dense
+arrays (`bincount`/`stack` with `minlength=n_face`) about 20 %, stage/sanitize
+about 12 %, the wave-CFL recomputation with boundary sums about 13 %, and
+friction and maxima about 8 %. With the new driver, almost all of the time is
+in the compiled edge and face passes.
 
 The working set is about 0.5 GiB, mostly the `TriangularMesh` Python object.
 Building the `TriangularMesh` once takes 50-66 s. Explicit friction is
