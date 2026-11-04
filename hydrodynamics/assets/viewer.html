@@ -16,6 +16,7 @@
   select,button{background:#203146;color:var(--ink);border:1px solid #38506a;border-radius:6px;padding:7px 9px;font:inherit}button{background:#1d4ed8;border:0;cursor:pointer}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   input[type=range]{width:100%;margin:0;accent-color:var(--accent)}.kpi{display:grid;grid-template-columns:1fr 1fr;gap:7px}.kpi>div{background:#101b2a;border-radius:7px;padding:8px}.value{font-size:17px;color:var(--accent)}.label{font-size:11px;color:var(--muted);margin-top:2px}
   #forcing{display:none;font-size:12px;line-height:1.5;padding:7px 9px;border-radius:7px;background:#3a2a10;border:1px solid #b7862c;color:#ffd58a}#status{font-size:12px;color:var(--muted);overflow-wrap:anywhere}#status.error{color:var(--bad)}#legend{height:14px;border-radius:6px;background:linear-gradient(90deg,#14288c,#2898dc,#4cc88c,#fa783c)}
+  #socio{display:grid;gap:7px;font-size:12px;border-top:1px solid var(--line);padding-top:10px}#socio[hidden]{display:none}#socio h2{font-size:13px;margin:0}#socio table{width:100%;border-collapse:collapse;font-size:11px}#socio td,#socio th{padding:3px 4px;border-bottom:1px solid #22344a;text-align:right;font-weight:normal}#socio td:first-child,#socio th:first-child{text-align:left}#socio th{color:var(--muted)}#socio .note{font-size:11px;color:var(--muted);line-height:1.5}#socio .error{color:var(--bad)}
   @media(max-width:760px){body{height:auto;min-height:100vh;flex-direction:column;overflow:auto}#stage{flex:none;height:55vh;min-height:300px;padding:7px 7px 0}#side{width:auto;max-height:none;margin:7px;padding:11px;gap:8px;overflow:visible}#wrap{border-radius:7px}.kpi{grid-template-columns:repeat(4,1fr)}.value{font-size:14px}}
 </style>
 </head>
@@ -40,6 +41,7 @@
   <input type="range" id="seek" min="0" max="0" value="0" aria-label="选择时间帧">
   <div id="legend"></div><div class="sub" id="legendText">图例</div>
   <div class="sub" id="status">加载中…</div>
+  <section id="socio" hidden aria-label="社会经济暴露"></section>
 </aside>
 <script>
 "use strict";
@@ -51,6 +53,59 @@ let profileEpoch=0,viewGeneration=0,profileAbortController=null,selectionAbortCo
 let selectionRequest=null,prefetchRequest=null,playbackTarget=null;
 const nativeVariableLabels={water_depth_m:"水深 (m)",water_level_m:"水位 (m)",velocity_x_m_s:"流速 X (m/s)",velocity_y_m_s:"流速 Y (m/s)",speed_m_s:"流速大小 (m/s)"};
 const compatVariableLabels={water_depth:"水深 (m)",water_level:"水位 (m)",velocity_x:"流速 X (m/s)",velocity_y:"流速 Y (m/s)"};
+// Optional socio-economic exposure overlay (socio_exposure/viewer_manifest.json + viewer_face_values.bin); loaded once, static per face.
+const SOCIO_MANIFEST="socio_exposure/viewer_manifest.json",SOCIO_MAGIC="SOCFV01\n",SOCIO_FORMAT="socio-exposure-viewer-v1";
+const socioLayerLabels={socio_pop_density:"人口密度（人/km²）",socio_arable_density:"耕地密度（亩/km²）",socio_exposed_pop:"受淹人口（当前帧）"};
+let socio=null;
+function isSocioLayer(name){return Object.prototype.hasOwnProperty.call(socioLayerLabels,name)}
+function fmtInt(v){return Number.isFinite(v)?Math.round(v).toLocaleString("zh-CN"):"--"}
+function p99(values){const arr=Float64Array.from(values.filter(Number.isFinite));if(!arr.length)return 1;arr.sort();return arr[Math.min(arr.length-1,Math.floor(arr.length*.99))]||arr[arr.length-1]||1}
+async function loadSocio(){
+  const rel=bundle&&bundle.format===LARGE_BUNDLE_FORMAT&&bundle.socio_exposure?bundle.socio_exposure.viewer_manifest:null;if(!rel)return;
+  const panel=document.getElementById("socio");
+  try{
+    if(rel!==SOCIO_MANIFEST)throw new Error("社会经济图层路径不符合约定");
+    const doc=await fetchJson(SOCIO_MANIFEST);const rec=doc.values_file;
+    if(doc.format!==SOCIO_FORMAT||doc.run_id!==bundle.run_id||doc.face_count!==bundle.native_result.face_count||!Array.isArray(doc.frames)||doc.frames.length!==bundle.native_result.saved_frame_count||!Array.isArray(doc.districts)||!rec||rec.name!=="viewer_face_values.bin")throw new Error("社会经济图层manifest与run.json不一致");
+    const buf=await checkedBuffer(`socio_exposure/${rec.name}`,rec.sha256);magic(buf,SOCIO_MAGIC);const view=new DataView(buf),F=view.getUint32(8,true),D=view.getUint32(12,true);
+    if(F!==doc.face_count||D!==doc.districts.length||buf.byteLength!==16+10*F||rec.bytes!==buf.byteLength)throw new Error("社会经济图层二进制长度/表头不一致");
+    const pop=new Float32Array(buf,16,F),arable=new Float32Array(buf,16+4*F,F),district=new Int16Array(buf,16+8*F,F);
+    socio={doc,pop,arable,district,popDensity:null,arableDensity:null,exposed:new Float32Array(F),bounds:{},thr:Number(doc.exposure_depth_threshold_m)};
+    panel.hidden=false;updateSocioPanel(0);
+  }catch(err){socio=null;panel.hidden=false;panel.replaceChildren(el("h2","社会经济暴露"),el("div",`社会经济图层加载失败: ${err.message}`,"error"))}
+}
+function ensureSocioDensity(){
+  if(!socio||socio.popDensity||!mesh||mesh.faceCount!==socio.pop.length)return;
+  const F=socio.pop.length,pd=new Float32Array(F),ad=new Float32Array(F);for(let f=0;f<F;f++){const a=mesh.areas[f]/1e6;pd[f]=socio.pop[f]/a;ad[f]=socio.arable[f]/a}
+  socio.popDensity=pd;socio.arableDensity=ad;socio.bounds.socio_pop_density=socio.bounds.socio_exposed_pop=[0,p99(pd)];socio.bounds.socio_arable_density=[0,p99(ad)];
+}
+function socioValues(name,frame){
+  ensureSocioDensity();if(name==="socio_pop_density")return socio.popDensity;if(name==="socio_arable_density")return socio.arableDensity;
+  // Exposed faces are coloured by population density (a per-face head count would mostly show triangle size); the tooltip and side panel give head counts.
+  const depth=frame.arrays[0],out=socio.exposed,thr=socio.thr,pd=socio.popDensity;for(let f=0;f<out.length;f++)out[f]=depth[f]>=thr?pd[f]:-Infinity;return out;
+}
+function socioValueAt(name,frame,f){ensureSocioDensity();if(name==="socio_pop_density")return socio.popDensity?socio.popDensity[f]:NaN;if(name==="socio_arable_density")return socio.arableDensity?socio.arableDensity[f]:NaN;return frame.arrays[0][f]>=socio.thr?socio.pop[f]:-Infinity}
+function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node}
+function socioTable(totals){
+  const table=el("table"),head=el("tr");for(const t of ["区","受淹人口（人）","受淹耕地（亩）"])head.appendChild(el("th",t));table.appendChild(head);
+  const row=(name,v)=>{const tr=el("tr");tr.appendChild(el("td",name));tr.appendChild(el("td",fmtInt(v?.pop)));tr.appendChild(el("td",fmtInt(v?.arable_mu)));table.appendChild(tr)};
+  for(const d of socio.doc.districts)row(d.name||d.code,totals?.by_district?.[d.code]);row("合计",totals?.all);return table;
+}
+function updateSocioPanel(index){
+  if(!socio)return;const doc=socio.doc,row=doc.frames[index],panel=document.getElementById("socio"),env=doc.envelope_saved_frames,solver=doc.envelope_solver_max;
+  const kpi=el("div",undefined,"kpi");const add=(v,l)=>{const box=el("div");box.appendChild(el("div",v,"value"));box.appendChild(el("div",l,"label"));kpi.appendChild(box)};
+  add(fmtInt(row?.all?.pop),"本帧受淹人口（人）");add(fmtInt(row?.all?.arable_mu),"本帧受淹耕地（亩）");
+  const parts=[el("h2",`社会经济暴露（水深 ≥ ${doc.exposure_depth_threshold_m} m）`),kpi,socioTable(row)];
+  if(env)parts.push(el("div",`包络（保存帧最大水深）：受淹人口 ${fmtInt(env.all.pop)} 人，受淹耕地 ${fmtInt(env.all.arable_mu)} 亩`,"sub"));
+  if(solver)parts.push(el("div",`包络（求解器逐步最大水深）：受淹人口 ${fmtInt(solver.all.pop)} 人，受淹耕地 ${fmtInt(solver.all.arable_mu)} 亩`,"sub"));
+  parts.push(el("div",`计算域内：人口 ${fmtInt(doc.population_inside_domain)} 人 · 耕地 ${fmtInt(doc.arable_mu_inside_domain)} 亩`,"sub"));
+  parts.push(el("div",`说明：${doc.limitation_note_zh||"仅暴露量，不计算经济损失。"}`,"note"));
+  panel.replaceChildren(...parts);
+}
+function socioHover(f){
+  if(!socio||f<0||f>=socio.pop.length)return "";const p=socio.pop[f],a=socio.arable[f],d=socio.district[f],dist=d>=0&&socio.doc.districts[d]?(socio.doc.districts[d].name||socio.doc.districts[d].code):"--";
+  if(!Number.isFinite(p))return "\n社会经济：无网格覆盖（无数据）";return `\n人口 ${p.toFixed(1)} 人 · 耕地 ${a.toFixed(2)} 亩\n区 ${dist}`;
+}
 function setStatus(text,isError=false){const el=document.getElementById("status");el.textContent=text;el.classList.toggle("error",isError)}
 async function fetchBuffer(url,signal){const response=await fetch(url,{cache:"no-store",signal});if(!response.ok)throw new Error(`${url} HTTP ${response.status}`);return response.arrayBuffer()}
 async function fetchJson(url,signal){const response=await fetch(url,{cache:"no-store",signal});if(!response.ok)throw new Error(`${url} HTTP ${response.status}`);return response.json()}
@@ -61,7 +116,7 @@ function cacheFrame(cache,result){cache.set(result.index,result);let bytes=0;for
 function clearCurrentDisplay(){ctx.clearRect(0,0,cv.width,cv.height);viewport=null;tip.style.display="none";for(const id of ["kTime","kMax","kWet","kFrame","timeLabel","legendText"])document.getElementById(id).textContent="--";document.getElementById("seek").value="0"}
 function color(value,min,max){if(!Number.isFinite(value))return [12,18,28,255];if(!(max>min))max=min+1;const t=Math.max(0,Math.min(1,(value-min)/(max-min)));if(t<.25){const u=t*4;return [18,40+75*u,135+85*u,255]}if(t<.5){const u=(t-.25)*4;return [18+35*u,115+80*u,220-70*u,255]}if(t<.75){const u=(t-.5)*4;return [53+170*u,195-45*u,150-80*u,255]}const u=(t-.75)*4;return [223+32*u,150-100*u,70-50*u,255]}
 function resizeCanvas(){const dpr=Math.min(window.devicePixelRatio||1,2),rect=cv.getBoundingClientRect();if(rect.width<2||rect.height<2)return;cv.width=Math.round(rect.width*dpr);cv.height=Math.round(rect.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);renderCurrent()}
-function setLayerOptions(){const select=document.getElementById("layer"),rows=profile==="native_web"?manifest.variables:manifest.variables.map(name=>({name,availability:"available"}));select.replaceChildren();for(const row of rows){const name=typeof row==="string"?row:row.name;const option=document.createElement("option");option.value=name;option.textContent=(profile==="native_web"?nativeVariableLabels[name]:compatVariableLabels[name])||name;if(typeof row!=="string"&&String(row.availability||"").startsWith("not_available")){option.disabled=true;option.textContent+="（不可用）"}select.appendChild(option)}select.onchange=renderCurrent}
+function setLayerOptions(){const select=document.getElementById("layer"),rows=profile==="native_web"?manifest.variables:manifest.variables.map(name=>({name,availability:"available"}));select.replaceChildren();for(const row of rows){const name=typeof row==="string"?row:row.name;const option=document.createElement("option");option.value=name;option.textContent=(profile==="native_web"?nativeVariableLabels[name]:compatVariableLabels[name])||name;if(typeof row!=="string"&&String(row.availability||"").startsWith("not_available")){option.disabled=true;option.textContent+="（不可用）"}select.appendChild(option)}if(profile==="native_web"&&socio)for(const [name,label] of Object.entries(socioLayerLabels)){const option=document.createElement("option");option.value=name;option.textContent=label;select.appendChild(option)}select.onchange=renderCurrent}
 async function loadNativeMesh(token,signal){
   const expectedManifest=manifest;
   const record=manifest.mesh_file;if(!record||record.name!=="mesh.bin")throw new Error("native mesh manifest不符合版本1结构");
@@ -134,20 +189,21 @@ async function loadCompatibilityFrame(index,token,generation,signal){
 async function loadFrame(index,token,generation,signal,selectedProfile=profile){return selectedProfile==="native_web"?loadNativeFrame(index,token,generation,signal):loadCompatibilityFrame(index,token,generation,signal)}
 function currentLayerIndex(){const name=document.getElementById("layer").value;return manifest.variables.findIndex(v=>(profile==="native_web"?v.name:v)===name)}
 function layerName(){return document.getElementById("layer").value}
-function manifestBounds(name){const item=profile==="native_web"?manifest.extrema[name]:manifest.extrema[name];if(item&&Number.isFinite(item.min)&&Number.isFinite(item.max))return [item.min,item.max];let min=Infinity,max=-Infinity;const frame=frameCache.get(frameIndex);if(frame){const data=frame.arrays[Math.max(0,currentLayerIndex())];for(const value of data){if(Number.isFinite(value)){min=Math.min(min,value);max=Math.max(max,value)}}}return [min===Infinity?0:min,max===-Infinity?1:max]}
-function updateLegend(name){const [min,max]=manifestBounds(name);document.getElementById("legendText").textContent=`${nativeVariableLabels[name]||compatVariableLabels[name]||name}: ${Number.isFinite(min)?min.toPrecision(4):"--"} — ${Number.isFinite(max)?max.toPrecision(4):"--"}`}
+function manifestBounds(name){if(isSocioLayer(name)&&socio){ensureSocioDensity();return socio.bounds[name]||[0,1]}const item=profile==="native_web"?manifest.extrema[name]:manifest.extrema[name];if(item&&Number.isFinite(item.min)&&Number.isFinite(item.max))return [item.min,item.max];let min=Infinity,max=-Infinity;const frame=frameCache.get(frameIndex);if(frame){const data=frame.arrays[Math.max(0,currentLayerIndex())];for(const value of data){if(Number.isFinite(value)){min=Math.min(min,value);max=Math.max(max,value)}}}return [min===Infinity?0:min,max===-Infinity?1:max]}
+function updateLegend(name){const [min,max]=manifestBounds(name);document.getElementById("legendText").textContent=`${socioLayerLabels[name]||nativeVariableLabels[name]||compatVariableLabels[name]||name}${name==="socio_exposed_pop"?"，按人口密度着色（人/km²）":""}${isSocioLayer(name)?"（色标上限取 99 分位）":""}: ${Number.isFinite(min)?min.toPrecision(4):"--"} — ${Number.isFinite(max)?max.toPrecision(4):"--"}`}
 function renderCurrent(){const frame=frameCache.get(frameIndex);if(!frame||!manifest)return;if(profile==="native_web")drawNative(frame);else renderCompatibility(frame)}
 function drawNativeLarge(frame){
   // Large meshes: one Path2D per colour bucket (no per-face stroke), O(faces) path ops per frame.
   const rect=cv.getBoundingClientRect(),w=rect.width,h=rect.height;if(w<2||h<2)return;ctx.clearRect(0,0,w,h);ctx.fillStyle="#09111b";ctx.fillRect(0,0,w,h);const b=mesh.bounds,pad=16,scale=Math.min((w-2*pad)/(b.xmax-b.xmin||1),(h-2*pad)/(b.ymax-b.ymin||1));const dw=(b.xmax-b.xmin)*scale,dh=(b.ymax-b.ymin)*scale,left=(w-dw)/2,top=(h-dh)/2;viewport={left,top,scale,width:w,height:h};
-  const name=layerName(),li=currentLayerIndex(),values=frame.arrays[li],[min,max]=manifestBounds(name),depth=frame.arrays[0],thr=Number(manifest.dry_depth_threshold_m||0);let maxDepth=0,wetArea=0,wetCount=0;
+  const name=layerName(),socioLayer=isSocioLayer(name)&&!!socio,li=currentLayerIndex(),values=socioLayer?socioValues(name,frame):frame.arrays[li],[min,max]=manifestBounds(name),depth=frame.arrays[0],thr=Number(manifest.dry_depth_threshold_m||0);let maxDepth=0,wetArea=0,wetCount=0;
   if(!mesh.screen||mesh.screen.scale!==scale||mesh.screen.left!==left||mesh.screen.top!==top){const sx=new Float32Array(mesh.nodeCount),sy=new Float32Array(mesh.nodeCount);for(let i=0;i<mesh.nodeCount;i++){sx[i]=left+(mesh.xy[2*i]-b.xmin)*scale;sy[i]=top+(b.ymax-mesh.xy[2*i+1])*scale}mesh.screen={scale,left,top,sx,sy}}
   // Chromium appends to a very large Path2D superlinearly (a 139k-face bucket took >100 s), so each bucket path is flushed every PATH_CHUNK_FACES faces.
-  const sx=mesh.screen.sx,sy=mesh.screen.sy,paths=Array.from({length:COLOR_BUCKETS+1},()=>new Path2D()),counts=new Uint32Array(COLOR_BUCKETS+1),span=(max>min)?(max-min):1;
-  const styles=Array.from({length:COLOR_BUCKETS+1},(_,k)=>{const col=k===COLOR_BUCKETS?[30,42,56,255]:color(min+(k+.5)/COLOR_BUCKETS*span,min,max);return `rgb(${col[0]|0},${col[1]|0},${col[2]|0})`});
+  // Bucket COLOR_BUCKETS = no data; bucket COLOR_BUCKETS+1 = dim backdrop for faces below the socio exposure threshold (value -Infinity).
+  const sx=mesh.screen.sx,sy=mesh.screen.sy,paths=Array.from({length:COLOR_BUCKETS+2},()=>new Path2D()),counts=new Uint32Array(COLOR_BUCKETS+2),span=(max>min)?(max-min):1;
+  const styles=Array.from({length:COLOR_BUCKETS+2},(_,k)=>{const col=k===COLOR_BUCKETS+1?[19,27,37,255]:k===COLOR_BUCKETS?[30,42,56,255]:color(min+(k+.5)/COLOR_BUCKETS*span,min,max);return `rgb(${col[0]|0},${col[1]|0},${col[2]|0})`});
   ctx.lineWidth=.35;const flushBucket=k=>{if(!counts[k])return;ctx.fillStyle=styles[k];ctx.strokeStyle=styles[k];ctx.fill(paths[k]);ctx.stroke(paths[k]);paths[k]=new Path2D();counts[k]=0};
-  for(let f=0;f<mesh.faceCount;f++){const hval=depth[f];if(hval>thr){wetArea+=mesh.areas[f];wetCount++;if(hval>maxDepth)maxDepth=hval}const val=values[f];let k;if((name==="water_depth_m"&&!(val>0))||!Number.isFinite(val))k=COLOR_BUCKETS;else k=Math.max(0,Math.min(COLOR_BUCKETS-1,Math.floor((val-min)/span*COLOR_BUCKETS)));const p=paths[k],a=mesh.faces[f*3],c=mesh.faces[f*3+1],d=mesh.faces[f*3+2];p.moveTo(sx[a],sy[a]);p.lineTo(sx[c],sy[c]);p.lineTo(sx[d],sy[d]);p.closePath();if(++counts[k]>=PATH_CHUNK_FACES)flushBucket(k)}
-  for(let k=0;k<=COLOR_BUCKETS;k++)flushBucket(k);
+  for(let f=0;f<mesh.faceCount;f++){const hval=depth[f];if(hval>thr){wetArea+=mesh.areas[f];wetCount++;if(hval>maxDepth)maxDepth=hval}const val=values[f];let k;if(val===-Infinity&&socioLayer)k=COLOR_BUCKETS+1;else if((name==="water_depth_m"&&!(val>0))||!Number.isFinite(val))k=COLOR_BUCKETS;else k=Math.max(0,Math.min(COLOR_BUCKETS-1,Math.floor((val-min)/span*COLOR_BUCKETS)));const p=paths[k],a=mesh.faces[f*3],c=mesh.faces[f*3+1],d=mesh.faces[f*3+2];p.moveTo(sx[a],sy[a]);p.lineTo(sx[c],sy[c]);p.lineTo(sx[d],sy[d]);p.closePath();if(++counts[k]>=PATH_CHUNK_FACES)flushBucket(k)}
+  for(let k=0;k<=COLOR_BUCKETS+1;k++)flushBucket(k);
   document.getElementById("maxLabel").textContent="本帧最大水深 m";document.getElementById("wetLabel").textContent="湿面 / 原生面积 km²";document.getElementById("kMax").textContent=maxDepth.toFixed(4);document.getElementById("kWet").textContent=`${wetCount} / ${(wetArea/1e6).toFixed(4)}`;updateTime(frame);updateLegend(name);document.getElementById("status").textContent=`Native 三角网格 · ${mesh.faceCount} faces · ${manifest.coordinate_system} · native_web v${manifest.version} · 逐帧按需加载`;
 }
 function renderCompatibilityLarge(frame){
@@ -172,10 +228,10 @@ function renderCompatibility(frame){
   }
   viewport={left:0,top:0,scaleX:cellW,scaleY:cellH,width:canvasWidth,height:canvasHeight};document.getElementById("maxLabel").textContent="本帧最大水深 m";document.getElementById("wetLabel").textContent=sourceAreas?"湿格 / 源覆盖面积 km²":"湿格 / 显示格面积 km²";document.getElementById("kMax").textContent=maxDepth.toFixed(4);document.getElementById("kWet").textContent=`${wetCells} / ${(wetArea/1e6).toFixed(6)}`;updateTime(frame);updateLegend(layerName());document.getElementById("status").textContent=`Derived compatibility display · ${width}×${height} · ${sourceAreas?"source physical overlap area":"display-cell area"} · exact covered geometry shown · row-major IDs`;
 }
-function updateTime(frame){document.getElementById("kFrame").textContent=`${frameIndex+1} / ${manifest.frames.length}`;const origin=bundle.time_origin||manifest.time_origin||null;if(origin){const base=Date.parse(origin);if(Number.isFinite(base))document.getElementById("timeLabel").textContent=new Date(base+frame.time*1000).toLocaleString("zh-CN",{hour12:false,timeZone:"Asia/Shanghai"});else document.getElementById("timeLabel").textContent=`t=${frame.time}s`}else document.getElementById("timeLabel").textContent=`t=${frame.time}s`;document.getElementById("kTime").textContent=`${frame.time} s`;document.getElementById("seek").value=frameIndex}
+function updateTime(frame){document.getElementById("kFrame").textContent=`${frameIndex+1} / ${manifest.frames.length}`;const origin=bundle.time_origin||manifest.time_origin||null;if(origin){const base=Date.parse(origin);if(Number.isFinite(base))document.getElementById("timeLabel").textContent=new Date(base+frame.time*1000).toLocaleString("zh-CN",{hour12:false,timeZone:"Asia/Shanghai"});else document.getElementById("timeLabel").textContent=`t=${frame.time}s`}else document.getElementById("timeLabel").textContent=`t=${frame.time}s`;document.getElementById("kTime").textContent=`${frame.time} s`;document.getElementById("seek").value=frameIndex;updateSocioPanel(frameIndex)}
 function pointInTriangle(x,y,a,b,c){const den=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1]);if(Math.abs(den)<1e-14)return false;const u=((b[1]-c[1])*(x-c[0])+(c[0]-b[0])*(y-c[1]))/den;const v=((c[1]-a[1])*(x-c[0])+(a[0]-c[0])*(y-c[1]))/den;return u>=-1e-10&&v>=-1e-10&&u+v<=1+1e-10}
 function nativeFaceAt(event){if(!mesh.hoverAvailable||!mesh.bins||!viewport)return -1;const rect=cv.getBoundingClientRect(),px=event.clientX-rect.left,py=event.clientY-rect.top,b=mesh.bounds,scale=viewport.scale;const x=b.xmin+(px-viewport.left)/scale,y=b.ymax-(py-viewport.top)/scale;if(x<b.xmin||x>b.xmax||y<b.ymin||y>b.ymax)return -1;const bx=Math.min(mesh.bins.binsX-1,Math.max(0,Math.floor((x-b.xmin)/(b.xmax-b.xmin||1)*mesh.bins.binsX))),by=Math.min(mesh.bins.binsY-1,Math.max(0,Math.floor((y-b.ymin)/(b.ymax-b.ymin||1)*mesh.bins.binsY)));for(const f of mesh.bins.bins[by*mesh.bins.binsX+bx]){const ids=[mesh.faces[f*3],mesh.faces[f*3+1],mesh.faces[f*3+2]],pts=ids.map(i=>[mesh.xy[2*i],mesh.xy[2*i+1]]);if(pointInTriangle(x,y,pts[0],pts[1],pts[2]))return f}return -1}
-cv.addEventListener("mousemove",event=>{const frame=frameCache.get(frameIndex);if(!frame)return;const rect=cv.getBoundingClientRect();if(profile==="native_web"){const f=nativeFaceAt(event);if(f<0){tip.style.display="none";return}const vars=manifest.variables.map(v=>v.name),h=frame.arrays[vars.indexOf("water_depth_m")][f],value=frame.arrays[currentLayerIndex()][f];tip.textContent=`face_id ${mesh.ids[f]}\n水深 ${h.toFixed(6)} m\n${nativeVariableLabels[layerName()]||layerName()} ${Number.isFinite(value)?value.toPrecision(8):"未提供"}`;tip.style.left=Math.min(event.clientX-rect.left+12,rect.width-260)+"px";tip.style.top=Math.min(event.clientY-rect.top+12,rect.height-72)+"px";tip.style.display="block";return}if(gridMeta&&gridMeta.large&&viewport&&viewport.large){const gx=Math.floor((event.clientX-rect.left-viewport.left)/(viewport.width/frame.nx)),gy=frame.ny-1-Math.floor((event.clientY-rect.top-viewport.top)/(viewport.height/frame.ny));if(gx<0||gx>=frame.nx||gy<0||gy>=frame.ny){tip.style.display="none";return}const flat=gy*frame.nx+gx,hv=frame.arrays[manifest.variables.indexOf("water_depth")][flat];tip.textContent=`compat_id ${flat+1}\ncoverage ${Number(gridMeta.coverage[flat]).toFixed(4)}\nsource face_id: see ${gridMeta.mapping_file.name}\n水深 ${Number.isFinite(hv)?hv.toFixed(6)+" m":"NoData"}`;tip.style.left=Math.min(event.clientX-rect.left+12,rect.width-260)+"px";tip.style.top=Math.min(event.clientY-rect.top+12,rect.height-72)+"px";tip.style.display="block";return}
+cv.addEventListener("mousemove",event=>{const frame=frameCache.get(frameIndex);if(!frame)return;const rect=cv.getBoundingClientRect();if(profile==="native_web"){const f=nativeFaceAt(event);if(f<0){tip.style.display="none";return}const vars=manifest.variables.map(v=>v.name),h=frame.arrays[vars.indexOf("water_depth_m")][f],name=layerName(),socioLayer=isSocioLayer(name)&&!!socio,value=socioLayer?socioValueAt(name,frame,f):frame.arrays[currentLayerIndex()][f];const shown=value===-Infinity&&socioLayer?`未受淹（水深 < ${socio.thr} m）`:Number.isFinite(value)?value.toPrecision(socioLayer?6:8)+(name==="socio_exposed_pop"?" 人":""):"未提供";tip.textContent=`face_id ${mesh.ids[f]}\n水深 ${h.toFixed(6)} m\n${socioLayerLabels[name]||nativeVariableLabels[name]||name} ${shown}${socioHover(f)}`;tip.style.left=Math.min(event.clientX-rect.left+12,rect.width-260)+"px";tip.style.top=Math.min(event.clientY-rect.top+12,rect.height-(socio?112:72))+"px";tip.style.display="block";return}if(gridMeta&&gridMeta.large&&viewport&&viewport.large){const gx=Math.floor((event.clientX-rect.left-viewport.left)/(viewport.width/frame.nx)),gy=frame.ny-1-Math.floor((event.clientY-rect.top-viewport.top)/(viewport.height/frame.ny));if(gx<0||gx>=frame.nx||gy<0||gy>=frame.ny){tip.style.display="none";return}const flat=gy*frame.nx+gx,hv=frame.arrays[manifest.variables.indexOf("water_depth")][flat];tip.textContent=`compat_id ${flat+1}\ncoverage ${Number(gridMeta.coverage[flat]).toFixed(4)}\nsource face_id: see ${gridMeta.mapping_file.name}\n水深 ${Number.isFinite(hv)?hv.toFixed(6)+" m":"NoData"}`;tip.style.left=Math.min(event.clientX-rect.left+12,rect.width-260)+"px";tip.style.top=Math.min(event.clientY-rect.top+12,rect.height-72)+"px";tip.style.display="block";return}
   const col=Math.floor((event.clientX-rect.left)/(rect.width/frame.nx)),displayRow=frame.ny-1-Math.floor((event.clientY-rect.top)/(rect.height/frame.ny));if(col<0||col>=frame.nx||displayRow<0||displayRow>=frame.ny){tip.style.display="none";return}const flat=displayRow*frame.nx+col,h=frame.arrays[manifest.variables.indexOf("water_depth")][flat],coverage=gridMeta.active_coverage_fraction[displayRow][col],contributions=gridMeta.mapping?.cell_contributions?.[flat]||gridMeta.cell_contributions?.[flat]||[],contrib=contributions.map(row=>row[0]).join(", ")||"none";tip.textContent=`compat_id ${displayRow*frame.nx+col+1}\ncoverage ${Number(coverage).toFixed(4)}\nsource face_id ${contrib}\n水深 ${Number.isFinite(h)?h.toFixed(6)+" m":"NoData"}`;tip.style.left=Math.min(event.clientX-rect.left+12,rect.width-260)+"px";tip.style.top=Math.min(event.clientY-rect.top+12,rect.height-72)+"px";tip.style.display="block"});
 cv.addEventListener("mouseleave",()=>tip.style.display="none");
 function show(index){
@@ -247,6 +303,7 @@ async function main(){
     const tick=async()=>{if(!playing||epoch!==profileEpoch||!manifest)return;playbackTarget=(playbackTarget+1)%manifest.frames.length;await show(playbackTarget);if(playing&&epoch===profileEpoch)timer=setTimeout(tick,PLAY_MS)};
     timer=setTimeout(tick,PLAY_MS);
   };
+  await loadSocio();
   await loadProfile(profileControl.value)
 }
 window.addEventListener("resize",resizeCanvas);

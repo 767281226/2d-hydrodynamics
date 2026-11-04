@@ -253,12 +253,79 @@ def test_export_with_socio_profile_and_verify(tmp_path, grid_path):
         verify_large_run_bundle(bundle)
 
 
+def _viewer_socio(bundle: Path):
+    doc = json.loads((bundle / "socio_exposure" / "viewer_manifest.json").read_text(encoding="utf-8"))
+    raw = (bundle / "socio_exposure" / "viewer_face_values.bin").read_bytes()
+    F = doc["face_count"]
+    return doc, raw, np.frombuffer(raw, "<f4", F, 16), np.frombuffer(raw, "<f4", F, 16 + 4 * F), np.frombuffer(raw, "<i2", F, 16 + 8 * F)
+
+
+def test_viewer_socio_files_checksummed_verified_and_served(tmp_path, grid_path):
+    from hydrodynamics.viewer_server import ViewerBundleError, validate_bundle
+    bundle = _bundle(tmp_path)
+    export_large_run_bundle(bundle, LargeRunOutputProfile(disk_preflight=False, socio_exposure={"grid_cells_path": str(grid_path)}))
+    run = json.loads((bundle / "run.json").read_text(encoding="utf-8"))
+    assert run["socio_exposure"]["viewer_manifest"] == "socio_exposure/viewer_manifest.json"
+    listed = {row["path"] for row in json.loads((bundle / "checksums.json").read_text(encoding="utf-8"))["files"]}
+    assert {"socio_exposure/viewer_manifest.json", "socio_exposure/viewer_face_values.bin"} <= listed
+    report = verify_large_run_bundle(bundle)
+    assert report["checks"]["socio_exposure"]["viewer"]["status"] == "PASS"
+    doc, raw, pop, arable, district = _viewer_socio(bundle)
+    xy, faces, ids, area = _mesh()
+    assert raw[:8] == b"SOCFV01\n" and len(raw) == 16 + 10 * len(faces) and doc["face_count"] == len(faces)
+    assert np.isnan(pop).any() and np.nansum(pop.astype(float)) == pytest.approx(_expected_inside()[0], rel=1e-6)
+    assert np.array_equal(np.isnan(pop), np.isnan(arable)) and set(np.unique(district)) <= {-1, 0, 1}
+    assert np.all(district[np.isnan(pop)] == -1)
+    assert [d["code"] for d in doc["districts"]] == ["A01", "B02"] and doc["districts"][0]["name"] == "甲区"
+    assert doc["economic_loss"] == "NOT_COMPUTED_NO_ASSET_VALUES" and doc["limitation_note_zh"] and doc["exposure_depth_threshold_m"] == 0.15
+    # per-frame totals equal the exposure CSV rows
+    with (bundle / "socio_exposure" / "exposure_by_frame.csv").open(encoding="utf-8") as stream:
+        rows = [r for r in csv.DictReader(stream) if r["aggregation"] == "FRAME"]
+    assert [f["index"] for f in doc["frames"]] == [0, 1, 2]
+    for frame in doc["frames"]:
+        mine = {r["district_code"]: r for r in rows if int(r["frame_index"]) == frame["index"]}
+        assert frame["all"]["pop"] == float(mine["ALL"]["exposed_pop"])
+        for code, value in frame["by_district"].items():
+            assert value["arable_mu"] == float(mine[code]["exposed_arable_mu"])
+    assert doc["frames"][-1]["all"]["pop"] > 0 and doc["envelope_saved_frames"]["all"]["pop"] >= doc["frames"][-1]["all"]["pop"]
+    # the viewer face-level exposure (pop where depth >= threshold) reproduces the frame totals
+    import netCDF4
+    with netCDF4.Dataset(str(bundle / "result_native.nc")) as ds:
+        h = np.asarray(ds["water_depth"][2, :], dtype=float)
+    assert np.nansum(np.where(h >= 0.15, pop.astype(float), 0.0)) == pytest.approx(doc["frames"][2]["all"]["pop"], rel=1e-5)
+    root, served = validate_bundle(bundle, explicit=True)
+    assert served["socio_exposure"]["viewer_manifest"] == "socio_exposure/viewer_manifest.json"
+    html = (bundle / "viewer.html").read_text(encoding="utf-8")
+    for marker in ("socio_pop_density", "socio_arable_density", "socio_exposed_pop", "人口密度（人/km²）", "耕地密度（亩/km²）",
+                   "受淹人口（当前帧）", "socio_exposure/viewer_manifest.json", "SOCFV01", "PATH_CHUNK_FACES"):
+        assert marker in html
+    # tampering with the viewer values is caught by both verify and the server
+    values = bundle / "socio_exposure" / "viewer_face_values.bin"
+    values.write_bytes(raw[:-2] + b"\xff\x7f")
+    with pytest.raises(LargeRunExportError):
+        verify_large_run_bundle(bundle)
+    with pytest.raises(ViewerBundleError, match="hash differs"):
+        validate_bundle(bundle, explicit=True)
+
+
+def test_viewer_socio_absent_bundle_stays_valid(tmp_path):
+    from hydrodynamics.viewer_server import validate_bundle
+    bundle = _bundle(tmp_path)
+    export_large_run_bundle(bundle, LargeRunOutputProfile(disk_preflight=False))
+    assert not (bundle / "socio_exposure").exists()
+    run = json.loads((bundle / "run.json").read_text(encoding="utf-8"))
+    assert "socio_exposure" not in run
+    assert verify_large_run_bundle(bundle)["checks"]["socio_exposure"]["status"] == "NOT_REQUESTED"
+    assert validate_bundle(bundle, explicit=True)[1]["run_id"] == "socio-test-001"
+
+
 def test_post_hoc_apply_to_exported_bundle(tmp_path, grid_path):
     bundle = _bundle(tmp_path)
     export_large_run_bundle(bundle, LargeRunOutputProfile(disk_preflight=False))
     assert verify_large_run_bundle(bundle)["checks"]["socio_exposure"]["status"] == "NOT_REQUESTED"
     report = apply_socio_exposure_to_bundle(bundle, SocioOptions(grid_cells_path=grid_path))
     assert report["verify"]["status"] == "PASS"
+    assert report["verify"]["checks"]["socio_exposure"]["viewer"]["status"] == "PASS"
     _check_socio_bundle(bundle, 3)
     with pytest.raises(SocioExposureError, match="no-clobber"):
         apply_socio_exposure_to_bundle(bundle, SocioOptions(grid_cells_path=grid_path))

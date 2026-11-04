@@ -129,7 +129,35 @@ summary 哈希与 run.json 一致、CSV/npz 哈希、npz 网格指纹与面数�
   分级人口 0.15–0.5 m 1,017.4 / 0.5–1.5 m 4,208.0 / 1.5–3 m 750.1 / >3 m 130.5。1 h：3,262.6 人、3,496.7 亩。
 - 两条路径（就地追加、从 result_native.nc 重新导出）得到逐字节相同的 `exposure_by_frame.csv`；`verify_large_run_bundle` PASS。
 
-## 8. 未做
+## 8. Viewer 社会经济图层（`socio-exposure-viewer-v1`）
 
-viewer 未加社会经济图层：需要新增逐面二进制资产、viewer_server 的大 bundle 校验与图层切换 UI，不属于低成本改动；
-暴露结果请用 SHP（`POP`/`EXPOSED` 字段）在 GIS 中查看。
+叠加运行时（导出时带 `socio_exposure`，或就地追加）在 `socio_exposure/` 另写两个供 viewer 使用的小文件，均列入
+`checksums.json` 与 `exposure_summary.json` 的 `files`，run.json 的 `socio_exposure.viewer_manifest` 固定为
+`socio_exposure/viewer_manifest.json`：
+
+| 文件 | 内容 |
+|---|---|
+| `viewer_face_values.bin` | 小端二进制，native 面顺序（= `native_web/mesh.bin`）：magic `SOCFV01\n`(8 B)、uint32 面数 F、uint32 区数 D、float32 人口[F]（人）、float32 耕地[F]（亩）、int16 主导区序号[F]（-1 = 无覆盖）；无网格覆盖的面人口/耕地为 NaN。长度 = 16 + 10F 字节（19 万面约 1.9 MB） |
+| `viewer_manifest.json` | `format/version/run_id/face_count`、`values_file`（name/sha256/bytes/layout）、单位、暴露阈值 `exposure_depth_threshold_m`、`districts`（序号/代码/名称）、域内总人口/耕地、`frames`（每帧 `all` 与 `by_district` 的受淹人口 `pop`/耕地 `arable_mu`/面积 `area_m2`，与 `exposure_by_frame.csv` 的 `FRAME` 行同源）、`envelope_saved_frames` / `envelope_solver_max`、`economic_loss=NOT_COMPUTED_NO_ASSET_VALUES`、中文局限说明 `limitation_note_zh` 与 `limitations` |
+
+校验：`verify_large_run_bundle`（经 `verify_socio_outputs`）核对 manifest 的 run_id/面数/帧序列、二进制哈希/长度/表头、区序号范围与
+人口合计；`viewer_server` 的大 bundle 校验在 run.json 声明该文件时核对路径、格式、run_id、面数、帧序列与二进制大小/SHA-256。
+未做社会经济叠加的 bundle 不含这些文件，校验与页面行为不变。旧版本导出（只有 CSV/JSON/npz、无 viewer 文件）仍可通过校验，只是页面不显示社会经济图层；
+如需显示，可从 `result_native.nc` 重新导出。
+
+页面行为（`viewer.html`，仅 Native 三角网格显示数据下）：
+
+- 启动时若 run.json 声明了 `viewer_manifest`，一次性载入 manifest 与二进制（校验 SHA-256），图层下拉框增加
+  “人口密度（人/km²）”“耕地密度（亩/km²）”（静态，= 面值 / 面面积）与“受淹人口（当前帧）”（只显示当前帧水深 ≥ 阈值的面，
+  其余面以暗底色显示；受淹但无网格覆盖的面为灰色“无数据”）。受淹面按人口密度着色（逐面人数主要反映三角形大小，不宜直接着色），
+  悬停给出该面人数，侧栏给出合计人数。色标为 0 到 99 分位数（超出部分取最高色）。
+- 侧栏“社会经济暴露”块：本帧受淹人口（人）、受淹耕地（亩）、分区表；保存帧最大水深包络与（若有）求解器逐步最大水深包络；
+  域内总人口/耕地；局限说明（人口为区县普查总数按 50 m 网格均匀摊分；仅暴露量，不计算经济损失）。数值取自 manifest
+  （即 CSV 同源的 float64 统计），地图上的“受淹人口”按 float32 帧水深逐面判断，阈值附近个别面可能与统计相差一个面。
+- 悬停提示增加该面人口（人）、耕地（亩）与主导区；无覆盖显示“无网格覆盖（无数据）”。
+- 绘制沿用分块 Path2D（`PATH_CHUNK_FACES`）、逐帧按需加载、缓存 ≤2 帧；社会经济数组只载入一次。文件缺失时界面与以前完全相同；
+  文件存在但损坏时侧栏显示错误，水动力图层照常可用。
+
+## 9. 未做
+
+无资产价值与损失函数，不计算经济损失；兼容网格显示数据下不提供社会经济图层（只在 native 三角网格上显示）。

@@ -50,6 +50,13 @@ MAPPING_FILE = "face_socio_mapping.npz"
 FRAME_CSV = "exposure_by_frame.csv"
 SUMMARY_JSON = "exposure_summary.json"
 MAX_SURFACE_ROLES = ("maximum_wet_surface", "maximum_wet_surface_4490")
+VIEWER_MANIFEST = "viewer_manifest.json"
+VIEWER_VALUES = "viewer_face_values.bin"
+VIEWER_FORMAT = "socio-exposure-viewer-v1"
+VIEWER_MAGIC = b"SOCFV01\n"
+VIEWER_NOTE_ZH = ("人口为七普区县常住人口总数按 50 m 网格均匀摊分（区内每格相同，不反映区内聚落分布），耕地为三调区县总量同样均匀摊分；"
+                  "仅统计暴露量（水深 ≥ 阈值的三角面上的人口/耕地），不含资产价值与损失函数，不计算经济损失；"
+                  "仅按保存帧统计，帧间峰值不可见；无网格覆盖的三角面为“无数据”，不计为 0。")
 
 LIMITATIONS = (
     "Population is the 2020 seventh national census (七普) district resident total disaggregated to the 50 m grid by the "
@@ -720,13 +727,95 @@ def run_socio_overlay(out: Path, native: Any, options: SocioOptions, frames: Ite
         "limitations": list(LIMITATIONS),
         "files": {}, "elapsed_s": None,
     }
+    _write_viewer_files(target, mapping, acc, meta, options, env_rows, solver_env)
     doc["files"] = {name: {"sha256": _sha_file(target / name), "bytes": (target / name).stat().st_size}
-                    for name in (MAPPING_FILE, FRAME_CSV)}
+                    for name in (MAPPING_FILE, FRAME_CSV, VIEWER_VALUES, VIEWER_MANIFEST)}
     doc["elapsed_s"] = _time.perf_counter() - started
     with (target / SUMMARY_JSON).open("xb") as stream:
         stream.write(_json_bytes(doc))
     return SocioResult(doc=doc, shp_fields=SHP_FIELDS,
                        shp_columns=shp_columns_for(mapping, max_h, options.exposure_depth_threshold_m))
+
+
+def _viewer_totals(rows: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    by = {r["district_code"]: {"pop": float(r["exposed_pop"]), "arable_mu": float(r["exposed_arable_mu"]),
+                               "area_m2": float(r["exposed_area_m2"])} for r in rows}
+    return {"all": by.pop("ALL"), "by_district": by}
+
+
+def _write_viewer_files(target: Path, mapping: FaceSocioMapping, acc: ExposureAccumulator, meta: Any, options: SocioOptions,
+                        env_rows: list[dict[str, Any]], solver_env: list[dict[str, Any]] | None) -> None:
+    """Compact static per-face arrays + per-frame totals for the bundle viewer (assets/viewer.html).
+
+    ``viewer_face_values.bin``: magic ``SOCFV01\\n``, uint32 face_count, uint32 district_count, then float32
+    population[F], float32 arable_mu[F] (NaN = no grid coverage), int16 dominant district index[F] (-1 = none),
+    all little-endian in native face order (= native_web/mesh.bin order).  Per-frame totals are copied from the
+    same accumulator rows ``exposure_by_frame.csv`` is written from.
+    """
+    F = int(mapping.face_area_m2.size); D = len(mapping.district_codes)
+    values = target / VIEWER_VALUES
+    with values.open("xb") as stream:
+        stream.write(VIEWER_MAGIC + np.array([F, D], dtype="<u4").tobytes())
+        stream.write(np.asarray(mapping.pop, dtype="<f4").tobytes())
+        stream.write(np.asarray(mapping.arable_mu, dtype="<f4").tobytes())
+        stream.write(np.asarray(mapping.dominant_district, dtype="<i2").tobytes())
+    frames: dict[int, list[dict[str, Any]]] = {}
+    for r in acc.rows:
+        if r["aggregation"] == "FRAME":
+            frames.setdefault(int(r["frame_index"]), []).append(r)
+    frame_rows = [{"index": index, "time_s": float(frames[index][0]["time_s"]), **_viewer_totals(frames[index])}
+                  for index in sorted(frames)]
+    doc = {"format": VIEWER_FORMAT, "version": "1.0", "run_id": meta.run_id, "face_count": F,
+           "face_order": "native face order = native_web/mesh.bin",
+           "values_file": {"name": VIEWER_VALUES, "sha256": _sha_file(values), "bytes": values.stat().st_size,
+                           "magic": VIEWER_MAGIC.decode("ascii"),
+                           "layout": "magic[8], uint32 face_count, uint32 district_count, float32-le population[F] (persons), "
+                                     "float32-le arable_mu[F] (mu), int16-le dominant_district_index[F] (-1 none); NaN = no grid coverage"},
+           "units": {"population": "persons", "arable": "mu (亩; 1 km2 = 1500 mu)",
+                     "population_density": "persons/km2", "arable_density": "mu/km2", "area": "m2"},
+           "exposure_depth_threshold_m": float(options.exposure_depth_threshold_m),
+           "exposure_rule": "face exposed iff face depth >= threshold; the whole mapped face value counts",
+           "districts": [{"index": d, "code": c, "name": n}
+                         for d, (c, n) in enumerate(zip(mapping.district_codes, mapping.district_names))],
+           "covered_face_count": int(np.count_nonzero(np.isfinite(mapping.pop))),
+           "population_inside_domain": float(np.nansum(mapping.pop)),
+           "arable_mu_inside_domain": float(np.nansum(mapping.arable_mu)),
+           "frames": frame_rows,
+           "envelope_saved_frames": _viewer_totals(env_rows), "envelope_solver_max": _viewer_totals(solver_env),
+           "economic_loss": "NOT_COMPUTED_NO_ASSET_VALUES",
+           "limitation_note_zh": VIEWER_NOTE_ZH, "limitations": list(LIMITATIONS),
+           "source": {"frame_csv": FRAME_CSV, "mapping": MAPPING_FILE, "summary": SUMMARY_JSON}}
+    with (target / VIEWER_MANIFEST).open("xb") as stream:
+        stream.write(_json_bytes(doc))
+
+
+def verify_viewer_files(target: Path, run: dict[str, Any]) -> dict[str, Any]:
+    """Structural check of the viewer socio files (used by verify_socio_outputs)."""
+    doc = json.loads((target / VIEWER_MANIFEST).read_text(encoding="utf-8"))
+    F = run["native_result"]["face_count"]; T = run["native_result"]["saved_frame_count"]
+    if doc.get("format") != VIEWER_FORMAT or doc.get("run_id") != run["run_id"] or doc.get("face_count") != F:
+        raise SocioExposureError("socio viewer manifest format/run_id/face_count mismatch")
+    if [r.get("index") for r in doc.get("frames", [])] != list(range(T)):
+        raise SocioExposureError("socio viewer manifest frame list mismatch")
+    raw = (target / VIEWER_VALUES).read_bytes()
+    rec = doc["values_file"]
+    if hashlib.sha256(raw).hexdigest() != rec["sha256"] or len(raw) != rec["bytes"]:
+        raise SocioExposureError("socio viewer values file sha256/size mismatch")
+    if raw[:8] != VIEWER_MAGIC or len(raw) != 16 + 10 * F:
+        raise SocioExposureError("socio viewer values file header/length invalid")
+    n, D = (int(v) for v in np.frombuffer(raw, dtype="<u4", count=2, offset=8))
+    if n != F or D != len(doc["districts"]):
+        raise SocioExposureError("socio viewer values file header differs from the manifest")
+    pop = np.frombuffer(raw, dtype="<f4", count=F, offset=16)
+    dom = np.frombuffer(raw, dtype="<i2", count=F, offset=16 + 8 * F)
+    if np.any(dom < -1) or np.any(dom >= D) or np.any(np.isfinite(pop) & (pop < 0)):
+        raise SocioExposureError("socio viewer values out of range")
+    total = float(np.nansum(pop.astype(np.float64)))
+    if abs(total - doc["population_inside_domain"]) > 1e-5 * max(1.0, abs(doc["population_inside_domain"])):
+        raise SocioExposureError("socio viewer population total differs from the manifest")
+    return {"status": "PASS", "face_count": F, "frames": T}
 
 
 def run_json_block(result: SocioResult) -> dict[str, Any]:
@@ -740,7 +829,8 @@ def run_json_block(result: SocioResult) -> dict[str, Any]:
             "arable_mu_inside_domain": doc["mapping"]["arable_mu_inside_domain"],
             "grid_coverage_fraction_of_domain": doc["mapping"]["grid_coverage_fraction_of_domain"],
             "envelope_exposed_pop": env["exposed_pop"], "envelope_exposed_arable_mu": env["exposed_arable_mu"],
-            "economic_loss": "NOT_COMPUTED_NO_ASSET_VALUES"}
+            "economic_loss": "NOT_COMPUTED_NO_ASSET_VALUES",
+            **({"viewer_manifest": f"{SOCIO_DIR}/{VIEWER_MANIFEST}"} if VIEWER_MANIFEST in doc["files"] else {})}
 
 
 def _sha_file_rel(doc: dict[str, Any]) -> str:
@@ -774,7 +864,13 @@ def verify_socio_outputs(out: Path, run: dict[str, Any]) -> dict[str, Any]:
         raise SocioExposureError("socio exposure CSV frame count mismatch")
     if doc["mapping"]["conservation"]["status"] != "PASS":
         raise SocioExposureError("socio mapping conservation not PASS")
-    return {"status": "PASS", "csv_rows": len(rows), "population_inside_domain": doc["mapping"]["population_inside_domain"]}
+    viewer = {"status": "NOT_PRESENT"}
+    if VIEWER_MANIFEST in doc["files"] or block.get("viewer_manifest"):
+        if block.get("viewer_manifest") != f"{SOCIO_DIR}/{VIEWER_MANIFEST}" or VIEWER_MANIFEST not in doc["files"]:
+            raise SocioExposureError("socio viewer manifest is listed inconsistently in run.json / exposure_summary.json")
+        viewer = verify_viewer_files(target, run)
+    return {"status": "PASS", "csv_rows": len(rows), "population_inside_domain": doc["mapping"]["population_inside_domain"],
+            "viewer": viewer}
 
 
 # ------------------------------------------------ post-hoc bundle augmentation

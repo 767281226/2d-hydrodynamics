@@ -117,6 +117,12 @@ manifest 的 run_id、时间轴、帧列表与文件大小；兼容格 v2 identi
 社会经济暴露叠加（`socio_exposure/`、最大淹没面 SHP 的 `POP`/`ARABLE_MU`/`EXPOSED` 字段、`--socio` 选项、对已有 bundle 追加的
 `python -m hydrodynamics.socio_exposure`）见 `docs/socio_exposure_overlay.md`。
 
+社会经济图层（可选）：bundle 含 `socio_exposure/viewer_manifest.json` 与 `viewer_face_values.bin`（run.json
+`socio_exposure.viewer_manifest` 声明）时，`viewer_server` 额外核对其 run_id、面数、帧序列与二进制大小/SHA-256；页面一次性载入
+逐面人口/耕地数组，在 Native 三角网格下增加图层“人口密度（人/km²）”“耕地密度（亩/km²）”“受淹人口（当前帧）”，
+侧栏显示本帧受淹人口/耕地（含分区）、包络总量与局限说明（人口为区县普查数按 50 m 网格均匀摊分；仅暴露量，无经济损失），
+悬停显示该面人口/耕地/区。无该文件的 bundle 校验与界面均与以前相同。格式与细节见 `docs/socio_exposure_overlay.md` §8。
+
 真实求解器接入（网格 artifact + 逐面地形 + 假定断面 + 流量 CSV → 本 sink → 导出/校验）与 `reopen` 续算见
 `docs/large_run_driver.md`（`python -m hydrodynamics.large_run_driver`）。
 

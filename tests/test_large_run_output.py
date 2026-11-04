@@ -211,6 +211,7 @@ def test_end_to_end_large_profile_bundle(tmp_path, forcing):
     assert roles["full_domain"]["feature_count"] == roles["full_domain_4490"]["feature_count"] == 216
     assert 0 < roles["maximum_wet_surface"]["feature_count"] <= 216
     assert "GEOGCS" in (bundle / "shp" / "full_domain_4490" / "faces.prj").read_text(encoding="utf-8")
+    assert not (bundle / "socio_exposure").exists() and "socio_exposure" not in run   # no socio: no viewer socio files
     root, served = validate_bundle(bundle, explicit=True)
     assert served["format"] == "large-run-output-bundle-v1"
     with pytest.raises(ViewerBundleError, match="explicit"):
@@ -226,4 +227,7 @@ def test_viewer_asset_supports_large_bundles_and_keeps_m1_paths():
     html = (ROOT / "hydrodynamics" / "assets" / "viewer.html").read_text(encoding="utf-8")
     for marker in ("NTW3F02", "large-run-output-bundle-v1", "hydrodynamics-legacy-grid-compatibility-v2", "drawNativeLarge",
                    "m1-output-bundle-v1", "NTW3F01", "forcing_notice", "PATH_CHUNK_FACES"):
+        assert marker in html
+    # optional socio overlay: layers only offered when socio files loaded; panel hidden by default
+    for marker in ('id="socio" hidden', "socio_pop_density", "socio_arable_density", "socio_exposed_pop", "loadSocio"):
         assert marker in html
