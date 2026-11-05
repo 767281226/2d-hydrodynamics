@@ -46,7 +46,10 @@ def _case(tmp_path: Path, **overrides) -> Path:
         "output": {"root": "results", "run_id": "synthetic_run"},
     }
     for key, value in overrides.items():
-        case[key] = value
+        if value is None:
+            case.pop(key, None)
+        else:
+            case[key] = value
     path = tmp_path / "case.json"
     path.write_text(json.dumps(case), encoding="utf-8")
     return path
@@ -130,3 +133,27 @@ def test_stage_cache_survives_moving_work_dir(tmp_path: Path) -> None:
     assert Path(manifest["outputs"]["sections"]).is_file() and str(second) in manifest["outputs"]["sections"]
     stage = json.loads((second / "work" / "mesh" / "stage.json").read_text(encoding="utf-8"))
     assert stage["outputs"]["mesh"] == "mesh/mesh.json"
+
+
+def test_mesh_only_config_meshes_and_maps_terrain_without_sections_forcing_or_run(tmp_path: Path) -> None:
+    path = _case(tmp_path, sections=None, forcing=None, run=None)
+    config, base = load_case_config(path)
+    assert config.mesh_only
+    report = Pipeline(config, base).check()
+    assert report["status"] == "ok" and report["mesh_only"] is True, report
+    mesh = run_pipeline(path, stage="mesh")
+    artifact = json.loads(Path(mesh["outputs"]["mesh"]).read_text(encoding="utf-8"))
+    assert artifact["mesh_only"] is True and len(artifact["face_nodes"]) > 100
+    assert mesh["summary"]["faces"] == len(artifact["face_nodes"]) and mesh["summary"]["min_quality"] > 0.3
+    terrain = run_pipeline(path, stage="terrain")
+    assert Path(terrain["outputs"]["terrain"]).is_file()
+    for stage in ("sections", "config", "run"):
+        with pytest.raises(CasePipelineError, match="mesh-only config can run --stage geometry, mesh or terrain"):
+            run_pipeline(path, stage=stage)
+
+
+def test_partial_hydro_sections_are_rejected_by_check(tmp_path: Path) -> None:
+    path = _case(tmp_path, forcing=None)
+    config, base = load_case_config(path)
+    assert not config.mesh_only
+    assert any("must be given together" in e for e in Pipeline(config, base).check()["errors"])

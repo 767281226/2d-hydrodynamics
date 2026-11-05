@@ -5,3 +5,5 @@ work/
 *.egg-info/
 build/
 deploy/linux-offline/dist/
+# user inputs (DEM, domain/holes shapefiles) stay local; see docs/mesh_generation.md
+/data/

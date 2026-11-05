@@ -190,17 +190,29 @@ class CaseConfig(_Strict):
     domain: DomainSection
     mesh: MeshSettings = Field(default_factory=MeshSettings)
     terrain: TerrainSettings = Field(default_factory=TerrainSettings)
-    sections: SectionsSettings
-    forcing: dict[str, StrictStr] = Field(description="{'path': discharge CSV with time_s + section columns}")
-    run: RunSettings
+    # sections / forcing / run: required from stage "sections" on; omit all three for a mesh-only case
+    # (stages geometry, mesh, terrain).
+    sections: SectionsSettings | None = None
+    forcing: dict[str, StrictStr] | None = Field(None, description="{'path': discharge CSV with time_s + section columns}")
+    run: RunSettings | None = None
     output: OutputSettings = Field(default_factory=OutputSettings)
 
     @field_validator("forcing")
     @classmethod
-    def _forcing(cls, value: dict[str, str]) -> dict[str, str]:
-        if set(value) != {"path"} or not value["path"].strip():
+    def _forcing(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is not None and (set(value) != {"path"} or not value["path"].strip()):
             raise ValueError("forcing must be {'path': <csv>}")
         return value
+
+    @property
+    def mesh_only(self) -> bool:
+        return self.sections is None and self.forcing is None and self.run is None
+
+    def require_hydro(self, stage: str) -> None:
+        missing = [name for name in ("sections", "forcing", "run") if getattr(self, name) is None]
+        if missing:
+            raise CasePipelineError(f"stage {stage!r} needs {', '.join(missing)} in the case config; "
+                                    "a mesh-only config can run --stage geometry, mesh or terrain")
 
 
 def _resolve(base: Path, value: str) -> Path:
@@ -525,6 +537,7 @@ class Pipeline:
 
     # -- sections ---------------------------------------------------------------
     def sections(self) -> dict[str, Any]:
+        self.config.require_hydro("sections")
         mesh_stage = self.mesh()
         mesh_path = Path(mesh_stage["outputs"]["mesh"])
         settings = self.config.sections
@@ -557,6 +570,7 @@ class Pipeline:
     # -- driver config ------------------------------------------------------------
     def driver_config(self) -> dict[str, Any]:
         cfg = self.config
+        cfg.require_hydro("config")
         mesh_stage, terrain_stage, sections_stage = self.mesh(), self.terrain(), self.sections()
         forcing = _resolve(self.base, cfg.forcing["path"])
         if not forcing.is_file():
@@ -631,7 +645,7 @@ class Pipeline:
             from shapely.geometry import Point, box
             if not box(left, bottom, right, top).contains(domain):
                 errors.append("domain polygon extends outside the DEM bounds")
-            for item in self.config.sections.items:
+            for item in (self.config.sections.items if self.config.sections is not None else []):
                 distance = domain.exterior.distance(Point(item.xy))
                 if distance > float(self.config.sections.max_point_distance_m):
                     errors.append(f"section {item.name} is {distance:.1f} m from the domain boundary (> max_point_distance_m)")
@@ -639,8 +653,12 @@ class Pipeline:
             errors.append(str(exc))
         except Exception as exc:
             errors.append(f"DEM/domain check failed: {type(exc).__name__}: {exc}")
-        forcing = _resolve(self.base, self.config.forcing["path"])
-        if not forcing.is_file():
+        report["mesh_only"] = self.config.mesh_only
+        if self.config.mesh_only:
+            pass  # geometry / mesh / terrain only: no sections or discharge to check
+        elif self.config.sections is None or self.config.forcing is None or self.config.run is None:
+            errors.append("sections, forcing and run must be given together (or all omitted for a mesh-only case)")
+        elif not (forcing := _resolve(self.base, self.config.forcing["path"])).is_file():
             errors.append(f"forcing CSV not found: {forcing}")
         else:
             import csv

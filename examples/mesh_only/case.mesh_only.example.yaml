@@ -1,0 +1,31 @@
+# Mesh-only case: stages geometry -> mesh -> terrain (no sections / forcing / run).
+# Copy to cases/<case_id>/case.yaml; paths below are relative to that file (repo root = ../../).
+# Guide: docs/mesh_generation.md
+#   python -X utf8 -m hydro_pipeline.case_pipeline cases/<case_id>/case.yaml --check
+#   python -X utf8 -m hydro_pipeline.case_pipeline cases/<case_id>/case.yaml --stage mesh
+#   python -X utf8 -m hydro_pipeline.case_pipeline cases/<case_id>/case.yaml --stage terrain
+format: case-pipeline-config-v1
+schema_version: "1.0"
+case_id: dongdian_mesh
+description: "东淀蓄滞洪区，扣除安全区（只剖分网格）"
+work_dir: ../../work/dongdian_mesh
+
+dem:
+  path: ../../data/dem/DEMn_1m.tif         # GeoTIFF, projected metric CRS (absolute paths are fine for large DEMs)
+  crs: "EPSG:4548"
+
+domain:
+  polygon: {type: shp, path: ../../data/domain/dongdian.shp}
+  holes:
+    - {type: shp, path: ../../data/holes/security_area.shp}
+  constraints: []                           # [{name: dike_1, points: [[x, y], ...]}]
+  simplify_tolerance_m: 2.0
+  min_vertex_spacing_m: 25.0
+
+mesh:
+  default_size_m: 50
+  minimum_size_m: 5
+  boundary_adaptive: true
+  grading_ratio: 0.3
+  maximum_nodes: 2000000
+  algorithm_2d: 5

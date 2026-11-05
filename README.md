@@ -52,6 +52,8 @@ python -X utf8 -m hydro_pipeline.large_run_export <bundle目录> --verify
 start_viewer.bat <方案号>                                    # 查看 work\results\<方案号>\bundle
 ```
 
+只剖分网格（DEM + 计算范围 → 三角网格）的完整步骤、数据存放位置和实测示例见 [docs/mesh_generation.md](docs/mesh_generation.md)。
+
 配置字段、单位、范围和限制：
 
 - `docs/case_pipeline.md`；
