@@ -1,0 +1,66 @@
+# case-pipeline-config-v1 example: any projected DEM + domain + sections + discharge CSV.
+# Relative paths are resolved against this file's directory.
+# Run:  python -X utf8 -m hydro_pipeline.case_pipeline examples/case_pipeline/case.example.yaml --check
+#       python -X utf8 -m hydro_pipeline.case_pipeline examples/case_pipeline/case.example.yaml [--stage mesh|terrain|sections|config|run]
+format: case-pipeline-config-v1
+schema_version: "1.0"
+case_id: my_case                      # [A-Za-z0-9._-], also names <case_id>.nc
+description: "example; replace every path and coordinate"
+work_dir: work/my_case                # stage artifacts (geometry/mesh/terrain/sections + driver_config.json)
+
+dem:
+  path: data/dem/my_dem.tif           # GeoTIFF, projected metric CRS; read as raw values (no resampling / NoData filling)
+  crs: "EPSG:4548"                    # CRS of the domain, sections and mesh; DEM CRS must be pyproj-equivalent
+  sha256: null                        # optional expected DEM SHA-256
+  # vertical_unit: m                  # only when the GeoTIFF lacks a vertical unit; needs evidence file
+  # vertical_unit_evidence: evidence/dem_unit.txt
+  vertical_datum: null                # e.g. "1985 national"; needs vertical_datum_evidence
+  vertical_datum_evidence: null
+
+domain:
+  polygon: {type: shp, path: data/domain/domain.shp}   # or {type: geojson, path: ...} or {type: coordinates, coordinates: [[x, y], ...]}
+  holes: []                           # unmeshed areas (closed walls), same source types
+  constraints: []                     # [{name: dike_1, points: [[x, y], ...]}] mesh-conforming lines inside the domain
+  simplify_tolerance_m: 2.0           # m, Douglas-Peucker; null = none
+  min_vertex_spacing_m: 25.0          # m; drop ring vertices closer than this; null = none
+
+mesh:
+  default_size_m: 50                  # m
+  minimum_size_m: 1                   # m
+  boundary_adaptive: true
+  grading_ratio: 0.3
+  maximum_nodes: 2000000
+  algorithm_2d: 5
+
+terrain:                              # exact area-weighted mapping; max 500000 faces
+  max_source_pixels: 1000000000
+  max_candidate_overlap_checks: 1000000000
+
+sections:
+  max_point_distance_m: 100           # m, point to nearest exterior edge
+  rule: {window_m: 450}               # river_section_selection channel-rule overrides
+  items:
+    - {name: A, role: inflow, xy: [478618, 4320778], column: inflow_A_m3s, name_zh: "入流断面", status: RECONSTRUCTED_NOT_MEASURED}
+    - {name: B, role: outflow, xy: [492931, 4324745], column: outflow_B_ref_m3s, name_zh: "自由出流断面", status: COMPUTED_OUTFLOW,
+       boundary_type: free_outflow, discharge_coefficient: 0.3275, crest_elevation_m: 1.03}
+    - {name: C, role: outflow, xy: [499491, 4334475], column: outflow_C_m3s, name_zh: "指定出流断面", status: COMPUTED_OUTFLOW,
+       boundary_type: prescribed_outflow}
+
+forcing:
+  path: data/forcing.csv              # time_s + one column per section, m3/s magnitudes, covering 0..hours*3600
+
+run:
+  hours: 288
+  manning_n: 0.035
+  initial_depth_m: 0.0
+  time_origin: "2023-08-01T02:00:00+08:00"
+  cfl_number: 0.5
+  kernel: auto                        # auto | numpy | numba
+  checkpoint_interval_s: 21600        # null disables --resume
+  long_run_options: {}
+
+output:
+  root: work/results                  # run dir = <root>/<run_id>; viewer: start_viewer.bat <run_id>
+  run_id: my_case_288h
+  profile: null                       # LargeRunOutputProfile fields (e.g. socio_exposure) or a profile path
+  export: true

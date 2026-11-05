@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+work/
+*.egg-info/
+build/
+deploy/linux-offline/dist/

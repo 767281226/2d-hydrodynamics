@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hydro-pipeline"
+version = "0.1.0"
+description = "Pure 2-D hydrodynamics: any projected DEM + domain + sections + discharge CSV -> mesh, terrain, shallow-water run, bundle, viewer"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0,<3.0",
+    "PyYAML>=6.0,<7.0",
+    "numpy>=1.24,<3.0",
+    "tzdata>=2024.1,<2027.0",
+    "rasterio>=1.3,<2.0",
+    "pyproj>=3.6,<4.0",
+    "shapely>=2.0,<3.0",
+    "pyshp>=2.3,<3.0",
+    "netCDF4>=1.6,<2.0",
+    "gmsh>=4.11,<5.0",
+]
+
+[project.optional-dependencies]
+numba = ["numba>=0.60,<1.0"]
+figures = ["matplotlib>=3.7"]
+test = ["pytest>=8.0,<9.0", "jsonschema>=4.26,<5.0"]
+
+[project.scripts]
+hydro-pipeline = "hydro_pipeline.case_pipeline:main"
+hydro-pipeline-viewer = "hydro_pipeline.viewer_server:main"
+hydro-large-run = "hydro_pipeline.large_run_driver:main"
+hydro-large-run-export = "hydro_pipeline.large_run_export:main"
+hydro-run-watchdog = "hydro_pipeline.run_watchdog:main"
+
+[tool.setuptools.packages.find]
+include = ["hydro_pipeline*"]
+
+[tool.setuptools.package-data]
+hydro_pipeline = ["assets/*.html", "shapefile_schemas/*.json", "schemas/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

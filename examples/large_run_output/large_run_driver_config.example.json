@@ -1,0 +1,67 @@
+{
+ "format": "large-run-driver-config-v1",
+ "schema_version": "1.0",
+ "description": "Example large-run driver config (relative paths resolve against this file's directory). River inflow A prescribed from a discharge CSV; outlets B and C as free/prescribed outflow; no rainfall.",
+ "mesh": {
+  "path": "inputs/domain-mesh.json",
+  "expected_sha256": null
+ },
+ "terrain": {
+  "path": "inputs/terrain_faces.npz",
+  "dem_path": "inputs/dem.tif",
+  "dem_sha256": "bb5d2bd8cf387a698b6326fd94c603fcbae0c95c8734d564d0d4c007d63a38c7",
+  "mapping_report_path": null,
+  "method": "hydrodynamics.terrain_windowed_mapping.map_triangular_mesh_from_windows exact area-weighted, CRS alias EPSG:4548, coverage_policy diagnostic_only",
+  "vertical_datum": null,
+  "vertical_unit": "m"
+ },
+ "sections": {
+  "path": "inputs/sections_audit.json",
+  "discharge_series_status": {
+   "A": "RECONSTRUCTED_NOT_MEASURED",
+   "B": "COMPUTED_OUTFLOW",
+   "C": "COMPUTED_OUTFLOW"
+  },
+  "distribution": {
+   "A": "length"
+  },
+  "outflow_boundary": {
+   "B": {
+    "boundary_type": "free_outflow",
+    "discharge_coefficient": 0.3275,
+    "crest_elevation_m": 1.03
+   },
+   "C": {
+    "boundary_type": "prescribed_outflow",
+    "discharge_coefficient": null,
+    "crest_elevation_m": null
+   }
+  }
+ },
+ "forcing": {
+  "path": "inputs/forcing.csv",
+  "rainfall": null
+ },
+ "run": {
+  "hours": 288,
+  "output_times_s": null,
+  "initial_depth_m": 0.0,
+  "manning_n": 0.035,
+  "long_run_options": {
+   "kernel": "auto",
+   "progress_interval_steps": 10000,
+   "cfl_number": 0.5
+  },
+  "checkpoint_interval_s": 21600.0,
+  "time_origin": "2023-08-01T02:00:00+08:00",
+  "run_id": null,
+  "case_id": "example_case",
+  "coordinate_system": "EPSG:4548"
+ },
+ "output": {
+  "root": "../../work/results",
+  "script_id": "large-run-example",
+  "profile": null,
+  "export": true
+ }
+}

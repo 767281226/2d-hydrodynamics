@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/triangle-mesh-quality-failure-diagnostic-v1.schema.json",
+  "title": "Mesh-only quality failure diagnostic",
+  "description": "Bounded diagnostic-only evidence for a mesh-only quality rejection. It is not a mesh artifact and cannot make a run ready.",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?![\\s\\S])"
+    },
+    "pointXY": {
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "boundsXY": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "quantileInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "percentile": {"enum": [0.1, 0.25, 0.5, 0.75, 0.9, 0.99]},
+        "rank_one_based": {"type": "integer", "minimum": 1},
+        "lower_bound": {"type": "number"},
+        "upper_bound": {"type": "number"},
+        "interval_width": {"type": "number", "minimum": 0},
+        "exact_value_reported": {"const": false}
+      },
+      "required": [
+        "percentile",
+        "rank_one_based",
+        "lower_bound",
+        "upper_bound",
+        "interval_width",
+        "exact_value_reported"
+      ]
+    },
+    "worstFace": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "face_row_zero_based": {"type": "integer", "minimum": 0},
+        "face_id_decimal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 19,
+          "pattern": "^(?:0|[1-9][0-9]{0,18})(?![\\s\\S])",
+          "description": "Exact non-negative int64 face ID in decimal text, not a floating-point JSON number."
+        },
+        "quality": {"type": "number", "minimum": 0},
+        "minimum_angle_deg": {"type": "number", "minimum": 0, "maximum": 180},
+        "face_area_m2": {"type": "number", "exclusiveMinimum": 0},
+        "centroid_xy_m": {"$ref": "#/$defs/pointXY"},
+        "bounds_xy_m": {"$ref": "#/$defs/boundsXY"},
+        "node_indices_zero_based": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0},
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "edge_indices_zero_based": {
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0},
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "edge_node_indices_zero_based": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0},
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "edge_lengths_m": {
+          "type": "array",
+          "items": {"type": "number", "exclusiveMinimum": 0},
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "boundary_group_names": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 64},
+          "maxItems": 8,
+          "uniqueItems": true
+        },
+        "constraint_group_names": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 64},
+          "maxItems": 8,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "face_row_zero_based",
+        "face_id_decimal",
+        "quality",
+        "minimum_angle_deg",
+        "face_area_m2",
+        "centroid_xy_m",
+        "bounds_xy_m",
+        "node_indices_zero_based",
+        "edge_indices_zero_based",
+        "edge_node_indices_zero_based",
+        "edge_lengths_m",
+        "boundary_group_names",
+        "constraint_group_names"
+      ]
+    },
+    "qualityFailurePrimary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": {"const": "triangle-mesh-quality-failure-primary-v1"},
+        "attempt_id": {"$ref": "#/$defs/safeId"},
+        "run_id": {"$ref": "#/$defs/safeId"},
+        "worker_exit_code": {"const": 53},
+        "failure_code": {"const": "MINIMUM_FACE_QUALITY_FAILED"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 512},
+        "diagnostic_only": {"const": true},
+        "config_sha256": {"$ref": "#/$defs/sha256"},
+        "source_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "route_code_sha256": {"$ref": "#/$defs/sha256"},
+        "metric_id": {"const": "triangle-face-quality-q4sqrt3-area-over-edge-square-sum-v1"},
+        "quality_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "comparison": {"const": "strict_lt"},
+        "node_count": {"type": "integer", "minimum": 3, "maximum": 2000000},
+        "face_count": {"type": "integer", "minimum": 1, "maximum": 500000},
+        "bad_face_count": {"type": "integer", "minimum": 1, "maximum": 500000},
+        "mesh_sha256": {"$ref": "#/$defs/sha256"},
+        "canonical_mesh_bytes": {"type": "integer", "minimum": 1}
+      },
+      "required": [
+        "format",
+        "attempt_id",
+        "run_id",
+        "worker_exit_code",
+        "failure_code",
+        "message",
+        "diagnostic_only",
+        "config_sha256",
+        "source_manifest_sha256",
+        "route_code_sha256",
+        "metric_id",
+        "quality_threshold",
+        "comparison",
+        "node_count",
+        "face_count",
+        "bad_face_count",
+        "mesh_sha256",
+        "canonical_mesh_bytes"
+      ]
+    },
+    "failureDiagnosticReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {"const": "diagnostics/domain-mesh-quality-failure.json"},
+        "format": {"const": "triangle-mesh-quality-failure-diagnostic-v1"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 1, "maximum": 65536},
+        "diagnostic_only": {"const": true}
+      },
+      "required": ["path", "format", "sha256", "bytes", "diagnostic_only"]
+    },
+    "failureDiagnosticErrorItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "phase": {"type": "string", "minLength": 1, "maxLength": 64},
+        "code": {"type": "string", "pattern": "^[A-Z0-9_]{1,64}(?![\\s\\S])"},
+        "type": {"type": "string", "minLength": 1, "maxLength": 128},
+        "message": {"type": "string", "maxLength": 512}
+      },
+      "required": ["phase", "code", "type", "message"]
+    },
+    "failureDiagnosticError": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "errors": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/failureDiagnosticErrorItem"},
+          "minItems": 1,
+          "maxItems": 4
+        }
+      },
+      "required": ["errors"]
+    }
+  },
+  "properties": {
+    "format": {"const": "triangle-mesh-quality-failure-diagnostic-v1"},
+    "schema_version": {"const": "1.0"},
+    "diagnostic_only": {"const": true},
+    "preparation_only": {"const": true},
+    "mesh_ready": {"const": false},
+    "ready": {"const": false},
+    "latest_published": {"const": false},
+    "simulation_result": {"const": false},
+    "production_approved": {"const": false},
+    "engineering_ready": {"const": false},
+    "attempt_id": {"$ref": "#/$defs/safeId"},
+    "run_id": {"$ref": "#/$defs/safeId"},
+    "config_sha256": {"$ref": "#/$defs/sha256"},
+    "source_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "route_code_sha256": {"$ref": "#/$defs/sha256"},
+    "failure_code": {"const": "MINIMUM_FACE_QUALITY_FAILED"},
+    "worker_exit_code": {"const": 53},
+    "failure_message": {"type": "string", "minLength": 1, "maxLength": 512},
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"const": "triangle-face-quality-q4sqrt3-area-over-edge-square-sum-v1"},
+        "version": {"const": "triangle-face-quality-q4sqrt3-area-over-edge-square-sum-v1"},
+        "definition": {"const": "q = 4*sqrt(3)*A/(a^2+b^2+c^2)"},
+        "unit": {"const": "1"},
+        "area_source": {"const": "validated positive mesh.face_area in m2"},
+        "edge_length_source": {"const": "validated mesh edge lengths in m"},
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "comparison": {"const": "strict_lt"}
+      },
+      "required": [
+        "id",
+        "version",
+        "definition",
+        "unit",
+        "area_source",
+        "edge_length_source",
+        "threshold",
+        "comparison"
+      ]
+    },
+    "mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mesh_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "mesh_sha256": {"$ref": "#/$defs/sha256"},
+        "canonical_mesh_bytes": {"type": "integer", "minimum": 1},
+        "node_count": {"type": "integer", "minimum": 3, "maximum": 2000000},
+        "face_count": {"type": "integer", "minimum": 1, "maximum": 500000}
+      },
+      "required": ["mesh_id", "mesh_sha256", "canonical_mesh_bytes", "node_count", "face_count"]
+    },
+    "quality_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimum_quality_exact": {"type": "number", "minimum": 0},
+        "maximum_quality_exact": {"type": "number", "minimum": 0},
+        "bad_face_count_exact": {"type": "integer", "minimum": 1, "maximum": 500000},
+        "comparison": {"const": "strict_lt"},
+        "histogram": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": {"const": "fixed_equal_width_histogram_approximate_v1"},
+            "domain_lower": {"const": 0},
+            "domain_upper": {"const": 1},
+            "bin_count": {"const": 1024},
+            "bin_width": {"const": 0.0009765625},
+            "counts": {
+              "type": "array",
+              "items": {"type": "integer", "minimum": 0},
+              "minItems": 1024,
+              "maxItems": 1024
+            },
+            "underflow_count": {"type": "integer", "minimum": 0},
+            "overflow_count": {"type": "integer", "minimum": 0}
+          },
+          "required": [
+            "method",
+            "domain_lower",
+            "domain_upper",
+            "bin_count",
+            "bin_width",
+            "counts",
+            "underflow_count",
+            "overflow_count"
+          ]
+        },
+        "quantile_rule": {
+          "const": "nearest-rank: rank=ceil(p*N), one-based; return the containing histogram bin interval; equal values share a bin and are not ordered for quantiles"
+        },
+        "quantiles_approximate": {"const": true},
+        "maximum_quantile_interval_width": {"type": "number", "minimum": 0},
+        "quantile_intervals": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/quantileInterval"},
+          "minItems": 6,
+          "maxItems": 6
+        }
+      },
+      "required": [
+        "minimum_quality_exact",
+        "maximum_quality_exact",
+        "bad_face_count_exact",
+        "comparison",
+        "histogram",
+        "quantile_rule",
+        "quantiles_approximate",
+        "maximum_quantile_interval_width",
+        "quantile_intervals"
+      ]
+    },
+    "worst_face_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "population": {"const": "all faces"},
+        "limit": {"const": 16},
+        "selected_count": {"type": "integer", "minimum": 1, "maximum": 16},
+        "exact": {"const": true},
+        "order": {"const": "quality ascending, then numeric face_id ascending, then zero-based row ascending"},
+        "faces": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/worstFace"},
+          "minItems": 1,
+          "maxItems": 16
+        }
+      },
+      "required": ["population", "limit", "selected_count", "exact", "order", "faces"]
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "diagnostic_only",
+    "preparation_only",
+    "mesh_ready",
+    "ready",
+    "latest_published",
+    "simulation_result",
+    "production_approved",
+    "engineering_ready",
+    "attempt_id",
+    "run_id",
+    "config_sha256",
+    "source_manifest_sha256",
+    "route_code_sha256",
+    "failure_code",
+    "worker_exit_code",
+    "failure_message",
+    "metric",
+    "mesh",
+    "quality_summary",
+    "worst_face_selection"
+  ]
+}
