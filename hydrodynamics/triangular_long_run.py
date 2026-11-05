@@ -157,7 +157,7 @@ class OpenBoundaryGroupSpec(_StrictContractModel):
     an error, and the samples must cover the whole run.
 
     ``free_outflow``: stage-dependent outflow (experimental critical-flow weir
-    law q_e = C_d sqrt(g) H^(3/2), H = max(0, z + h - z_crest), outward only).
+    law q_e = C_d sqrt(g) H^(3/2), H = max(0, min(h, z + h - z_crest)), outward only).
     It takes no prescribed series; ``reference_time_s`` /
     ``reference_discharge_m3_s`` (both or neither) are only integrated into the
     ledger for comparison and never applied.
@@ -494,15 +494,18 @@ def _free_outflow_unit_discharge(group: _BoundaryGroup, depth: np.ndarray, gravi
     """Critical-flow weir law per edge, q_e = C_d sqrt(g) H^(3/2) in m2/s, outward only.
 
     H = h on a wet face when the crest is the face bed, otherwise
-    H = max(0, (z + h) - z_crest).  Dry faces (h <= dry threshold) give 0, so a
-    pool at or below the crest is exactly a closed wall.
+    H = max(0, min(h, (z + h) - z_crest)).  The head never exceeds the water
+    depth on the face: a crest below the face bed cannot draw more than critical
+    flow from depth h, which keeps q/h <= C_d sqrt(g h) and the CFL bound finite
+    for thin films.  Dry faces (h <= dry threshold) give 0, so a pool at or below
+    the crest is exactly a closed wall.
     """
     h = depth[group.faces]
     wet = h > dry_depth_m
     if group.crest is None:
         head = np.where(wet, h, 0.0)
     else:
-        head = np.where(wet, np.maximum((group.bed + h) - group.crest, 0.0), 0.0)
+        head = np.where(wet, np.maximum(np.minimum(h, (group.bed + h) - group.crest), 0.0), 0.0)
     if not head.any():
         return head  # all zeros: exactly the result below, without the extra array work
     return (group.coefficient * math.sqrt(gravity)) * (head * np.sqrt(head))

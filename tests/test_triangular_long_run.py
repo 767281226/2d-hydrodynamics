@@ -691,3 +691,22 @@ def test_numba_and_numpy_long_run_paths_agree_with_friction_rain_and_boundaries(
     assert np.allclose(compiled.water_depth_m, vector.water_depth_m, rtol=1e-9, atol=1e-12)
     assert np.allclose(compiled.unit_discharge_x_m2_s, vector.unit_discharge_x_m2_s, rtol=1e-8, atol=1e-12)
     assert compiled.ledger[-1]["stored_volume_m3"] == pytest.approx(vector.ledger[-1]["stored_volume_m3"], rel=1e-12)
+
+
+@pytest.mark.parametrize("depth", [1e-5, 0.05, 0.4])
+def test_free_outflow_head_never_exceeds_face_depth_when_crest_is_below_bed(depth):
+    """A crest below the face bed must not draw more than critical flow from depth h (thin films kept the CFL bound finite)."""
+    from hydrodynamics.triangular_long_run import FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT, _boundary_stage, _prepare_boundary_groups
+    mesh = _grid_mesh(6, 3, dx=10.0)
+    east = _side_edges(mesh, "east")
+    bed = np.full(mesh.n_face, 1.5)  # crest 1.03 m lies 0.47 m below the bed
+    group = {"name": "B", "role": "free_outflow", "edge_indices": east[:1], "crest_elevation_m": 1.03}
+    inputs = TriangularLongRunInputs.build(mesh, bed_m=bed, initial_depth_m=np.full(mesh.n_face, depth),
+                                           output_times_s=[0.0, 1.0], open_boundaries=[group])
+    edges = _edges(mesh)
+    groups = _prepare_boundary_groups(inputs, edges.geometry)
+    state = np.zeros((mesh.n_face, 3)); state[:, 0] = depth
+    stage = _boundary_stage(groups, state, 0.0, 1e-3, edges.geometry.area, gravity=9.81, dry_depth_m=1e-6, outflow_fraction=0.5)
+    length = float(edges.geometry.length[east[0]])
+    expected = FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT * math.sqrt(9.81) * depth ** 1.5 * length  # H = h, not h + 0.47
+    assert stage.outflow_requested_m3_s["B"] == pytest.approx(expected, rel=1e-12)

@@ -144,7 +144,12 @@ Formulation, documented here as an experimental choice:
   weir / critical-flow law. It is evaluated on each RK stage state, edge by edge,
   for edge e of length `L_e` on interior face i:
 
-  `q_e = C_d sqrt(g) H^(3/2)` (m2/s), `H = max(0, (z_i + h_i) - z_crest)`
+  `q_e = C_d sqrt(g) H^(3/2)` (m2/s), `H = max(0, min(h_i, (z_i + h_i) - z_crest))`
+
+  The head never exceeds the face depth `h_i`. A crest set below the face bed
+  therefore cannot pull more than critical flow from a thin film (without this
+  cap, `q_e/h_i` and the CFL wave speed grow without bound as the first water
+  arrives, which collapsed the time step to ~1e-4 s in a real run).
 
   If `crest_elevation_m` is null, the crest is the face bed and `H = h_i`.
   A dry face (`h_i <=` dry threshold) gives `H = 0`. The default

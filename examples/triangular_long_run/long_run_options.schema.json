@@ -172,7 +172,7 @@
     },
     "OpenBoundaryGroupSpec": {
       "additionalProperties": false,
-      "description": "Open boundary group on exterior mesh edges.\n\n``inflow`` / ``outflow``: prescribed discharge.  ``discharge_m3_s`` are\nnon-negative magnitudes; ``role`` gives the direction.  Q(t) is linearly\ninterpolated between samples; evaluating outside [time_s[0], time_s[-1]] is\nan error, and the samples must cover the whole run.\n\n``free_outflow``: stage-dependent outflow (experimental critical-flow weir\nlaw q_e = C_d sqrt(g) H^(3/2), H = max(0, z + h - z_crest), outward only).\nIt takes no prescribed series; ``reference_time_s`` /\n``reference_discharge_m3_s`` (both or neither) are only integrated into the\nledger for comparison and never applied.",
+      "description": "Open boundary group on exterior mesh edges.\n\n``inflow`` / ``outflow``: prescribed discharge.  ``discharge_m3_s`` are\nnon-negative magnitudes; ``role`` gives the direction.  Q(t) is linearly\ninterpolated between samples; evaluating outside [time_s[0], time_s[-1]] is\nan error, and the samples must cover the whole run.\n\n``free_outflow``: stage-dependent outflow (experimental critical-flow weir\nlaw q_e = C_d sqrt(g) H^(3/2), H = max(0, min(h, z + h - z_crest)), outward only).\nIt takes no prescribed series; ``reference_time_s`` /\n``reference_discharge_m3_s`` (both or neither) are only integrated into the\nledger for comparison and never applied.",
       "properties": {
         "format": {
           "const": "triangular-open-boundary-group-v1",
