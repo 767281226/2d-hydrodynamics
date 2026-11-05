@@ -115,6 +115,28 @@ def test_schema_and_example_match_the_model():
         assert set(schema["$defs"][model.__name__]["properties"]) == set(model.model_fields)
 
 
+def test_inline_profile_socio_paths_resolve_against_the_config_file(tmp_path):
+    example = json.loads((EXAMPLES / "large_run_driver_config.example.json").read_text(encoding="utf-8"))
+    example["output"]["profile"] = {"socio_exposure": {"grid_cells_path": "socio/grid.shp", "district_totals_csv": "socio/t.csv",
+                                                       "district_grid_summary_csv": None, "mapping_cache_dir": "cache"}}
+    (tmp_path / "cfg").mkdir()
+    path = tmp_path / "cfg" / "c.json"
+    path.write_text(json.dumps(example), encoding="utf-8")
+    socio = load_driver_config(path, script_id="t").output.profile["socio_exposure"]
+    assert Path(socio["grid_cells_path"]) == (tmp_path / "cfg" / "socio" / "grid.shp").resolve()
+    assert Path(socio["district_totals_csv"]) == (tmp_path / "cfg" / "socio" / "t.csv").resolve()
+    assert Path(socio["mapping_cache_dir"]) == (tmp_path / "cfg" / "cache").resolve()
+    assert socio["district_grid_summary_csv"] is None
+
+
+def test_in_repo_qingbei_case_configs_use_only_relative_paths():
+    for path in sorted((ROOT / "cases" / "qingbei" / "configs").glob("*.json")):
+        text = path.read_text(encoding="utf-8")
+        assert ":/" not in text and ":\\\\" not in text, path.name
+        config = load_driver_config(path, script_id="t")
+        assert Path(config.mesh.path).is_relative_to(ROOT) and Path(config.forcing.path).is_relative_to(ROOT)
+
+
 @pytest.mark.parametrize("mutate,message", [
     (lambda c: c.pop("mesh"), "mesh: Field required"),
     (lambda c: c.pop("terrain"), "terrain: Field required"),
@@ -467,3 +489,85 @@ def test_resume_without_checkpoint_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(NativeUgridNetcdfSink, "write_frame", original)
     with pytest.raises(LargeRunDriverError, match="requires run.checkpoint_interval_s"):
         run_large_case(path, resume=True)
+
+
+# ---------------------------------------------------------------- branch from a parent checkpoint
+def _forcing_after_branch(root: Path, rows) -> None:
+    lines = ["time_s,inflow_m3s,outflow_m3s,extra"] + [f"{t},{q_in},{q_out},1" for t, q_in, q_out in rows]
+    (root / "forcing.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+CHANGED_AFTER_5S = [(0.0, 0.5, 0.2), (5.0, 0.5, 0.2), (10.0, 0.5, 0.45), (15.0, 0.5, 0.45)]
+
+
+def test_branch_from_checkpoint_matches_a_fresh_run_with_the_corrected_forcing(tmp_path):
+    import netCDF4
+    parent = make_case(tmp_path / "parent", name="parent", export=False)
+    assert run_large_case(parent)["status"] == "complete"
+    # reference: a fresh full run whose outflow changes only after t = 5 s
+    reference = make_case(tmp_path / "ref", name="ref", export=False)
+    _forcing_after_branch(tmp_path / "ref", CHANGED_AFTER_5S)
+    run_large_case(reference)
+    # branch: same corrected forcing, continued from the parent's t = 5 s checkpoint
+    child = make_case(tmp_path / "child", name="child", export=True)
+    _forcing_after_branch(tmp_path / "child", CHANGED_AFTER_5S)
+    checkpoint = tmp_path / "parent" / "parent" / "checkpoints" / "checkpoint_00000001.npz"
+    report = run_large_case(child, branch_from=checkpoint)
+    assert report["status"] == "complete" and report["verify"]["status"] == "PASS"
+    branch = report["branch"]
+    assert branch["branch_time_s"] == 5.0 and branch["checkpoint_output_index"] == 1
+    assert branch["changed_series"] == [{"group": "east_out", "series": "discharge_m3_s", "first_differing_sample_time_s": 10.0,
+                                         "differing_sample_count": 2}]
+    assert report["frames_present_before"] == 2 and report["frames_written_this_process"] == 1
+    run_dir = tmp_path / "child" / "child"
+    assert _ledger_rows(run_dir) == _ledger_rows(tmp_path / "ref" / "ref")
+    with netCDF4.Dataset(str(run_dir / "bundle" / "result_native.nc")) as got, \
+            netCDF4.Dataset(str(tmp_path / "ref" / "ref" / "bundle" / "result_native.nc")) as ref:
+        for name in ("water_depth", "momentum_x", "momentum_y", "water_level", "time", "saved_frame_max_water_depth",
+                     "saved_frame_max_speed", "saved_frame_arrival_time", "solver_max_water_depth_m",
+                     "mass_budget_groups__east_out__cumulative_outflow_delivered_volume_m3"):
+            assert np.array_equal(np.asarray(got[name][:]), np.asarray(ref[name][:]), equal_nan=True), name
+        assert json.loads(str(got["mass_ledger_json"][...])) == json.loads(str(ref["mass_ledger_json"][...]))
+    with netCDF4.Dataset(str(tmp_path / "parent" / "parent" / "bundle" / "result_native.nc")) as par, \
+            netCDF4.Dataset(str(tmp_path / "ref" / "ref" / "bundle" / "result_native.nc")) as ref:
+        assert not np.array_equal(np.asarray(par["water_depth"][2]), np.asarray(ref["water_depth"][2]))  # the change mattered
+
+
+def test_branch_refuses_changes_before_the_branch_time_and_non_series_changes(tmp_path):
+    parent = make_case(tmp_path / "parent", name="parent", export=False)
+    run_large_case(parent)
+    checkpoint = tmp_path / "parent" / "parent" / "checkpoints" / "checkpoint_00000001.npz"
+    early = make_case(tmp_path / "early", name="early", export=False)
+    _forcing_after_branch(tmp_path / "early", [(0.0, 0.5, 0.2), (5.0, 0.5, 0.3), (10.0, 0.5, 0.3), (15.0, 0.5, 0.3)])
+    with pytest.raises(LargeRunDriverError, match="differs before the branch time"):
+        run_large_case(early, branch_from=checkpoint)
+    same = make_case(tmp_path / "same", name="same", export=False)
+    with pytest.raises(LargeRunDriverError, match="identical to the parent"):
+        run_large_case(same, branch_from=checkpoint)
+    manning = make_case(tmp_path / "manning", name="manning", export=False)
+    _forcing_after_branch(tmp_path / "manning", CHANGED_AFTER_5S)
+    data = _config_dict(manning); data["run"]["manning_n"] = 0.04
+    _rewrite(manning, data)
+    with pytest.raises(LargeRunDriverError, match="only boundary discharge series"):
+        run_large_case(manning, branch_from=checkpoint)
+    with pytest.raises(LargeRunDriverError, match="cannot be combined with --resume"):
+        run_large_case(same, branch_from=checkpoint, resume=True)
+
+
+def test_branch_needs_a_complete_parent(tmp_path, monkeypatch):
+    parent = make_case(tmp_path / "parent", name="parent", export=False)
+    original = NativeUgridNetcdfSink.write_frame
+
+    def crashing_write(self, index, time_s, arrays, ledger=None):
+        if int(index) == 2:
+            raise RuntimeError("crash")
+        return original(self, index, time_s, arrays, ledger)
+
+    monkeypatch.setattr(NativeUgridNetcdfSink, "write_frame", crashing_write)
+    with pytest.raises(RuntimeError):
+        run_large_case(parent)
+    monkeypatch.setattr(NativeUgridNetcdfSink, "write_frame", original)
+    child = make_case(tmp_path / "child", name="child", export=False)
+    _forcing_after_branch(tmp_path / "child", CHANGED_AFTER_5S)
+    with pytest.raises(LargeRunDriverError, match="COMPLETE parent"):
+        run_large_case(child, branch_from=tmp_path / "parent" / "parent" / "checkpoints" / "checkpoint_00000001.npz")

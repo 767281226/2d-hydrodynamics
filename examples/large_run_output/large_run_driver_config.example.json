@@ -1,22 +1,22 @@
 {
  "format": "large-run-driver-config-v1",
  "schema_version": "1.0",
- "description": "Real discharge-driven 288 h run on the mesh005 artifact: no rainfall, river inflow A prescribed from the reconstructed (not measured) Q series at an assumed (user-confirmed, non-authoritative) section; downstream exits B and C are stage-dependent free outflow (critical-flow weir law, crest = adjacent face bed), their CSV columns are reference series only. Relative paths resolve against this file's directory. The run directory must not exist; the exported bundle is written to <directory>/bundle.",
+ "description": "Example = the in-repo 清北 23·7 replay case (cases/qingbei/configs/real_23_7_288h.json) with paths relative to this file. 23·7 replay 288 h from 2023-08-01 02:00: domain 东淀清北 + 大清河 channel (DEM south-dike crest wall) + low land between the 清北 lobes, 62.96 km²; safety zone meshed and walled (embankment assumed not overtopped); inflow at A = 新盖房 分洪 Q delayed 80 h x 0.413 (calibrated by mass balance to 淀内台头 peak 5.93 m 大沽), base 200 m3/s; 独流减河进洪闸 free outflow (net 380 m, sill 1.03 m 1985, C_d scaled to section width); 西河闸 125 m3/s from 08-12 17:00 per gate ledger; no rainfall; DEM datum taken as 1985 (±0.8 m).",
  "mesh": {
-  "path": "../../work/b1r29/attempt_mesh005_20261103_fbe6a14e6854/out/mesh005_20261103_fbe6a14e6854/artifacts/domain-mesh.json",
-  "expected_sha256": null
+  "path": "../../cases/qingbei/mesh/qb_ext_s25_Swall_domain-mesh.json",
+  "expected_sha256": "ae32affaf785061ec3b07ab7729a1d97c074b752272a08885fd571e061db61f7"
  },
  "terrain": {
-  "path": "C:/Users/lenovo/hydro_exp/c8/terrain005_faces.npz",
+  "path": "../../cases/qingbei/terrain/terrain_qbext_faces.npz",
   "dem_path": "../../data/dem/DEMn_1m.tif",
   "dem_sha256": "bb5d2bd8cf387a698b6326fd94c603fcbae0c95c8734d564d0d4c007d63a38c7",
-  "mapping_report_path": "C:/Users/lenovo/hydro_exp/c8/terrain005_report_full.json",
+  "mapping_report_path": "../../cases/qingbei/terrain/terrain_qbext_report_full.json",
   "method": "hydrodynamics.terrain_windowed_mapping.map_triangular_mesh_from_windows exact area-weighted, CRS alias EPSG:4548, coverage_policy diagnostic_only",
   "vertical_datum": null,
   "vertical_unit": "m"
  },
  "sections": {
-  "path": "C:/Users/lenovo/hydro_exp/c8/sections_audit.json",
+  "path": "../../cases/qingbei/inputs/sections_audit_qbext_2307.json",
   "discharge_series_status": {
    "A": "RECONSTRUCTED_NOT_MEASURED",
    "B": "COMPUTED_OUTFLOW",
@@ -28,18 +28,18 @@
   "outflow_boundary": {
    "B": {
     "boundary_type": "free_outflow",
-    "discharge_coefficient": null,
-    "crest_elevation_m": null
+    "discharge_coefficient": 0.3275,
+    "crest_elevation_m": 1.03
    },
    "C": {
-    "boundary_type": "free_outflow",
+    "boundary_type": "prescribed_outflow",
     "discharge_coefficient": null,
     "crest_elevation_m": null
    }
   }
  },
  "forcing": {
-  "path": "../case_001/data/forcing.csv",
+  "path": "../../cases/qingbei/inputs/forcing_qb_23_7.csv",
   "rainfall": null
  },
  "run": {
@@ -49,18 +49,26 @@
   "manning_n": 0.035,
   "long_run_options": {
    "kernel": "auto",
-   "progress_interval_steps": 10000
+   "progress_interval_steps": 10000,
+   "cfl_number": 0.5
   },
   "checkpoint_interval_s": 21600.0,
   "time_origin": "2023-08-01T02:00:00+08:00",
   "run_id": null,
-  "case_id": "qingbei_ds_mesh005",
+  "case_id": "qingbei_2023_23_7",
   "coordinate_system": "EPSG:4548"
  },
  "output": {
   "root": "../../work/results",
   "script_id": "qingbei-2307-example",
-  "profile": null,
+  "profile": {
+   "socio_exposure": {
+    "grid_cells_path": "../../data/grid_50m_social_economy/shp/grid_cells_socio.shp",
+    "district_totals_csv": "../../data/grid_50m_social_economy/静海西青_七普三调.csv",
+    "district_grid_summary_csv": "../../data/grid_50m_social_economy/面积汇总_按区.csv",
+    "mapping_cache_dir": "../../work/socio_cache"
+   }
+  },
   "export": true
  }
 }

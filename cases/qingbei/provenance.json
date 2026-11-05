@@ -1,0 +1,278 @@
+{
+ "format": "case-provenance-v1",
+ "copied_on": "2026-11-05",
+ "files": [
+  {
+   "path": "inputs/forcing_qb_23_7.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\forcing_qb_23_7.csv",
+   "bytes": 17309,
+   "sha256": "0b15a5c1e1fc90fe10799663ab01354af15f893b3ec60acda2dc1781d0330ade",
+   "origin_sha256": "faf601e74529d43f7157e00aadb439e0831d7cb656e6fafa3c3dd3ae36801594",
+   "note": "CORRECTED 2026-11-05: xihe_controlled_m3s now 0 before t=279 h and 125 from t=279 h (2023-08-12 17:00, gate ledger); the origin opened at t=255 h (08-11 17:00, one day early). Other columns unchanged."
+  },
+  {
+   "path": "inputs/inflow_calibration.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\inflow_calibration.json",
+   "bytes": 475,
+   "sha256": "50e57db862c793eab0b2f31c08fba68cb6f14f4a313781bfea576768a3b2a4d4"
+  },
+  {
+   "path": "inputs/sections_audit_qbext.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\sections_audit_qbext.json",
+   "bytes": 27505,
+   "sha256": "6a4896683f33e6973990a7df396efaa617269edcde644efe58bb8c830b0d21b3"
+  },
+  {
+   "path": "inputs/sections_audit_qbext_2307.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\sections_audit_qbext_2307.json",
+   "bytes": 27655,
+   "sha256": "d02df0c646aa4a07fe7975cb9278020e427189ecdc104a06563a1bc739f9a5b9"
+  },
+  {
+   "path": "inputs/request_w450.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\request_w450.json",
+   "bytes": 1018,
+   "sha256": "aa34caceb3ed99479902d6111f2cde12b3c3958020432b88f5d91ff88333d68b"
+  },
+  {
+   "path": "inputs/qb_geom_ext.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\qb_geom_ext.json",
+   "bytes": 52460,
+   "sha256": "b4ffe45b1ba5f30da8a68e0e33da4e76df0fe9af728fba79a28206c023c2240c"
+  },
+  {
+   "path": "inputs/S_face_mask_ext.npy",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\S_face_mask_ext.npy",
+   "bytes": 81118,
+   "sha256": "fcf84487a3fff1a6bba90dbdfbeaef69264db8395265fbbe2094ad1ee653f469"
+  },
+  {
+   "path": "mesh/qb_ext_s25_Swall_domain-mesh.json",
+   "origin": "D:\\devTools\\project\\2d-hydrodynamics\\work\\b1r31\\qb_ext_s25_Swall_domain-mesh.json",
+   "bytes": 5267339,
+   "sha256": "ae32affaf785061ec3b07ab7729a1d97c074b752272a08885fd571e061db61f7"
+  },
+  {
+   "path": "terrain/terrain_qbext_faces.npz",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\terrain_qbext_faces.npz",
+   "bytes": 2026861,
+   "sha256": "4c1117b8a2dcc4cbaf9aa792cc5a85b9a250716afe4863cd833cca4f42df5ce8"
+  },
+  {
+   "path": "terrain/terrain_qbext_summary.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\terrain_qbext_summary.json",
+   "bytes": 992,
+   "sha256": "584e03e3d0d798b92a2ba90ffbb45e97b21e9b57e26ec1578d714d86edbcf6c1"
+  },
+  {
+   "path": "terrain/terrain_qbext_report_nofaces.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\terrain_qbext_report_nofaces.json",
+   "bytes": 3906,
+   "sha256": "453107b5ac59590926f4f57f76bf281b2aff255a51bd77332471c2f3907de57e"
+  },
+  {
+   "path": "terrain/terrain_qbext_report_full.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\terrain_qbext_report_full.json",
+   "bytes": 48836541,
+   "sha256": "427d83ca33618e75a8402a1de6b2d653270d9276c51a8a9c52f7dd95bdc90977"
+  },
+  {
+   "path": "source/天津23·7洪水闸门调度台账.xlsx",
+   "origin": "D:\\devTools\\ai\\WorkBuddySpace\\2026-11-04-14-06-46\\天津23·7洪水闸门调度台账.xlsx",
+   "bytes": 26985,
+   "sha256": "3bcfc3bff4ee103f2b1b402e1cc0bcdde236e77d9a062bb4a7391be3edcf0ffa"
+  },
+  {
+   "path": "design/README.md",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\README.md",
+   "bytes": 2753,
+   "sha256": "fb445953f34e385740f84084a35d5ebb80e65f0f8b1fea5ec61f6f336107ca7b"
+  },
+  {
+   "path": "design/adaptation_checklist.md",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\adaptation_checklist.md",
+   "bytes": 6081,
+   "sha256": "ddf99b17a23c99b81e72ce088d5a16e4f8e2d7f91c76bc3e4755f57d876f57e6"
+  },
+  {
+   "path": "design/design_hydrographs_summary.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_hydrographs_summary.json",
+   "bytes": 570,
+   "sha256": "a0f218ceb927e0f583418c683bc4d539740fd81da839cd0205b0dfe228cac992"
+  },
+  {
+   "path": "design/design_Q_P10.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_Q_P10.csv",
+   "bytes": 4001,
+   "sha256": "723cbab1950cf7121ad4457b7231b58f66ef06639698ecb541cb6e455c5ddb92"
+  },
+  {
+   "path": "design/design_Q_P100.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_Q_P100.csv",
+   "bytes": 4157,
+   "sha256": "378906fc40ccb2d86f500c603d1afde978fa79a2be4c4f98f145ec1077253431"
+  },
+  {
+   "path": "design/design_Q_P20.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_Q_P20.csv",
+   "bytes": 4042,
+   "sha256": "3c8ea290467468dcf97ad61650058550c5ccdaff77ac084a6f34b775c1b720dc"
+  },
+  {
+   "path": "design/design_Q_P50.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_Q_P50.csv",
+   "bytes": 4134,
+   "sha256": "b406a4288c72549eea8f596989454c3365490dab6c2f0871f4af5e34891daac6"
+  },
+  {
+   "path": "design/forcing_design_P10.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\forcing_design_P10.csv",
+   "bytes": 7687,
+   "sha256": "efa823dc5c4ada22516910d58af8fd96c4bca742fb79255ddc94c1d072885b94"
+  },
+  {
+   "path": "design/forcing_design_P100.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\forcing_design_P100.csv",
+   "bytes": 7734,
+   "sha256": "881e4baf2d66758aef3c00cce96954cbbe4b573b0b27ec042b3624a84a9b3a59"
+  },
+  {
+   "path": "design/forcing_design_P20.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\forcing_design_P20.csv",
+   "bytes": 7696,
+   "sha256": "aaf7b8f332003e432dad21e4fdca51e01f5cd0bc114fa3d61f7d2d046a5e9ee1"
+  },
+  {
+   "path": "design/forcing_design_P50.csv",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\forcing_design_P50.csv",
+   "bytes": 7716,
+   "sha256": "799f62371fa9de8a2e57b536667b2d66e991c9ff1485e0c794cc7afedf802865"
+  },
+  {
+   "path": "configs/real_23_7_288h.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\real_qbext_config.json",
+   "note": "absolute paths rewritten to case-relative",
+   "sha256": "f7ea78c08b17d9ab8535f2215c6da1d8fc82ea52ad738061f69b619609cdb783"
+  },
+  {
+   "path": "configs/design_P100_config.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_P100_config.json",
+   "note": "absolute paths rewritten to case-relative",
+   "sha256": "9fe0c78bf8bc95e9a11777c86c515c83d672bf87ef6002dea7ab983929a91e30"
+  },
+  {
+   "path": "configs/design_P10_config.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_P10_config.json",
+   "note": "absolute paths rewritten to case-relative",
+   "sha256": "f8747f9dbf8d63aba95fe9f115f17909e709dda27cdea56da490b0d359917a12"
+  },
+  {
+   "path": "configs/design_P20_config.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_P20_config.json",
+   "note": "absolute paths rewritten to case-relative",
+   "sha256": "899728f116b662c6d74947fb37fe7a1cdb51d35b89923cf21c7f795d85271624"
+  },
+  {
+   "path": "configs/design_P50_config.json",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\design_P50_config.json",
+   "note": "absolute paths rewritten to case-relative",
+   "sha256": "9a167eb65677b9d56c692a6a28ca65e23adbb2343633cb93b7fb20106a0b9a8d"
+  },
+  {
+   "path": "scripts/qb_split.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\qb_split.py",
+   "note": "paths made repo-relative",
+   "sha256": "07921171afa76243f762ee8758673b073f070d77cf6dd7c9dd399215c5c62c9e"
+  },
+  {
+   "path": "scripts/qb_poly.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\qb_poly.py",
+   "note": "paths made repo-relative",
+   "sha256": "bf9ce1db29a3fb940a2a56c05aac2e896cfcf26812bf42c11b104e0c6699b2fa"
+  },
+  {
+   "path": "scripts/south_dike.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\south_dike.py",
+   "note": "paths made repo-relative",
+   "sha256": "9bbf2f53779f047c0bf766509cea3c6909236c1b26b21f0205e1af00e88f7a0c"
+  },
+  {
+   "path": "scripts/north_dike.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\north_dike.py",
+   "note": "paths made repo-relative",
+   "sha256": "0d5366cde227f848534d5930ad4be5652aeb39e1f41d45e855dcaddc4d0552b3"
+  },
+  {
+   "path": "scripts/build_domain.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\build_domain.py",
+   "note": "paths made repo-relative",
+   "sha256": "578f507d49cffbb1954f2075338161e83feba4b81d0b7da07ec62b9b2ddb234c"
+  },
+  {
+   "path": "scripts/extend_domain.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\extend_domain.py",
+   "note": "paths made repo-relative",
+   "sha256": "3630927ad94789adb7604242e4cb70b1144ce4ccd0f543ccd7f77bee35deec65"
+  },
+  {
+   "path": "scripts/prep_geom_ext.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\prep_geom_ext.py",
+   "note": "paths made repo-relative",
+   "sha256": "d7762f56c64ed9084d14003b451570de0d819bf4a9114cbf7a4bcc3f5b3767fc"
+  },
+  {
+   "path": "scripts/mesh_qbext.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\mesh_qbext.py",
+   "note": "paths made repo-relative",
+   "sha256": "75690e676236ae3b32a98a51e7ec7a360c8168edfb3a05b335547b3ce8614f81"
+  },
+  {
+   "path": "scripts/wall_S_ext.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\qb\\wall_S_ext.py",
+   "note": "paths made repo-relative",
+   "sha256": "de97f956043d5ec0a611c52585103f61f0b53cb9ad9d6f43ac44dfc29e5a6c86"
+  },
+  {
+   "path": "scripts/run_map_any.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\run_map_any.py",
+   "note": "paths made repo-relative",
+   "sha256": "c93790d86ea7001d7217f7b52864303b502a2329907e48b028eab986fb813d87"
+  },
+  {
+   "path": "scripts/build_design_hydrographs.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\build_design_hydrographs.py",
+   "note": "paths made repo-relative",
+   "sha256": "b968a8961e613c3f0f05bd57947073563a9c0ef19d8d648da83c0a7a93afc82a"
+  },
+  {
+   "path": "scripts/make_design_case.py",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\make_design_case.py",
+   "note": "paths made repo-relative",
+   "sha256": "3e2598744d5b6c38d10bfbacd78b36292c228f53a50a122e85ba30fe85da4746"
+  },
+  {
+   "path": "design/refs/P020240628545416303099.pdf",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\refs\\P020240628545416303099.pdf",
+   "bytes": 647435,
+   "sha256": "589ba5e1d24444719e60579a7426bed302d905425773ce56851c9b5026ec0967"
+  },
+  {
+   "path": "design/refs/P020240628545416303099.txt",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\refs\\P020240628545416303099.txt",
+   "bytes": 105837,
+   "sha256": "887ffffa3f8c0e66f04eec58850cc4bc6d0a403a327d14003f4225cf364c9e2f"
+  },
+  {
+   "path": "design/refs/P020250819562923692196.pdf",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\refs\\P020250819562923692196.pdf",
+   "bytes": 1005620,
+   "sha256": "56dbc2529cf97e1e16fa820b6ea278537c4dd16f73841c599f97434c2a7e3be9"
+  },
+  {
+   "path": "design/refs/P020250819562923692196.txt",
+   "origin": "D:\\devTools\\hydro_exp\\c8\\design\\refs\\P020250819562923692196.txt",
+   "bytes": 102005,
+   "sha256": "6587f2c2dfacde906dd11376a3316fa08b2f158714155a84d6514f225b49b56b"
+  }
+ ]
+}

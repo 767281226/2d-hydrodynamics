@@ -29,11 +29,13 @@ Run directory (``output.directory``, or ``<output.root>/<scheme id>`` with the s
 CLI::
 
     python -m hydrodynamics.large_run_driver <config.json> [--id SCHEME_ID] [--resume] [--check]
+    python -m hydrodynamics.large_run_driver <config.json> --id NEW_ID --branch-from <parent>/checkpoints/<ckpt>.npz
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -51,13 +53,13 @@ from typing import Any, Literal, Mapping
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, ValidationError, field_validator, model_validator
 
-from .frame_sink import FrameSinkError, NativeUgridNetcdfSink, display_grid_extent, estimate_bundle_bytes
+from .frame_sink import FrameSinkError, LargeNativeResult, NativeUgridNetcdfSink, display_grid_extent, estimate_bundle_bytes
 from .large_run_export import LargeRunExportError, export_large_run_bundle, verify_large_run_bundle
 from .large_run_profile import (LargeRunMetadata, LargeRunOutputProfile, LargeRunProfileError, hourly_times_s, load_profile,
                                 parse_metadata, parse_profile, river_assumed_sections_forcing)
 from .triangular_long_run import (FREE_OUTFLOW_DEFAULT_DISCHARGE_COEFFICIENT, LONG_RUN_SOLVER_VERSION, TriangularFrame, TriangularLongRunError, TriangularLongRunInputs,
-                                  TriangularLongRunOptions, TriangularLongRunSummary, load_long_run_checkpoint, numba_status,
-                                  run_triangular_long_run)
+                                  TriangularLongRunOptions, TriangularLongRunSummary, _edges, _inputs_fingerprint,
+                                  load_long_run_checkpoint, numba_status, run_triangular_long_run)
 from .triangular_mesh import TriangularMesh, TriangularMeshError
 from .triangular_solver import TriangularSolverExecutionError
 
@@ -285,6 +287,7 @@ def parse_driver_config(value: Mapping[str, Any]) -> LargeRunDriverConfig:
 
 _PATH_FIELDS = (("mesh", "path"), ("terrain", "path"), ("terrain", "dem_path"), ("terrain", "mapping_report_path"),
                 ("sections", "path"), ("forcing", "path"), ("output", "directory"), ("output", "root"), ("output", "profile"))
+_SOCIO_PATH_FIELDS = ("grid_cells_path", "district_totals_csv", "district_grid_summary_csv", "mapping_cache_dir")
 
 
 def resolve_config_paths(config: LargeRunDriverConfig, base_dir: Path) -> LargeRunDriverConfig:
@@ -294,6 +297,17 @@ def resolve_config_paths(config: LargeRunDriverConfig, base_dir: Path) -> LargeR
         value = data[section][name]
         if isinstance(value, str):
             data[section][name] = str((base_dir / value).resolve()) if not Path(value).is_absolute() else str(Path(value))
+    socio = data["output"]["profile"].get("socio_exposure") if isinstance(data["output"]["profile"], dict) else None
+    if isinstance(socio, dict):  # inline profile: socio file paths are config-relative too
+        for name in _SOCIO_PATH_FIELDS:
+            value = socio.get(name)
+            if isinstance(value, str) and not Path(value).is_absolute():
+                socio[name] = str((base_dir / value).resolve())
+    gate_log = data["output"]["profile"].get("gate_log") if isinstance(data["output"]["profile"], dict) else None
+    if isinstance(gate_log, dict):  # inline profile: the dispatch ledger path is config-relative too
+        value = gate_log.get("ledger_xlsx")
+        if isinstance(value, str) and not Path(value).is_absolute():
+            gate_log["ledger_xlsx"] = str((base_dir / value).resolve())
     return parse_driver_config(data)
 
 
@@ -944,10 +958,111 @@ def _summary_dict(summary: TriangularLongRunSummary) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Branch: continue a COMPLETE parent run from one of its checkpoints with
+# boundary series that differ only after the checkpoint time.
+# ---------------------------------------------------------------------------
+_BRANCH_SERIES = (("time_s", "discharge_m3_s"), ("reference_time_s", "reference_discharge_m3_s"))
+
+
+def _series_equal_until(t_a: Any, q_a: Any, t_b: Any, q_b: Any, until_s: float) -> bool:
+    """Piecewise-linear series equal on [first sample, until_s]: compare at every breakpoint of both, and at until_s."""
+    if t_a is None or t_b is None:
+        return t_a is None and t_b is None
+    ta, qa, tb, qb = (np.asarray(v, dtype=np.float64) for v in (t_a, q_a, t_b, q_b))
+    if ta[0] != tb[0]:
+        return False
+    points = np.unique(np.concatenate([ta[ta <= until_s], tb[tb <= until_s], [until_s]]))
+    return bool(np.array_equal(np.interp(points, ta, qa), np.interp(points, tb, qb)))
+
+
+def verify_branch_inputs(parent: TriangularLongRunInputs, child: TriangularLongRunInputs, checkpoint_fingerprint: str,
+                         branch_time_s: float) -> dict[str, Any]:
+    """Prove the child inputs equal the parent's on [0, branch_time_s]; return the changed series.
+
+    1. The parent inputs (rebuilt from the parent's resolved config) reproduce the checkpoint fingerprint.
+    2. The child inputs with the parent's boundary groups swapped in reproduce it too: mesh, bed, initial
+       depth, Manning n, rainfall and output times are identical.
+    3. Every boundary group keeps its name, role, edges and every non-series field; its discharge (and
+       free-outflow reference) series is identical up to branch_time_s.
+    """
+    parent_fp = _inputs_fingerprint(parent, _edges(parent.mesh).geometry)
+    if parent_fp != checkpoint_fingerprint:
+        raise LargeRunDriverError("branch: the parent config does not reproduce the checkpoint inputs fingerprint "
+                                  "(parent inputs changed on disk since the run?)")
+    hybrid = dataclasses.replace(child, open_boundaries=parent.open_boundaries)
+    if _inputs_fingerprint(hybrid, _edges(child.mesh).geometry) != checkpoint_fingerprint:
+        raise LargeRunDriverError("branch: mesh, terrain, initial depth, Manning n, rainfall or output times differ from the parent; "
+                                  "only boundary discharge series after the branch time may change")
+    parents = {g.name: g for g in parent.open_boundaries}
+    children = {g.name: g for g in child.open_boundaries}
+    if list(parents) != list(children):
+        raise LargeRunDriverError(f"branch: boundary groups differ: parent {list(parents)} vs child {list(children)}")
+    series_fields = {name for pair in _BRANCH_SERIES for name in pair}
+    changed = []
+    for name, pg in parents.items():
+        cg = children[name]
+        p_rest = {k: v for k, v in pg.model_dump(mode="json").items() if k not in series_fields}
+        c_rest = {k: v for k, v in cg.model_dump(mode="json").items() if k not in series_fields}
+        if p_rest != c_rest:
+            raise LargeRunDriverError(f"branch: group {name!r} changed more than its discharge series")
+        for t_name, q_name in _BRANCH_SERIES:
+            pt, pq, ct, cq = getattr(pg, t_name), getattr(pg, q_name), getattr(cg, t_name), getattr(cg, q_name)
+            if not _series_equal_until(pt, pq, ct, cq, branch_time_s):
+                raise LargeRunDriverError(f"branch: group {name!r} {q_name} differs before the branch time {branch_time_s} s")
+            if (pt, pq) != (ct, cq):
+                samples = sorted(set(map(float, pt or [])) | set(map(float, ct or [])))
+                differing = [t for t in samples if float(np.interp(t, pt, pq)) != float(np.interp(t, ct, cq))]
+                changed.append({"group": name, "series": q_name, "first_differing_sample_time_s": differing[0] if differing else None,
+                                "differing_sample_count": len(differing)})
+    if not changed:
+        raise LargeRunDriverError("branch: the inputs are identical to the parent; use --resume or a fresh run instead")
+    return {"parent_inputs_fingerprint": parent_fp, "branch_time_s": branch_time_s, "changed_series": changed}
+
+
+def _seed_frames_from_parent(sink: NativeUgridNetcdfSink, parent_native: Path, count: int, ledger_rows: list[dict[str, Any]],
+                             ledger_path: Path, progress: Any, dry_depth_m: float) -> None:
+    """Copy parent frames 0..count-1 (identical by construction) into the child sink, with the checkpoint ledger rows.
+
+    Depth and momentum are stored in float64 and copied exactly; velocities are stored as float32, so they are rebuilt
+    in float64 from momentum / depth on wet faces exactly as the solver does (the sink derives max speed from them).
+    """
+    if len(ledger_rows) < count:
+        raise LargeRunDriverError(f"branch: checkpoint ledger holds {len(ledger_rows)} rows, need {count}")
+    parent = LargeNativeResult(parent_native)
+    try:
+        if parent.n_frame < count:
+            raise LargeRunDriverError(f"branch: parent result holds {parent.n_frame} frames, need {count}")
+        with ledger_path.open("a", encoding="utf-8") as stream:
+            for index in range(count):
+                frame = parent.frame(index)
+                h = frame.water_depth_m; wet = h > dry_depth_m
+                u = np.zeros_like(h); v = np.zeros_like(h)
+                np.divide(frame.momentum_x_m2_s, h, out=u, where=wet)
+                np.divide(frame.momentum_y_m2_s, h, out=v, where=wet)
+                sink.write_frame(index, frame.time_s, {
+                    "water_depth_m": h, "unit_discharge_x_m2_s": frame.momentum_x_m2_s,
+                    "unit_discharge_y_m2_s": frame.momentum_y_m2_s, "velocity_x_m_s": u,
+                    "velocity_y_m_s": v, "water_level_m": frame.water_level_m,
+                }, ledger=sink_ledger_from_row(ledger_rows[index]))
+                stream.write(json.dumps(ledger_rows[index], ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n")
+    finally:
+        parent.close()
+    progress.event("branch_frames_seeded", count=count, parent=str(parent_native))
+
+
+# ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
-def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = None, script_id: str | None = None) -> dict[str, Any]:
-    """Run (or resume) one case end-to-end; returns the final run_report dict. Raises on failure after writing it."""
+def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = None, script_id: str | None = None,
+                   branch_from: str | Path | None = None) -> dict[str, Any]:
+    """Run (or resume) one case end-to-end; returns the final run_report dict. Raises on failure after writing it.
+
+    ``branch_from``: a checkpoint of a COMPLETE parent run.  The new run (fresh directory) copies the parent frames up to
+    the checkpoint and continues from it; allowed only when the inputs differ from the parent's solely in boundary
+    discharge series after the checkpoint time (see :func:`verify_branch_inputs`).
+    """
+    if branch_from is not None and resume:
+        raise LargeRunDriverError("--branch-from starts a new run directory; it cannot be combined with --resume")
     say = log or (lambda message: None)
     config_file = Path(config_path).resolve()
     config = load_driver_config(config_file, script_id=script_id)
@@ -983,12 +1098,25 @@ def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = 
         checkpoint = None
         resume_count = 0
 
+    branch: dict[str, Any] | None = None
+    if branch_from is not None:
+        branch_ckpt = Path(branch_from).resolve()
+        parent_dir = branch_ckpt.parent.parent
+        parent_native = parent_dir / BUNDLE_SUBDIR / "result_native.nc"
+        if not branch_ckpt.is_file() or branch_ckpt.parent.name != CHECKPOINT_SUBDIR:
+            raise LargeRunDriverError(f"--branch-from must be a checkpoint_*.npz inside a run's {CHECKPOINT_SUBDIR}/: {branch_ckpt}")
+        parent_report = (json.loads((parent_dir / "run_report.json").read_text(encoding="utf-8"))
+                         if (parent_dir / "run_report.json").is_file() else {})
+        if parent_report.get("status") != "complete" or not parent_native.is_file():
+            raise LargeRunDriverError(f"--branch-from needs a COMPLETE parent run (run_report status complete): {parent_dir}")
+        branch = {"parent_run_directory": str(parent_dir), "checkpoint": str(branch_ckpt), "checkpoint_sha256": _sha_file(branch_ckpt),
+                  "parent_run_id": parent_report.get("run_id"), "parent_native_result_sha256": _sha_file(parent_native)}
     report: dict[str, Any] = {"format": REPORT_FORMAT, "status": "running", "run_id": config.run.run_id, "case_id": config.run.case_id,
                               "config": str(config_file), "config_sha256": config_sha, "started_utc": started_utc, "finished_utc": None,
                               "resume": resume, "resume_count": resume_count, "resumed_from_checkpoint": None if checkpoint is None else str(checkpoint),
                               "frames_expected": None, "frames_written_this_process": 0, "frames_present_before": 0,
                               "bundle": BUNDLE_SUBDIR, "export": {"requested": config.output.export, "status": "pending"},
-                              "verify": {"status": "pending"}, "error": None}
+                              "verify": {"status": "pending"}, "error": None, "branch": branch}
     _write_json_atomic(report_path, report)
     _write_json_atomic(out / "config.resolved.json", config.model_dump(mode="json"))
     progress = _Progress(out / "progress.jsonl", log)
@@ -1015,7 +1143,7 @@ def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = 
                    "profile": case.profile.model_dump(mode="json"), "versions": _versions(),
                    "forcing_label": case.metadata.forcing.model_dump(mode="json"),
                    "resume": {"resume": resume, "resume_count": resume_count, "checkpoint": None if checkpoint is None else str(checkpoint)},
-                   "timings_s": dict(case.timings_s), "solver": None, "sink": None, "export": None, "verify": None}
+                   "timings_s": dict(case.timings_s), "solver": None, "sink": None, "export": None, "verify": None, "branch": branch}
         if native_path.is_file():
             # Solver and sink finished in an earlier process; only export/verify remain.
             progress.event("native_result_already_complete", path=str(native_path))
@@ -1041,6 +1169,31 @@ def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = 
             else:
                 sink.open(case.sink_mesh(), case.metadata)
                 progress.event("sink_opened", path=str(native_path))
+            resume_fingerprint = None
+            if branch is not None:
+                metadata, _ = load_long_run_checkpoint(branch["checkpoint"])
+                parent_resolved = Path(branch["parent_run_directory"]) / "config.resolved.json"
+                parent_config = parse_driver_config(json.loads(parent_resolved.read_text(encoding="utf-8")))
+                if parent_config.run.time_origin != config.run.time_origin:
+                    raise LargeRunDriverError("branch: run.time_origin differs from the parent")
+                parent_case = prepare_case(parent_config, _sha_file(parent_resolved), build_mesh=True,
+                                           log=lambda m: progress.event("info", message=f"parent: {m}"))
+                if parent_case.options.numerics_fingerprint() != case.options.numerics_fingerprint():
+                    raise LargeRunDriverError("branch: numerical options differ from the parent")
+                assert parent_case.inputs is not None
+                branch.update(verify_branch_inputs(parent_case.inputs, case.inputs, metadata["inputs_fingerprint"], float(metadata["time_s"])))
+                branch["checkpoint_output_index"] = int(metadata["output_index"])
+                parent_case = None
+                progress.event("branch_verified", **branch)
+                present = int(metadata["output_index"]) + 1
+                _seed_frames_from_parent(sink, Path(branch["parent_run_directory"]) / BUNDLE_SUBDIR / "result_native.nc", present,
+                                         list(metadata["ledger"]), out / "ledger.jsonl", progress,
+                                         float(case.options.dry_depth_threshold_m))
+                checkpoint = Path(branch["checkpoint"])
+                resume_fingerprint = metadata["inputs_fingerprint"]
+                report["branch"] = branch
+                receipt["branch"] = branch
+                _write_json_atomic(report_path, report)
             report["frames_present_before"] = present
             receipt["resume"]["frames_present_in_partial"] = present
             writer = _FrameWriter(sink, present, out / "ledger.jsonl", progress, len(times))
@@ -1052,7 +1205,8 @@ def run_large_case(config_path: str | Path, *, resume: bool = False, log: Any = 
 
             t_solver = time.perf_counter()
             summary = run_triangular_long_run(case.inputs, case.options, frame_sink=writer, checkpoint_directory=ckpt_dir,
-                                              resume_from=checkpoint, progress_callback=on_progress)
+                                              resume_from=checkpoint, progress_callback=on_progress,
+                                              resume_inputs_fingerprint=resume_fingerprint)
             receipt["timings_s"]["solver_s"] = time.perf_counter() - t_solver
             report["frames_written_this_process"] = len(writer.written)
             receipt["solver"] = _summary_dict(summary)
@@ -1247,6 +1401,25 @@ def check_case(config_path: str | Path, *, resume: bool = False, script_id: str 
         except LargeRunDriverError as exc:
             errors.append(str(exc))
 
+    if profile is not None and profile.gate_log is not None:  # log only; checked so a long run never fails at export
+        from .large_run_gate_log import GateLogError, read_ledger
+        gate = profile.gate_log
+        known = set(sections["sections"]) if sections is not None else set()
+        unknown = sorted(set(gate.boundary_gates) - known) if known else []
+        if unknown:
+            errors.append(f"output.profile.gate_log.boundary_gates names unknown sections {unknown}")
+        info: dict[str, Any] = {"boundary_gates": dict(gate.boundary_gates), "ledger_xlsx": gate.ledger_xlsx}
+        if gate.ledger_xlsx is not None:
+            if not Path(gate.ledger_xlsx).is_file():
+                report["missing"].append(f"output.profile.gate_log.ledger_xlsx: {gate.ledger_xlsx}")
+            else:
+                try:
+                    ledger = read_ledger(gate.ledger_xlsx, gate.actions_sheet, gate.inventory_sheet, gate.ledger_utc_offset)
+                    info.update(sha256=ledger["sha256"], action_rows=len(ledger["actions"]), inventory_rows=len(ledger["inventory"]))
+                except GateLogError as exc:
+                    errors.append(f"output.profile.gate_log: {exc}")
+        report["inputs"]["gate_log"] = info
+
     out = Path(config.output.directory)
     report["run"]["output_directory_exists"] = out.exists()
     if out.exists() and not resume:
@@ -1297,6 +1470,9 @@ def main(argv: list[str] | None = None) -> int:
                                      description="Run one real long triangular case: solver -> native sink -> export -> verify.")
     parser.add_argument("config", help=f"{CONFIG_FORMAT} JSON file")
     parser.add_argument("--resume", action="store_true", help="continue a failed run from its newest checkpoint; never rewrites saved frames")
+    parser.add_argument("--branch-from", default=None, metavar="CHECKPOINT",
+                        help="start a NEW run from a checkpoint of a complete parent run; only boundary discharge series after the "
+                             "checkpoint time may differ (verified); parent frames up to the checkpoint are copied")
     parser.add_argument("--check", action="store_true", help="validate config and inputs only (no mesh build, no run); print a summary")
     parser.add_argument("--quiet", action="store_true", help="do not echo progress events to stderr")
     parser.add_argument("--id", "--script-id", dest="script_id", default=None,
@@ -1308,7 +1484,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=1, sort_keys=True, default=str))
         return 0 if report["status"] == "ok" else 1
     try:
-        report = run_large_case(args.config, resume=args.resume, log=log, script_id=args.script_id)
+        report = run_large_case(args.config, resume=args.resume, log=log, script_id=args.script_id, branch_from=args.branch_from)
     except (LargeRunDriverError, LargeRunProfileError, LargeRunExportError, FrameSinkError, TriangularLongRunError,
             TriangularSolverExecutionError, TriangularMeshError, OSError, ValueError) as exc:
         print(json.dumps({"status": "failed", "type": type(exc).__name__, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)

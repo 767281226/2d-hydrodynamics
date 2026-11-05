@@ -80,6 +80,32 @@ class SocioExposureOptions(_Strict):
         return _finite(value, info.field_name)
 
 
+class GateLogOptions(_Strict):
+    """Optional gate dispatch LOG (docs/large_run_output_profile.md §6). Record only: never enters the computation."""
+
+    ledger_xlsx: StrictStr | None = Field(None, min_length=1, description="dispatch ledger workbook (.xlsx); null = MODEL rows only")
+    actions_sheet: StrictStr = Field("调度动作", min_length=1, max_length=31, description="sheet with the dated dispatch actions")
+    inventory_sheet: StrictStr = Field("闸门台账", min_length=1, max_length=31, description="sheet with bay counts / widths")
+    ledger_utc_offset: StrictStr = Field("+08:00", pattern=r"^[+-]\d{2}:\d{2}$", description="UTC offset of the ledger clock times")
+    boundary_gates: dict[StrictStr, StrictStr] = Field(min_length=1, description="boundary group key -> gate_id (MODEL rows)")
+    prescribed_change_min_m3_s: StrictFloat | StrictInt = Field(1.0, ge=0.0, le=1.0e6,
+                                                                description="m3/s; prescribed-series steps smaller than this are not logged")
+
+    @field_validator("boundary_gates")
+    @classmethod
+    def _known_gates(cls, value: dict[str, str]) -> dict[str, str]:
+        from .large_run_gate_log import GATE_IDS
+        unknown = sorted(set(value.values()) - set(GATE_IDS))
+        if unknown:
+            raise ValueError(f"unknown gate_id {unknown}; known: {', '.join(GATE_IDS)}")
+        return value
+
+    @field_validator("prescribed_change_min_m3_s")
+    @classmethod
+    def _finite_gate(cls, value: float, info: Any) -> float:
+        return _finite(value, info.field_name)
+
+
 class LargeRunOutputProfile(_Strict):
     """Explicit large-run output options.
 
@@ -108,6 +134,8 @@ class LargeRunOutputProfile(_Strict):
     stepjson_still_direction_deg: StrictFloat | StrictInt = Field(180.0, ge=0.0, lt=360.0, description="deg")
     write_stepjson_native: StrictBool = True
     # SHP: wet threshold for MAXIMUM_WET_SURFACE; None means the run dry_depth_threshold_m.
+    # GeoJSON twin of every SHP package (faces.geojson, same features/attributes), written with the SHP.
+    write_geojson: StrictBool = True
     shp_wet_depth_threshold_m: StrictFloat | StrictInt | None = Field(None, ge=0.0, le=100.0, description="m")
     # Mass check: |sum(h*A) - ledger volume| <= rel_tol * max(1, |ledger|).
     volume_check_rel_tol: StrictFloat | StrictInt = Field(1e-6, gt=0.0, le=0.1, description="1")
@@ -116,6 +144,8 @@ class LargeRunOutputProfile(_Strict):
     disk_preflight: StrictBool = True
     # Optional socio-economic exposure overlay; None = not read (bundle says NOT_READ_NOT_REQUESTED).
     socio_exposure: SocioExposureOptions | None = None
+    # Optional gate dispatch log (gate_dispatch.csv/json + gate_discharge_hourly.csv); None = not written.
+    gate_log: GateLogOptions | None = None
 
     @field_validator("display_grid_anchor_x_m", "display_grid_anchor_y_m", "display_grid_cell_size_m",
                      "stepjson_min_depth_m", "stepjson_still_direction_deg", "volume_check_rel_tol", "disk_safety_factor")

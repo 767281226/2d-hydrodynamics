@@ -21,14 +21,30 @@
     "stepjson_min_depth_m": {"type": "number", "minimum": 0.0, "maximum": 100.0, "default": 0.0, "description": "m; a record is written iff depth > value (legacy rule: > 0)"},
     "stepjson_still_direction_deg": {"type": "number", "minimum": 0.0, "exclusiveMaximum": 360.0, "default": 180.0, "description": "deg; direction written for speed <= 1e-12"},
     "write_stepjson_native": {"type": "boolean", "default": true, "description": "also write stepjson_native/ keyed by exact native face_id"},
+    "write_geojson": {"type": "boolean", "default": true, "description": "also write faces.geojson (same features, attributes and coordinates) inside every SHP package, in the same export step"},
     "shp_wet_depth_threshold_m": {"type": ["number", "null"], "minimum": 0.0, "maximum": 100.0, "default": null, "description": "m; MAXIMUM_WET_SURFACE threshold; null = run dry_depth_threshold_m"},
     "volume_check_rel_tol": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 0.1, "default": 1e-06, "description": "|sum(h*A) - ledger volume_m3| <= tol*max(1,|ledger|)"},
     "disk_safety_factor": {"type": "number", "minimum": 1.0, "maximum": 10.0, "default": 1.2, "description": "free bytes must be >= estimate * factor"},
     "disk_preflight": {"type": "boolean", "default": true},
     "socio_exposure": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/socio_exposure"}], "default": null,
-                       "description": "optional socio-economic exposure overlay (docs/socio_exposure_overlay.md); null = not read"}
+                       "description": "optional socio-economic exposure overlay (docs/socio_exposure_overlay.md); null = not read"},
+    "gate_log": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/gate_log"}], "default": null,
+                 "description": "optional gate dispatch LOG (gate_dispatch.csv/json + gate_discharge_hourly.csv); log only, gate opening does not affect the computation; null = not written"}
   },
   "$defs": {
+    "gate_log": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boundary_gates"],
+      "properties": {
+        "ledger_xlsx": {"type": ["string", "null"], "minLength": 1, "default": null, "description": "dispatch ledger workbook (.xlsx, needs openpyxl); relative paths resolve against the driver config; null = MODEL rows only"},
+        "actions_sheet": {"type": "string", "minLength": 1, "maxLength": 31, "default": "调度动作", "description": "sheet with 日期/时刻/调度对象/调度动作 columns"},
+        "inventory_sheet": {"type": "string", "minLength": 1, "maxLength": 31, "default": "闸门台账", "description": "sheet with 工程名称/孔数 (bay counts for opening ratios)"},
+        "ledger_utc_offset": {"type": "string", "pattern": "^[+-]\\d{2}:\\d{2}$", "default": "+08:00", "description": "UTC offset of the ledger clock times"},
+        "boundary_gates": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "enum": ["duliu_inlet_south", "duliu_inlet_north", "duliu_inlet", "xihe", "duliu_tidal", "laolongwan", "sixth_port_return", "shuigaozhuang", "yangliuqing", "qingnan", "renzhuangzi", "xingaifang"]}, "description": "boundary group (section key) -> gate_id; one MODEL record series per entry"},
+        "prescribed_change_min_m3_s": {"type": "number", "minimum": 0.0, "maximum": 1000000.0, "default": 1.0, "description": "m3/s; prescribed-discharge steps smaller than this are not logged"}
+      }
+    },
     "socio_exposure": {
       "type": "object",
       "additionalProperties": false,

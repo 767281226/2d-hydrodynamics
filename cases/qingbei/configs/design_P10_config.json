@@ -1,0 +1,74 @@
+{
+ "format": "large-run-driver-config-v1",
+ "schema_version": "1.0",
+ "description": "DESIGN 10-year flood, 288 h, domain 清北+大清河 channel (62.96 km², S walled); A inflow from design hydrograph at xingaifang (delay 80.0 h, x0.4129, base 200.0); B 独流减河进洪闸 free outflow; C 西河闸 125.0 m3/s from t=255.0 h; no rainfall; DEM datum taken as 1985. Design source: P100: 雄安水利初设复〔2021〕9号/大清河系防洪规划(2008) 5500 m3/s, 北支6日17.84亿-兰沟洼3.17亿; P10-50: 白沟河频率比(二手,未核); 典型洪水=23·7新盖房过程峰量双控放大",
+ "mesh": {
+  "path": "../mesh/qb_ext_s25_Swall_domain-mesh.json",
+  "expected_sha256": "ae32affaf785061ec3b07ab7729a1d97c074b752272a08885fd571e061db61f7"
+ },
+ "terrain": {
+  "path": "../terrain/terrain_qbext_faces.npz",
+  "dem_path": "../../../data/dem/DEMn_1m.tif",
+  "dem_sha256": "bb5d2bd8cf387a698b6326fd94c603fcbae0c95c8734d564d0d4c007d63a38c7",
+  "mapping_report_path": "../terrain/terrain_qbext_report_full.json",
+  "method": "hydrodynamics.terrain_windowed_mapping.map_triangular_mesh_from_windows exact area-weighted, CRS alias EPSG:4548, coverage_policy diagnostic_only",
+  "vertical_datum": null,
+  "vertical_unit": "m"
+ },
+ "sections": {
+  "path": "../inputs/sections_audit_qbext_2307.json",
+  "discharge_series_status": {
+   "A": "RECONSTRUCTED_NOT_MEASURED",
+   "B": "COMPUTED_OUTFLOW",
+   "C": "COMPUTED_OUTFLOW"
+  },
+  "distribution": {
+   "A": "length"
+  },
+  "outflow_boundary": {
+   "B": {
+    "boundary_type": "free_outflow",
+    "discharge_coefficient": 0.3275,
+    "crest_elevation_m": 1.03
+   },
+   "C": {
+    "boundary_type": "prescribed_outflow",
+    "discharge_coefficient": null,
+    "crest_elevation_m": null
+   }
+  }
+ },
+ "forcing": {
+  "path": "../design/forcing_design_P10.csv",
+  "rainfall": null
+ },
+ "run": {
+  "hours": 288,
+  "output_times_s": null,
+  "initial_depth_m": 0.0,
+  "manning_n": 0.035,
+  "long_run_options": {
+   "kernel": "auto",
+   "progress_interval_steps": 10000,
+   "cfl_number": 0.5
+  },
+  "checkpoint_interval_s": 21600.0,
+  "time_origin": "2000-01-01T00:00:00+08:00",
+  "run_id": null,
+  "case_id": "qingbei_design_P10",
+  "coordinate_system": "EPSG:4548"
+ },
+ "output": {
+  "root": "../../../work/results",
+  "script_id": "qingbei_design_P10_288h",
+  "profile": {
+   "socio_exposure": {
+    "grid_cells_path": "../../../data/grid_50m_social_economy/shp/grid_cells_socio.shp",
+    "district_totals_csv": "../../../data/grid_50m_social_economy/静海西青_七普三调.csv",
+    "district_grid_summary_csv": "../../../data/grid_50m_social_economy/面积汇总_按区.csv",
+    "mapping_cache_dir": "../../../work/socio_cache"
+   }
+  },
+  "export": true
+ }
+}

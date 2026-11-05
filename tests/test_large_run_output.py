@@ -211,6 +211,23 @@ def test_end_to_end_large_profile_bundle(tmp_path, forcing):
     assert roles["full_domain"]["feature_count"] == roles["full_domain_4490"]["feature_count"] == 216
     assert 0 < roles["maximum_wet_surface"]["feature_count"] <= 216
     assert "GEOGCS" in (bundle / "shp" / "full_domain_4490" / "faces.prj").read_text(encoding="utf-8")
+    import shapefile
+    for role, row in roles.items():
+        assert "faces.geojson" in row["components"]
+        gj = json.loads((bundle / "shp" / role / "faces.geojson").read_text(encoding="utf-8"))
+        assert gj["type"] == "FeatureCollection" and len(gj["features"]) == row["feature_count"]
+        with shapefile.Reader(str(bundle / "shp" / role / "faces.shp"), encoding="utf-8") as reader:
+            names = [f[0] for f in reader.fields[1:]]
+            first = reader.shapeRecord(0)
+        feat = gj["features"][0]
+        ring = feat["geometry"]["coordinates"][0]
+        assert len(ring) == 4 and ring[0] == ring[-1] and ring == [list(pt) for pt in first.shape.points][::-1]
+        x, y = zip(*ring[:3])
+        assert (x[1] - x[0]) * (y[2] - y[0]) - (x[2] - x[0]) * (y[1] - y[0]) > 0   # RFC 7946 counter-clockwise
+        assert list(feat["properties"]) == names and feat["properties"]["face_id"] == first.record[0]
+    full_gj = json.loads((bundle / "shp" / "full_domain_4490" / "faces.geojson").read_text(encoding="utf-8"))
+    assert full_gj["crs"]["properties"]["name"] == "urn:ogc:def:crs:EPSG::4490"
+    assert all(-180 <= c[0] <= 180 and -90 <= c[1] <= 90 for c in full_gj["features"][0]["geometry"]["coordinates"][0])
     assert not (bundle / "socio_exposure").exists() and "socio_exposure" not in run   # no socio: no viewer socio files
     root, served = validate_bundle(bundle, explicit=True)
     assert served["format"] == "large-run-output-bundle-v1"

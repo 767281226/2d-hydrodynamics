@@ -243,7 +243,7 @@ def estimate_bundle_bytes(n_face: int, n_node: int, n_frame: int, grid_cells: in
     compat_nc = grid_cells * n_frame * 6 * 4
     nc2web = grid_cells * n_frame * 4 * 4
     stepjson = grid_cells * n_frame * 28 + (n_face * n_frame * 30 if profile.write_stepjson_native else 0)
-    shp = 4 * n_face * 420
+    shp = 4 * n_face * 420 + (4 * n_face * 700 if profile.write_geojson else 0)
     return int(native_nc + native_web + compat_nc + nc2web + stepjson + shp)
 
 

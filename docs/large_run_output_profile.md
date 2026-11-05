@@ -76,10 +76,12 @@ NOT MEASURED"（中文同时给出）。该标签写入 native NC、兼容 NC �
 | `stepjson_min_depth_m` | m | 0.0 | 0–100（记录条件 depth > 值） |
 | `stepjson_still_direction_deg` | deg | 180 | [0,360) |
 | `write_stepjson_native` | bool | true | |
+| `write_geojson` | bool | true | 每个 SHP 包同目录同步写 `faces.geojson` |
 | `shp_wet_depth_threshold_m` | m 或 null | null（=干阈值） | 0–100 |
 | `volume_check_rel_tol` | 1 | 1e-6 | (0,0.1] |
 | `disk_safety_factor` / `disk_preflight` | 1 / bool | 1.2 / true | 1–10 |
 | `socio_exposure` | 对象或 null | null | 社会经济暴露叠加（人口/耕地 → 原生三角面，逐帧与包络暴露量），字段见 `docs/socio_exposure_overlay.md` |
+| `gate_log` | 对象或 null | null | 闸门调度日志（**只记录，开度不参与计算**），字段见 §5a |
 
 未知键、字符串数字、布尔冒充数字均拒绝，错误信息带字段路径。
 
@@ -103,6 +105,11 @@ NOT MEASURED"（中文同时给出）。该标签写入 native NC、兼容 NC �
   `maximum_wet_surface`、`maximum_wet_surface_4490`（保存帧最大水深 > 阈值的面）；每包 `.shp/.shx/.dbf/.prj/.cpg`
   + `manifest.json`；每个要素是一个真实原生三角（顺时针，三个原顶点），DBF `face_id` 为 C32 文本。
   4490 用 pyproj 逐顶点转换并在 manifest 记录版本。
+  `write_geojson=true`（默认）时，同一步在每个包目录内再写 `faces.geojson`：与 SHP 同要素、同顺序、同属性名
+  （DBF 字段名，空值为 `null`）、同 float64 坐标；外环按 RFC 7946 为逆时针（即 SHP 环反向，顶点不变），
+  带旧式 `crs` 名称成员（原生包为源 EPSG，如 4548；`_4490` 包为 `urn:ogc:def:crs:EPSG::4490`，经纬度，未再转 WGS84）。
+  manifest `files`/`geojson` 记录该文件，`--verify` 逐要素比对 GeoJSON 与 SHP 的几何和属性。
+  社会经济叠加改写最大淹没面包时一并重写其 GeoJSON。
 - `run.json`（`large-run-output-bundle-v1`）、`run_report.json`、`summary.json`、`parse_summary.json`、
   `mass_budget/`、`quality/`、`provenance/`、`logs/`、`checksums.json`（全部文件 bytes+SHA-256）。
 
@@ -122,6 +129,41 @@ manifest 的 run_id、时间轴、帧列表与文件大小；兼容格 v2 identi
 逐面人口/耕地数组，在 Native 三角网格下增加图层“人口密度（人/km²）”“耕地密度（亩/km²）”“受淹人口（当前帧）”，
 侧栏显示本帧受淹人口/耕地（含分区）、包络总量与局限说明（人口为区县普查数按 50 m 网格均匀摊分；仅暴露量，无经济损失），
 悬停显示该面人口/耕地/区。无该文件的 bundle 校验与界面均与以前相同。格式与细节见 `docs/socio_exposure_overlay.md` §8。
+
+## 5a. 闸门调度日志（`gate_log`，`hydrodynamics/large_run_gate_log.py`）
+
+**只是日志：闸门开度不参与计算。** 设置 `gate_log` 后，导出在 bundle 根目录写三份文件，run.json
+`gate_dispatch`（`status=WRITTEN_LOG_ONLY`、`gate_opening_affects_computation=false`、三文件 SHA-256）与
+`legacy_optional_artifacts` 的 `gate_dispatch.csv/json` 随之由 NOT_APPLICABLE 改为 WRITTEN_LOG_ONLY：
+
+| 文件 | 内容 |
+|---|---|
+| `gate_dispatch.csv`（UTF-8 BOM） | 每条记录一行；`record_kind` 为 `MODEL` 或 `EXTERNAL_REPORT`，`applied_in_model` 明示是否进入计算 |
+| `gate_dispatch.json` | 同样的记录 + 计算窗口、声明、台账与 forcing CSV 的 SHA-256、闸门登记表、未收录的台账行及原因 |
+| `gate_discharge_hourly.csv` | 每个保存帧 × 每个登记的边界闸：模型采用流量、上一时段平均下泄、累计下泄/需求/缺额 |
+
+- `MODEL` 行来自运行元数据与运行时哈希过的 forcing CSV：`free_outflow` 断面记一条"全开堰流贯穿全程"（开度 1.0，
+  流量由水位算出）；给定流量断面记 t=0 的初值和每次变化（前后流量、样本间线性渐变区间；小于
+  `prescribed_change_min_m3_s` 的变化不记）。开度未建模的一律注明。
+- `EXTERNAL_REPORT` 行摘自台账"调度动作"表：窗口内的全部动作，加上窗口前已登记闸门的动作，并据窗口前最后一次启闭动作
+  在 t=0 派生一条"初始状态"。没有时刻（"—"）的行 `time_precision=date`、`time_s` 为空，不补时刻；跨越窗口起止的日期记
+  `window_boundary_day`。开度只在台账文字与"闸门台账"孔数一致时换算（如 27 孔全部提起 → 1.0）；孔号范围（"11—15 孔"）
+  或口径冲突（"18 孔全部提起"而台账为 27 孔）不换算，原因写在 `note`。`candidate_rule_ids` 只列出该闸已有的调度规则编号，
+  不表示规则被判定或触发。
+
+| 字段 | 类型/单位 | 默认 | 说明 |
+|---|---|---|---|
+| `boundary_gates` | 对象（必填） | — | 断面键 → gate_id，例如 `{"B": "duliu_inlet", "C": "xihe"}`；gate_id 见 `GATE_IDS` |
+| `ledger_xlsx` | 路径或 null | null | 调度台账 .xlsx（需 openpyxl，`pip install '.[gate-log]'`）；驱动配置中相对配置文件解析；null = 只写 MODEL 行 |
+| `actions_sheet` / `inventory_sheet` | 字符串 | 调度动作 / 闸门台账 | 表名；表头行按"调度对象"/"工程名称"自动定位 |
+| `ledger_utc_offset` | `±HH:MM` | +08:00 | 台账时刻的时区 |
+| `prescribed_change_min_m3_s` | m³/s | 1.0 | 0–1e6 |
+
+对已导出的 bundle 追加（原地、不覆盖，更新 run/summary/parse_summary 与 checksums.json 并复验）：
+
+```
+python -X utf8 -m hydrodynamics.large_run_gate_log <bundle> --gate B=duliu_inlet --gate C=xihe --ledger cases/qingbei/source/天津23·7洪水闸门调度台账.xlsx
+```
 
 真实求解器接入（网格 artifact + 逐面地形 + 假定断面 + 流量 CSV → 本 sink → 导出/校验）与 `reopen` 续算见
 `docs/large_run_driver.md`（`python -m hydrodynamics.large_run_driver`）。

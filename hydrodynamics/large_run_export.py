@@ -13,6 +13,10 @@ Output (same bundle directory, no-clobber)::
     stepjson_native/                 same record structure keyed by exact native face_id (additional)
     native_web/                      native-triangle-web 2.0: manifest.json, mesh.bin, frame_NNNNNN.bin (one file per frame)
     shp/{full_domain,full_domain_4490,maximum_wet_surface,maximum_wet_surface_4490}/faces.{shp,shx,dbf,prj,cpg}+manifest.json
+                                     + faces.geojson (same features/attributes/coordinates, written in the same step;
+                                       profile.write_geojson, default true)
+    gate_dispatch.csv, gate_dispatch.json, gate_discharge_hourly.csv   only when profile.gate_log is set (LOG ONLY:
+                                     gate opening does not affect the computation; hydrodynamics.large_run_gate_log)
     viewer.html, run.json, run_report.json, summary.json, parse_summary.json,
     mass_budget/, quality/, provenance/, logs/, checksums.json
 
@@ -50,6 +54,7 @@ NATIVE_FRAME_MAGIC_V2 = b"NTW3F02\n"
 NATIVE_WEB_VARIABLES = (("water_depth_m", "m"), ("water_level_m", "m"), ("velocity_x_m_s", "m/s"),
                         ("velocity_y_m_s", "m/s"), ("speed_m_s", "m/s"))
 SHP_FORMAT = "native-triangular-result-shapefile-large-v1"
+GEOJSON_FILE = "faces.geojson"
 DBF_DECIMALS = 12
 
 
@@ -562,7 +567,7 @@ _MAX_FIELDS = (("face_id", "C", 32, 0, "native_face_id", None),
 
 def _write_shp_package(directory: Path, role: str, scope: str, target: str, native: LargeNativeResult,
                        selection: np.ndarray, columns: dict[str, list[Any]], fields: tuple, sha: str,
-                       threshold: float, selector: dict[str, Any]) -> dict[str, Any]:
+                       threshold: float, selector: dict[str, Any], *, write_geojson: bool = True) -> dict[str, Any]:
     import shapefile
     from pyproj import CRS, Transformer
     import pyproj
@@ -598,8 +603,12 @@ def _write_shp_package(directory: Path, role: str, scope: str, target: str, nati
         writer.close()
     (directory / "faces.cpg").write_text("UTF-8", encoding="ascii")
     (directory / "faces.prj").write_text(target_crs.to_wkt(version="WKT1_ESRI"), encoding="utf-8")
+    keys = ["faces.shp", "faces.shx", "faces.dbf", "faces.prj", "faces.cpg"]
+    if write_geojson:
+        _write_geojson(directory / GEOJSON_FILE, role, target_crs, tri, [row[0] for row in fields], columns)
+        keys.append(GEOJSON_FILE)
     files = []
-    for key in ("faces.shp", "faces.shx", "faces.dbf", "faces.prj", "faces.cpg"):
+    for key in keys:
         path = directory / key
         files.append({"key": key, "sha256": _sha_file(path), "bytes": path.stat().st_size})
     meta = native.metadata
@@ -621,11 +630,45 @@ def _write_shp_package(directory: Path, role: str, scope: str, target: str, nati
                 "wet_depth_threshold_m": threshold, "selector": selector,
                 "fields": [{"dbf_name": name, "dbf_type": kind, "width": width, "decimals": decimals,
                             "semantic_name": semantic, "unit": unit} for name, kind, width, decimals, semantic, unit in fields],
-                "forcing": meta.forcing.model_dump(mode="json"), "files": files}
+                "forcing": meta.forcing.model_dump(mode="json"), "files": files,
+                "geojson": ({"file": GEOJSON_FILE, "standard": "RFC 7946 FeatureCollection + legacy 'crs' name member",
+                             "same_features_attributes_coordinates_as_shp": True,
+                             "ring_orientation": "counter-clockwise (RFC 7946); SHP ring reversed, vertices unchanged",
+                             "property_names": "DBF field names; blank DBF numerics are JSON null",
+                             "rfc7946_wgs84_strict": False if target == "NATIVE" else "CGCS2000 lon/lat (EPSG:4490), not re-projected to WGS84"}
+                            if write_geojson else None)}
     _write_json(directory / "manifest.json", manifest)
     return {"role": role, "scope": scope, "target_crs": target, "feature_count": int(selection.size),
             "manifest_sha256": _sha_file(directory / "manifest.json"),
             "components": sorted(p.name for p in directory.iterdir() if p.is_file())}
+
+
+def _json_scalar(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _write_geojson(path: Path, role: str, target_crs: Any, tri_clockwise: np.ndarray, names: list[str],
+                   columns: dict[str, list[Any]]) -> None:
+    """Stream one Polygon Feature per triangle, attributes and float64 coordinates identical to the SHP."""
+    auth = target_crs.to_authority()
+    head: dict[str, Any] = {"type": "FeatureCollection", "name": role}
+    if auth is not None:
+        head["crs"] = {"type": "name", "properties": {"name": f"urn:ogc:def:crs:{auth[0]}::{auth[1]}"}}
+    cols = [columns[name] for name in names]
+    ccw = tri_clockwise[:, [0, 2, 1]]
+    nl = chr(10)
+    with path.open("x", encoding="utf-8", newline=nl) as stream:
+        stream.write(json.dumps(head, ensure_ascii=False)[:-1] + ', "features": [' + nl)
+        for k in range(ccw.shape[0]):
+            ring = ccw[k].tolist(); ring.append(ring[0])
+            feature = {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]},
+                       "properties": {name: _json_scalar(col[k]) for name, col in zip(names, cols)}}
+            stream.write(("," if k else "") + json.dumps(feature, ensure_ascii=False, allow_nan=False) + nl)
+        stream.write("]}" + nl)
 
 
 def _walk_ledger(value: Any, prefix: str = ""):
@@ -669,7 +712,8 @@ def _export_shp(out: Path, native: LargeNativeResult, profile: LargeRunOutputPro
     ):
         if roles is not None and role not in roles:
             continue
-        rows.append(_write_shp_package(out / role, role, scope, target, native, sel, cols, fields, sha, threshold, selector))
+        rows.append(_write_shp_package(out / role, role, scope, target, native, sel, cols, fields, sha, threshold, selector,
+                                       write_geojson=profile.write_geojson))
     return rows
 
 
@@ -855,6 +899,20 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
                    "social_economy_overlay": {"status": "NOT_READ_NOT_REQUESTED"}},
                "database_status": "DISABLED_NOT_REQUESTED", "social_economy_status": "NOT_READ_NOT_REQUESTED",
                "source_graph_file": "provenance/source_graph.json"}
+        gate_block = None
+        if profile.gate_log is not None:  # log only: written from the run metadata/ledger, never fed to the solver
+            from .large_run_gate_log import GateLogError, build_gate_log, legacy_entries, write_gate_log
+            t0 = _time.perf_counter()
+            try:
+                built = build_gate_log(profile.gate_log, run_id=meta.run_id, case_id=meta.case_id, time_origin=meta.time_origin,
+                                       times_s=times, group_series=group_series, solver=meta.solver, source_hashes=meta.source_hashes)
+                gate_block = write_gate_log(out, built)
+            except GateLogError as exc:
+                raise LargeRunExportError(f"gate log: {exc}") from exc
+            gate_block["applied"] = "export"
+            run["gate_dispatch"] = gate_block
+            run["legacy_optional_artifacts"].update(legacy_entries(gate_block))
+            timings["gate_log_s"] = _time.perf_counter() - t0; log("gate log done")
         if socio_result is not None:
             from .socio_exposure import run_json_block
             socio_block = run_json_block(socio_result)
@@ -899,6 +957,8 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
                    "database": "DISABLED_NOT_REQUESTED", "social_economy": "NOT_READ_NOT_REQUESTED"}
         if socio_result is not None:
             summary["social_economy"] = run["social_economy_status"]; summary["socio_exposure"] = run["socio_exposure"]
+        if gate_block is not None:
+            summary["gate_dispatch"] = {"status": gate_block["status"], "statement": gate_block["statement"], "counts": gate_block["counts"]}
         _write_json(out / "summary.json", summary)
         timings["total_s"] = _time.perf_counter() - started
         _write_json(out / "logs" / "large_run_export.json", {"format": "large-run-export-log-v1", "run_id": meta.run_id,
@@ -906,7 +966,8 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
             "native_frame_reader": "streaming one frame per read", "compat_nc": "PASS", "nc2web_v1": nc2web.status,
             "stepjson_v1": stepjson.status, "stepjson_native": "PASS" if steps_native else "DISABLED",
             "native_web_v2": "PASS", "shp_packages": "PASS",
-            "socio_exposure": "PASS" if socio_result is not None else "NOT_REQUESTED"})
+            "socio_exposure": "PASS" if socio_result is not None else "NOT_REQUESTED",
+            "gate_dispatch": "WRITTEN_LOG_ONLY" if gate_block is not None else "NOT_REQUESTED"})
         parse_summary = {"format": "large-run-parse-summary-v1", "run_id": meta.run_id,
                          "native_web": {"status": web_report["status"], "frames": web_report["frame_count"], "faces": web_report["face_count"]},
                          "compatibility_nc": {"status": "PASS", "path": comp_path.name},
@@ -916,6 +977,8 @@ def export_large_run_bundle(bundle_dir: str | Path, profile: LargeRunOutputProfi
                          "shp_packages": shp_rows, "forcing_notice": meta.forcing.notice}
         if socio_result is not None:
             parse_summary["socio_exposure"] = {"status": "PASS", "summary": run["socio_exposure"]["summary"]}
+        if gate_block is not None:
+            parse_summary["gate_dispatch"] = {"status": gate_block["status"], "statement": gate_block["statement"], "counts": gate_block["counts"]}
         _write_json(out / "parse_summary.json", parse_summary)
         _write_json(out / "run_report.json", {"format": "large-run-report-v1", "run_id": meta.run_id, "status": "complete",
             "complete": True, "can_publish": bool(meta.production_approved), "production_approved": meta.production_approved,
@@ -1020,6 +1083,8 @@ def verify_large_run_bundle(bundle_dir: str | Path) -> dict[str, Any]:
             if row["scope"] == "FULL_DOMAIN" and not np.array_equal(np.asarray(dbf_ids, dtype=np.int64), ids):
                 raise LargeRunExportError(f"SHP {row['role']} face IDs differ from native face_id")
         shp_checks[row["role"]] = {"features": row["feature_count"], "prj_head": (directory / "faces.prj").read_text(encoding="utf-8")[:40]}
+        if GEOJSON_FILE in row.get("components", ()):
+            shp_checks[row["role"]]["geojson"] = _verify_geojson(directory, row)
     checks["shp"] = shp_checks
     from .socio_exposure import SHP_FIELDS as _SOCIO_FIELDS, SocioExposureError, verify_socio_outputs
     try:
@@ -1032,10 +1097,51 @@ def verify_large_run_bundle(bundle_dir: str | Path) -> dict[str, Any]:
                 names = {f[0] for f in reader.fields[1:]}
             if not {f[0] for f in _SOCIO_FIELDS} <= names:
                 raise LargeRunExportError(f"SHP {role} lacks the socio exposure fields")
+    from .large_run_gate_log import GateLogError, verify_gate_log
+    try:
+        gate_check = verify_gate_log(out, run)
+    except GateLogError as exc:
+        raise LargeRunExportError(str(exc)) from exc
+    if gate_check is not None:
+        checks["gate_dispatch"] = gate_check
     if not (out / "viewer.html").is_file():
         raise LargeRunExportError("viewer.html missing")
     checks["viewer"] = {"profiles": run["viewer"]["profiles"], "time_origin": run["time_origin"]}
     return {"status": "PASS", "run_id": run["run_id"], "checks": checks}
+
+
+def _verify_geojson(directory: Path, row: dict[str, Any]) -> dict[str, Any]:
+    """faces.geojson must carry exactly the SHP features: same order, IDs, attributes and (reversed) rings."""
+    import shapefile
+    role = row["role"]
+    doc = json.loads((directory / GEOJSON_FILE).read_text(encoding="utf-8"))
+    features = doc.get("features") if isinstance(doc, dict) and doc.get("type") == "FeatureCollection" else None
+    if not isinstance(features, list) or len(features) != row["feature_count"]:
+        raise LargeRunExportError(f"GeoJSON {role} type/count invalid")
+    with shapefile.Reader(str(directory / "faces.shp"), encoding="utf-8") as reader:
+        names = [f[0] for f in reader.fields[1:]]
+        for k, (shape_rec, feature) in enumerate(zip(reader.iterShapeRecords(), features)):
+            geom = feature.get("geometry") or {}
+            rings = geom.get("coordinates") if geom.get("type") == "Polygon" else None
+            if not rings or len(rings) != 1:
+                raise LargeRunExportError(f"GeoJSON {role} feature {k} is not a single-ring Polygon")
+            expected = [list(p) for p in shape_rec.shape.points][::-1]
+            if rings[0] != expected:
+                raise LargeRunExportError(f"GeoJSON {role} feature {k} geometry differs from the SHP")
+            props = feature.get("properties") or {}
+            if list(props) != names or str(props["face_id"]) != str(shape_rec.record[0]).strip():
+                raise LargeRunExportError(f"GeoJSON {role} feature {k} attributes differ from the SHP")
+            for name, dbf_value in zip(names[1:], list(shape_rec.record)[1:]):
+                value = props[name]
+                if isinstance(dbf_value, str):
+                    same = str(value) == dbf_value.strip()
+                elif dbf_value is None or value is None:
+                    same = dbf_value is None and value is None
+                else:
+                    same = math.isclose(float(value), float(dbf_value), rel_tol=1e-9, abs_tol=1e-9)
+                if not same:
+                    raise LargeRunExportError(f"GeoJSON {role} feature {k} field {name} differs from the SHP")
+    return {"features": len(features), "crs": (doc.get("crs") or {}).get("properties", {}).get("name")}
 
 
 def main(argv: list[str] | None = None) -> int:

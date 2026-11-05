@@ -1,0 +1,120 @@
+{
+ "format": "triangle-terrain-windowed-report-v1",
+ "status": "diagnostic_only",
+ "preparation_only": true,
+ "simulation_result": false,
+ "production_approved": false,
+ "source_path": "D:\\devTools\\project\\2d-hydrodynamics\\data\\dem\\DEMn_1m.tif",
+ "source_sha256": "bb5d2bd8cf387a698b6326fd94c603fcbae0c95c8734d564d0d4c007d63a38c7",
+ "source_file_identity": {
+  "before": {
+   "size_bytes": 1284460190,
+   "mtime_ns": 1785489266086212600,
+   "ctime_ns": 1788430757094244900,
+   "device": 9148613234644155059,
+   "file_id": 562949953868710
+  },
+  "after": {
+   "size_bytes": 1284460190,
+   "mtime_ns": 1785489266086212600,
+   "ctime_ns": 1788430757094244900,
+   "device": 9148613234644155059,
+   "file_id": 562949953868710
+  },
+  "identity_policy": "Caller-supplied SHA-256 is from the verified manifest; file stat/metadata are rechecked during mapping, hash bytes are not reread here."
+ },
+ "source_shape_yx": [
+  36813,
+  26677
+ ],
+ "source_pixel_count": 982060401,
+ "source_crs": "EPSG:4548",
+ "source_horizontal_unit": "metre",
+ "source_transform": [
+  1.0,
+  0.0,
+  473506.78215896204,
+  0.0,
+  -1.0,
+  4335988.239580579,
+  0.0,
+  0.0,
+  1.0
+ ],
+ "source_nodata_value": -32767.0,
+ "source_area_or_point": "Point",
+ "source_vertical_unit": "metre",
+ "source_vertical_datum": null,
+ "vertical_unit": "m",
+ "vertical_unit_source": "dem_metadata",
+ "vertical_datum": null,
+ "vertical_datum_source": null,
+ "source_evidence": {},
+ "mesh_id": "qb_ext_s25_Swall_6e61834c308dfbb3",
+ "mesh_fingerprint_sha256": "21efa2a8c266e9ec8d57a50b330cf25793508909c4fced99aebb9581ac69a8a0",
+ "mesh_mapping_parameters": {
+  "geometry_tolerance_m": 1e-08,
+  "minimum_face_area_m2": 1e-12
+ },
+ "face_count": 80990,
+ "node_count": 42528,
+ "coverage_policy": "diagnostic_only",
+ "minimum_valid_coverage": null,
+ "tolerances": {
+  "area_abs_m2": 1e-08,
+  "area_rel": 1e-10,
+  "elevation_abs_m": 1e-08,
+  "elevation_rel": 1e-10
+ },
+ "resource_limits": {
+  "format": "triangle-terrain-windowed-v1",
+  "max_source_pixels": 1000000000,
+  "tile_rows": 256,
+  "tile_cols": 256,
+  "max_inflight_tiles": 1,
+  "gdal_cache_mib": 64,
+  "max_faces": 500000,
+  "max_nodes": 2000000,
+  "max_candidate_overlap_checks": 1000000000,
+  "coverage_policy": "diagnostic_only",
+  "minimum_valid_coverage": null,
+  "coverage_policy_evidence_path": null,
+  "coverage_policy_evidence_sha256": null,
+  "source_vertical_unit_declaration": null,
+  "source_vertical_unit_evidence_path": null,
+  "source_vertical_unit_evidence_sha256": null,
+  "source_vertical_datum_declaration": null,
+  "source_vertical_datum_evidence_path": null,
+  "source_vertical_datum_evidence_sha256": null,
+  "area_abs_tolerance_m2": 1e-08,
+  "area_rel_tolerance": 1e-10,
+  "elevation_abs_tolerance_m": 1e-08,
+  "elevation_rel_tolerance": 1e-10
+ },
+ "resource_memory_gate": {
+  "raw_tile_payload_upper_bound_bytes": 262144,
+  "max_inflight_tiles": 1,
+  "gdal_cache_bytes": 67108864,
+  "total_process_memory_limit_mib": null,
+  "m2b_requirement": "Measure combined Python mesh arrays, STRtree/GEOS, raw tile tuple/masks, GDAL cache, and writer buffers; enforce a process-level stop before actual D-S preparation."
+ },
+ "stats": {
+  "tiles_enumerated": 15120,
+  "tiles_selected": 1128,
+  "tiles_skipped_no_face_overlap": 13992,
+  "source_pixels_read": 73924608,
+  "candidate_face_tile_pairs": 107082,
+  "candidate_overlap_checks": 142478778,
+  "clip_calls": 142478778,
+  "ignored_tiny_overlaps": 17,
+  "valid_source_pixels": 72914947,
+  "nodata_source_pixels": 1009661,
+  "nonfinite_source_pixels": 0,
+  "max_window_pixels": 65536,
+  "max_raw_tile_payload_bytes": 262144
+ },
+ "native_face_area_total_m2": 62955358.04343023,
+ "covered_area_total_m2": 62955358.04330546,
+ "valid_area_total_m2": 62955358.03698837,
+ "unassigned_engineering_boundary_groups": true
+}

@@ -5,8 +5,8 @@ solver would, then exports and verifies every deliverable. Output must go
 outside the repository, e.g.::
 
     python -X utf8 examples/large_run_output/run_large_synthetic.py \
-        --mesh C:/Users/lenovo/hydro_exp/exp_mesh_graded.npz \
-        --output C:/Users/lenovo/hydro_exp/output_test/large_synth_001 --hours 288
+        --mesh <mesh.npz> \
+        --output <dir outside the repo>/large_synth_001 --hours 288
 
 The fields are SYNTHETIC_TEST_FIELDS: they test I/O scale only, not hydraulics.
 """

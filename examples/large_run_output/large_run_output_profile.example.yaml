@@ -16,6 +16,7 @@ native_web_value_dtype: float32
 stepjson_min_depth_m: 0.0
 stepjson_still_direction_deg: 180.0
 write_stepjson_native: true
+write_geojson: true
 shp_wet_depth_threshold_m: null
 volume_check_rel_tol: 1.0e-06
 disk_safety_factor: 1.2

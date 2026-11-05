@@ -779,6 +779,7 @@ def run_triangular_long_run(
     resume_from: str | Path | None = None,
     progress_callback: Callable[[Mapping[str, Any]], None] | None = None,
     edges: Sequence[Any] | None = None,
+    resume_inputs_fingerprint: str | None = None,
 ) -> TriangularLongRunSummary:
     """Advance one case through all ``output_times_s`` and stream every frame.
 
@@ -787,6 +788,13 @@ def run_triangular_long_run(
     ``options.checkpoint_interval_s`` is set, a checkpoint is written to
     ``checkpoint_directory`` at the first output time at or after each
     interval; ``resume_from`` continues exactly from such a checkpoint.
+
+    ``resume_inputs_fingerprint`` (branching only): accept a checkpoint whose
+    inputs fingerprint equals this value instead of the current inputs'.  The
+    caller must have proven that the parent inputs equal the current ones on
+    ``[0, checkpoint time]`` (see ``large_run_driver.verify_branch_inputs``);
+    numerics must still match exactly and new checkpoints carry the current
+    fingerprint.
     """
     try:
         options = options if isinstance(options, TriangularLongRunOptions) else TriangularLongRunOptions.model_validate(dict(options or {}))
@@ -864,7 +872,8 @@ def run_triangular_long_run(
 
     if resume_from is not None:
         metadata, arrays = load_long_run_checkpoint(resume_from)
-        if metadata["inputs_fingerprint"] != fingerprint or metadata["numerics_fingerprint"] != numerics:
+        accepted_fingerprint = fingerprint if resume_inputs_fingerprint is None else resume_inputs_fingerprint
+        if metadata["inputs_fingerprint"] != accepted_fingerprint or metadata["numerics_fingerprint"] != numerics:
             raise TriangularLongRunError("checkpoint does not match these inputs and numerical options")
         state = to_internal(arrays["state"].copy())
         max_depth = to_internal(arrays["maximum_depth_m"].copy())

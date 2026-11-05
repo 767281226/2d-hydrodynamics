@@ -222,3 +222,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# cases/: provenance-only large reports stay local (driver only warns when absent)
+cases/*/terrain/*_report_full.json

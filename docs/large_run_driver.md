@@ -163,12 +163,47 @@ close ledger：初始/末态体积、累计雨/入流/请求出流/交付出流/
 此时 `reopen` 报错，只能新目录重跑。测试 `test_resume_after_crash_matches_uninterrupted_run` 证明：在第 1 帧后于 sink
 内抛错，续算后的 ledger、各帧水深/动量/水位、保存帧最大值与 close ledger 与不中断运行逐位一致。
 
+## 5a. 从父方案检查点分支（`--branch-from`）
+
+用途：父方案已经算完，但某条边界流量过程在某时刻 T **之后**需要更正（例如闸门开启时刻）。从父方案在 T 之前的
+检查点出发，只重算 T 之后的部分，结果与"用更正后的输入从头算"逐位一致（测试
+`test_branch_from_checkpoint_matches_a_fresh_run_with_the_corrected_forcing`）。
+
+    python -X utf8 -m hydrodynamics.large_run_driver <新配置.json> --id <新方案号> --branch-from <父运行目录>/checkpoints/<检查点>.npz
+
+驱动先做三项校验，任何一项不过都拒绝运行：
+
+1. 用父方案的 `config.resolved.json` 重建输入，必须复现检查点里的输入指纹（父方案输入文件在运行后被改过就会被拒绝）；
+2. 新输入把边界组换成父方案的之后，指纹也必须一致。也就是说，网格、地形、初始水深、糙率、降雨、输出时刻都不允许变；
+3. 每个边界组的名称、类型、边、系数等都必须相同，流量过程（以及 free_outflow 的参考过程）在 [0, T] 上必须完全相同。
+
+此外，数值选项必须与父方案一致，父方案必须已经完成。新运行目录会复制父方案第 0 帧到检查点帧的结果（深度、动量、水位原样复制；
+速度在 float64 下由动量/水深重算，与求解器一致），然后从检查点继续计算。`run_report.json` 和 `run_receipt.json` 的 `branch` 字段记录
+父方案、检查点哈希、分支时刻和改动的流量过程。注意：父方案默认只保留最新 2 个检查点，需要分支的检查点要在被轮换掉之前
+另存，可存为同一目录下的 `branchpoint_*.npz`（轮换只匹配 `checkpoint_*.npz`）。
+
 ## 6. 首个真实案例配置
 
-`C:/Users/lenovo/hydro_exp/c8/real_case_config.json`（仓库外）：mesh005 artifact（178,962 面，EPSG:4548，SHA-256 已固定）、
+（历史记录，已被 §6a 取代）原仓库外配置 `c8/real_case_config.json`：mesh005 artifact（178,962 面，EPSG:4548，SHA-256 已固定）、
 地形 `terrain005_faces.npz`（待生成；`--check` 目前仅报它缺失）、断面审计 `sections_audit.json`（A 入流 12 边 / B、C 出流 22、21 边，
 全部为外边界边且与审计 `edge_nodes` 一致）、`examples/case_001/data/forcing.csv`（289 行，0..1,036,800 s）、288 h、
 初始水深 0、n=0.035、每 6 h 检查点、输出 `work/results/real_ds_mesh005_river_288h`。磁盘估算约 11.7 GB（×1.2）。
+
+## 6a. 仓库内案例：清北 23·7 复演与设计洪水（`cases/qingbei/`）
+
+全部输入已收入仓库，配置只用相对路径（相对配置文件解析；内嵌 profile 的 socio 路径同样相对配置文件）：
+
+```
+python -X utf8 -m hydrodynamics.large_run_driver cases/qingbei/configs/real_23_7_288h.json --check
+python -X utf8 -m hydrodynamics.large_run_driver cases/qingbei/configs/design_P100_config.json --id <方案号>
+```
+
+内容、来源与假设见 `cases/qingbei/README.md`，逐文件来源与 SHA-256 见 `cases/qingbei/provenance.json`。
+
+`real_23_7_288h.json` 的 `output.profile.gate_log` 打开了闸门调度日志（B → 独流减河进洪闸，C → 西河闸，台账
+`../source/天津23·7洪水闸门调度台账.xlsx`）：导出时写 `gate_dispatch.csv/json` 与 `gate_discharge_hourly.csv`，
+**只记录，开度不参与计算**（`docs/large_run_output_profile.md` §5a）。`--check` 会读取台账并核对 `boundary_gates`
+的断面键。已在跑、未开日志的 bundle 可事后追加：`python -m hydrodynamics.large_run_gate_log <bundle> --gate B=duliu_inlet --gate C=xihe --ledger <xlsx>`。
 
 ## 7. 限制
 

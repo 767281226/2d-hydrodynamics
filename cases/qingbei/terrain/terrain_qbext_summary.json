@@ -1,0 +1,33 @@
+{
+ "status": "ok",
+ "n_face": 80990,
+ "t_mesh_s": 20.28320220000751,
+ "t_map_s": 10485.3166967,
+ "stats": {
+  "tiles_enumerated": 15120,
+  "tiles_selected": 1128,
+  "tiles_skipped_no_face_overlap": 13992,
+  "source_pixels_read": 73924608,
+  "candidate_face_tile_pairs": 107082,
+  "candidate_overlap_checks": 142478778,
+  "clip_calls": 142478778,
+  "ignored_tiny_overlaps": 17,
+  "valid_source_pixels": 72914947,
+  "nodata_source_pixels": 1009661,
+  "nonfinite_source_pixels": 0,
+  "max_window_pixels": 65536,
+  "max_raw_tile_payload_bytes": 262144
+ },
+ "alias_evidence_status": "verified_preparation_only",
+ "dem_sha256": "bb5d2bd8cf387a698b6326fd94c603fcbae0c95c8734d564d0d4c007d63a38c7",
+ "vertical_unit": "m",
+ "vertical_datum": null,
+ "n_failures": 0,
+ "failures_head": [],
+ "min_cov": 0.9999974103157655,
+ "faces_any_nodata": 9,
+ "faces_zero_valid": 0,
+ "z_min": -6.507151024923584,
+ "z_max": 9.4718946593292,
+ "z_area_weighted_mean": 0.9474147277512118
+}

@@ -180,7 +180,7 @@ def test_classify_qingbei_follows_daqing_river_track():
 def test_read_named_polylines_loads_daqing_in_epsg4548():
     from hydrodynamics.vector_mask import read_named_polylines
 
-    path = Path(r'D:/devTools/project/2d-hydrodynamics/map/river_track/river_track.shp')
+    path = Path(__file__).resolve().parents[1] / 'map' / 'river_track' / 'river_track.shp'
     lines = read_named_polylines(path, name="大清河", target_crs="EPSG:4548")
     assert len(lines) >= 1
     xs = [pt[0] for line in lines for pt in line]
