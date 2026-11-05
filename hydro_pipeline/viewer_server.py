@@ -138,29 +138,7 @@ def _validate_large_bundle(root:Path,run:dict,*,explicit:bool)->tuple[Path,dict]
             grid.get("grid_id_digest")!=run.get("compatibility",{}).get("grid_id_digest") or
             len(grid.get("nc2web_frame_files",[]))!=len(times)):
         raise ViewerBundleError("large-run compatibility grid/nc2web identity is inconsistent")
-    _validate_socio_viewer(root,run,times)
     return root,run
-
-
-_SOCIO_VIEWER_MANIFEST="socio_exposure/viewer_manifest.json"
-
-
-def _validate_socio_viewer(root:Path,run:dict,times:list)->None:
-    """Optional socio exposure viewer layer: absent is valid; when run.json names it, it must be intact."""
-    block=run.get("socio_exposure")
-    rel=block.get("viewer_manifest") if isinstance(block,dict) else None
-    if rel is None:return
-    if rel!=_SOCIO_VIEWER_MANIFEST:raise ViewerBundleError("socio viewer manifest path is not the fixed socio_exposure/viewer_manifest.json")
-    path=_safe_child(root,rel);doc=_strict_json(path)
-    faces=run.get("native_result",{}).get("face_count")
-    rec=doc.get("values_file")
-    if (doc.get("format")!="socio-exposure-viewer-v1" or doc.get("run_id")!=run.get("run_id") or doc.get("face_count")!=faces or
-            not isinstance(rec,dict) or rec.get("name")!="viewer_face_values.bin" or not isinstance(doc.get("frames"),list) or
-            [row.get("index") if isinstance(row,dict) else None for row in doc["frames"]]!=list(range(len(times)))):
-        raise ViewerBundleError("socio viewer manifest identity/face count/frames differ from run.json")
-    values=_safe_child(path.parent,rec["name"])
-    if not isinstance(faces,int) or values.stat().st_size!=rec.get("bytes") or rec.get("bytes")!=16+10*faces or _sha_file(values)!=rec.get("sha256"):
-        raise ViewerBundleError("socio viewer values file size/hash differs from its manifest")
 
 
 def validate_bundle(root_value:str|Path,*,explicit:bool)->tuple[Path,dict]:

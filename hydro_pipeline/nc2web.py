@@ -528,69 +528,6 @@ def convert_native_netcdf_to_web(source_request:str|Path,output_dir:str|Path,*,r
 
 
 
-def write_socio_overlay_rasters(
-    output_dir: str | Path,
-    *,
-    nx: int,
-    ny: int,
-    xmin: float,
-    ymin: float,
-    dx: float,
-    dy: float,
-    shp_path: str | Path = Path("data/grid_50m_social_economy/shp/grid_cells_socio.shp"),
-) -> dict[str, Any]:
-    """Bin socio centroids onto the model grid for visualization only."""
-    from pyproj import Transformer
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    shp = Path(shp_path)
-    # Read the full DBF directly; the previous sampled-audit result was unused.
-    import struct
-    raw = shp.with_suffix(".dbf").read_bytes()
-    count = struct.unpack("<I", raw[4:8])[0]
-    header_len = struct.unpack("<H", raw[8:10])[0]
-    rec_len = struct.unpack("<H", raw[10:12])[0]
-    names = []
-    pos = 32
-    while pos + 32 <= header_len - 1 and raw[pos] != 13:
-        names.append(raw[pos:pos+11].split(b"\0", 1)[0].decode("ascii", "replace"))
-        pos += 32
-    lon_i, lat_i = names.index("lon"), names.index("lat")
-    pop_i, farm_i = names.index("s_pop"), names.index("s_ar_mu")
-    tr = Transformer.from_crs("EPSG:4326", "EPSG:4548", always_xy=True)
-    pop = np.zeros((ny, nx), dtype="<f4")
-    farm = np.zeros((ny, nx), dtype="<f4")
-    n = 0
-    for i in range(count):
-        rec = raw[header_len + i * rec_len: header_len + (i + 1) * rec_len]
-        off = 1
-        vals = []
-        widths = []
-        pos = 32
-        while pos + 32 <= header_len - 1 and raw[pos] != 13:
-            widths.append(raw[pos+16])
-            pos += 32
-        for w in widths:
-            vals.append(rec[off:off+w].decode("utf-8", "replace").strip())
-            off += w
-        try:
-            lon, lat = float(vals[lon_i]), float(vals[lat_i])
-            xx, yy = tr.transform(lon, lat)
-            col = int(np.floor((xx - xmin) / dx))
-            row = int(np.floor((yy - ymin) / dy))
-            if 0 <= row < ny and 0 <= col < nx:
-                pop[row, col] += float(vals[pop_i] or 0)
-                farm[row, col] += float(vals[farm_i] or 0)
-                n += 1
-        except Exception:
-            continue
-    (out / "socio_pop.bin").write_bytes(pop.tobytes())
-    (out / "socio_farm.bin").write_bytes(farm.tobytes())
-    meta = {"cells_hit": n, "pop_max": float(pop.max()), "farm_max": float(farm.max()), "note": "visualization overlay from centroids; not official risk"}
-    (out / "socio_overlay.json").write_text(__import__("json").dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    return meta
-
-
 def parse_netcdf_for_web(source: str | Path, output_dir: str | Path) -> dict[str, Any]:
     """Run both web parsers into sibling folders under output_dir."""
 
@@ -599,18 +536,11 @@ def parse_netcdf_for_web(source: str | Path, output_dir: str | Path) -> dict[str
     _new_output_directory(root)
     web = convert_netcdf_to_web(source, root / "nc2web")
     steps = convert_netcdf_to_step_json(source, root / "stepjson")
-    try:
-        socio = write_socio_overlay_rasters(
-            root / "nc2web", nx=web.nx, ny=web.ny, xmin=web.origin[0], ymin=web.origin[1], dx=web.dx, dy=web.dy
-        )
-    except Exception as exc:
-        socio = {"status": "warn", "error": str(exc)}
     summary = {
         "source": str(Path(source).resolve()),
         "output_dir": str(root.resolve()),
         "nc2web": {"dir": "nc2web", "status": web.status, "frames": len(web.frames), "epsg": web.epsg},
         "stepjson": {"dir": "stepjson", "status": steps.status, "files": len(steps.files), "epsg": steps.epsg},
-        "socio": socio,
     }
     _write_json_noclobber(root / "parse_summary.json",summary)
     return summary

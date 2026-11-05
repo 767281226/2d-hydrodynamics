@@ -62,5 +62,5 @@ run:
 output:
   root: work/results                  # run dir = <root>/<run_id>; viewer: start_viewer.bat <run_id>
   run_id: my_case_288h
-  profile: null                       # LargeRunOutputProfile fields (e.g. socio_exposure) or a profile path
+  profile: null                       # LargeRunOutputProfile fields (e.g. write_geojson) or a profile path
   export: true
