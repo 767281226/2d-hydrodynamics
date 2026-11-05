@@ -364,14 +364,19 @@ class Pipeline:
         if self.force or not manifest.is_file():
             return None
         data = json.loads(manifest.read_text(encoding="utf-8"))
-        if data.get("input_key") != key or not all(Path(p).is_file() for p in data.get("outputs", {}).values()):
+        # outputs are stored relative to work_dir so a work_dir can be copied to another machine/OS
+        outputs = {k: (self.work / Path(PureWindowsPath(v).as_posix())) for k, v in data.get("outputs", {}).items()}
+        if data.get("input_key") != key or not all(p.is_file() for p in outputs.values()):
             return None
+        data["outputs"] = {k: str(v) for k, v in outputs.items()}
+        self.log(f"[{stage}] cached (inputs unchanged)")
         return data
 
     def _done(self, stage: str, key: str, outputs: Mapping[str, Path], summary: Mapping[str, Any], started: float) -> dict[str, Any]:
-        data = {"stage": stage, "input_key": key, "outputs": {k: str(v) for k, v in outputs.items()},
+        data = {"stage": stage, "input_key": key, "outputs": {k: Path(v).resolve().relative_to(self.work.resolve()).as_posix() for k, v in outputs.items()},
                 "summary": dict(summary), "seconds": round(time.perf_counter() - started, 2)}
         _write_json(self._manifest(stage), data)
+        data["outputs"] = {k: str(Path(v).resolve()) for k, v in outputs.items()}
         self.log(f"[{stage}] done in {data['seconds']} s: {json.dumps(data['summary'], ensure_ascii=False, default=str)[:400]}")
         return data
 

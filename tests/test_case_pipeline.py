@@ -113,3 +113,20 @@ def test_end_to_end_run_and_stage_cache(tmp_path: Path) -> None:
     again = run_pipeline(path, stage="sections")
     assert json.loads((tmp_path / "work" / "mesh" / "stage.json").read_text(encoding="utf-8")) == mesh_manifest
     assert set(again["summary"]) == {"A", "B"}
+
+
+def test_stage_cache_survives_moving_work_dir(tmp_path: Path) -> None:
+    pytest.importorskip("gmsh")
+    import shutil
+    first = tmp_path / "a"; first.mkdir()
+    path = _case(first)
+    run_pipeline(path, stage="sections")
+    second = tmp_path / "b"
+    shutil.copytree(first, second)
+    shutil.rmtree(first)
+    before = (second / "work" / "mesh" / "stage.json").read_bytes()
+    manifest = run_pipeline(second / "case.json", stage="sections")
+    assert (second / "work" / "mesh" / "stage.json").read_bytes() == before  # cache hit, not recomputed
+    assert Path(manifest["outputs"]["sections"]).is_file() and str(second) in manifest["outputs"]["sections"]
+    stage = json.loads((second / "work" / "mesh" / "stage.json").read_text(encoding="utf-8"))
+    assert stage["outputs"]["mesh"] == "mesh/mesh.json"
