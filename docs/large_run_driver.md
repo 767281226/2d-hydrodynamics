@@ -39,6 +39,8 @@ python -X utf8 -m hydrodynamics.large_run_driver <config.json> --id 方案ID  # 
 解析 CRS、估算磁盘需求，并打印 JSON 摘要：`status` 为 `ok` / `missing_inputs`（只有缺文件，列在 `missing`）/
 `invalid`（`errors` 非空）。它不构建 `TriangularMesh`（约 35 s）。
 
+长时间运行建议同时启动看门狗：`python -X utf8 -m hydrodynamics.run_watchdog <运行目录>`，时间步骤降、推进过慢、长时间无进度或进程消失时停止计算并记录原因（见 `docs/run_watchdog.md`）。
+
 ## 2. 配置字段（`large-run-driver-config-v1`）
 
 通用规则：未知字段拒绝；数字不接受字符串或布尔；所有数值必须有限；相对路径相对于配置文件所在目录解析。
